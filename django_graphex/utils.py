@@ -1066,6 +1066,7 @@ def recursive_params(
     current_model: type[Model] | None = None,
     variable_values: dict[str, Any] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    _seen: set[tuple[int, str, str | None, type[Model] | None]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Walk a GraphQL selection set building nested select/prefetch paths.
 
@@ -1097,10 +1098,17 @@ def recursive_params(
             "_apply_optimizations" and threaded through all walker calls so
             each (model, map-kind) pair is computed at most once per optimizer
             run. None disables caching (backwards-compatible default).
+        _seen: Selection contexts already expanded in this traversal.
 
     Returns:
         The mutated "(select_related, prefetch_related)" pair.
     """
+    if _seen is None:
+        _seen = set()
+    context = (id(selection_set), _prefix, current_type_name, current_model)
+    if context in _seen:
+        return select_related, prefetch_related
+    _seen.add(context)
     _vars: dict[str, Any] = variable_values or {}
     for field in selection_set.selections:
         # Honor @skip / @include — skip the entire subtree when the directive
@@ -1123,6 +1131,7 @@ def recursive_params(
                     current_model=current_model,
                     variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
+                    _seen=_seen,
                 )
             continue
 
@@ -1146,6 +1155,7 @@ def recursive_params(
                 current_model=current_model,
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
+                _seen=_seen,
             )
             continue
 
@@ -1182,6 +1192,7 @@ def recursive_params(
                     current_model=related_model,
                     variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
+                    _seen=_seen,
                 )
         elif sub_selection is not None:
             # Wrapper field (e.g. `results`) or unknown object: stay on the same
@@ -1197,6 +1208,7 @@ def recursive_params(
                 current_model=current_model,
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
+                _seen=_seen,
             )
 
     return select_related, prefetch_related
@@ -1213,6 +1225,7 @@ def _collect_only_fields(
     variable_values: dict[str, Any] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
     current_gql_type: Any = None,
+    _seen: set[tuple[int, type[Model], str, str | None, int]] | None = None,
 ) -> list[str]:
     """Collect a safe ".only()" field set across the select_related span.
 
@@ -1253,12 +1266,25 @@ def _collect_only_fields(
             container alone made every fragment inside results be judged
             against the container, so its columns were dropped from the
             .only() projection and reloaded one query per row.
+        _seen: Selection contexts already expanded in this projection.
 
     Returns:
         A sorted list of dotted "only" paths.
     """
     if _only is None:
         _only = set()
+    if _seen is None:
+        _seen = set()
+    context = (
+        id(selection_set),
+        model,
+        _prefix,
+        current_type_name,
+        id(current_gql_type),
+    )
+    if context in _seen:
+        return sorted(_only)
+    _seen.add(context)
 
     current_graphene_type = _gql_source_class(current_gql_type)
     rel_map = _relation_field_map(model, _fmap_cache)
@@ -1300,6 +1326,7 @@ def _collect_only_fields(
                     variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
                     current_gql_type=current_gql_type,
+                    _seen=_seen,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -1322,6 +1349,7 @@ def _collect_only_fields(
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
                 current_gql_type=current_gql_type,
+                _seen=_seen,
             )
             continue
 
@@ -1368,6 +1396,7 @@ def _collect_only_fields(
                         variable_values=variable_values,
                         _fmap_cache=_fmap_cache,
                         current_gql_type=None,
+                        _seen=_seen,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
             continue
@@ -1399,6 +1428,7 @@ def _collect_only_fields(
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
                 current_gql_type=inner_gql or current_gql_type,
+                _seen=_seen,
             )
             continue
 
@@ -1427,6 +1457,7 @@ def _collect_only_fields_is_full_load(
     variable_values: dict[str, Any] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
     current_gql_type: Any = None,
+    _seen: set[tuple[int, type[Model], str | None, int]] | None = None,
 ) -> bool:
     """Return True when _collect_only_fields would trigger the full-load path.
 
@@ -1467,10 +1498,17 @@ def _collect_only_fields_is_full_load(
             descent to the inner ROW type, exactly as in
             _collect_only_fields; threaded for the same walkers-must-agree
             reason as current_type_name.
+        _seen: Selection contexts already checked for a full-load leaf.
 
     Returns:
         True if any unknown leaf would trigger full-load for model.
     """
+    if _seen is None:
+        _seen = set()
+    context = (id(selection_set), model, current_type_name, id(current_gql_type))
+    if context in _seen:
+        return False
+    _seen.add(context)
     current_graphene_type = _gql_source_class(current_gql_type)
     rel_map = _relation_field_map(model, _fmap_cache)
     concrete_map = _concrete_field_map(model, _fmap_cache)
@@ -1494,6 +1532,7 @@ def _collect_only_fields_is_full_load(
                     variable_values=variable_values,
                     _fmap_cache=_fmap_cache,
                     current_gql_type=current_gql_type,
+                    _seen=_seen,
                 ):
                     return True
             continue
@@ -1519,6 +1558,7 @@ def _collect_only_fields_is_full_load(
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
                 current_gql_type=current_gql_type,
+                _seen=_seen,
             ):
                 return True
             continue
@@ -1553,6 +1593,7 @@ def _collect_only_fields_is_full_load(
                 variable_values=variable_values,
                 _fmap_cache=_fmap_cache,
                 current_gql_type=inner_gql or current_gql_type,
+                _seen=_seen,
             ):
                 return True
             continue
@@ -1961,6 +2002,7 @@ def _collect_prefetch_only_sets(
     promoted_lookups: "frozenset[str] | None" = None,
     schema: Any = None,
     fmap_cache: "dict[tuple[int, str], Any] | None" = None,
+    _seen: set[tuple[int, type[Model], str, int]] | None = None,
 ) -> dict[str, PrefetchPlan]:
     """Map each direct prefetch lookup to its child column plan.
 
@@ -1996,12 +2038,19 @@ def _collect_prefetch_only_sets(
         fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).  Threading it prevents redundant
             _meta.get_fields() calls from the .only()-narrowing pass (#66).
+        _seen: Selection contexts already expanded into this plan map.
 
     Returns:
         The completed {dotted_lookup: PrefetchPlan} dict.
     """
     if _out is None:
         _out = {}
+    if _seen is None:
+        _seen = set()
+    context = (id(selection_set), model, _prefix, id(gql_type))
+    if context in _seen:
+        return _out
+    _seen.add(context)
 
     # The child's source class for AnnotatedField self-collection lives on
     # ``child_gql.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
@@ -2033,6 +2082,7 @@ def _collect_prefetch_only_sets(
                     promoted_lookups=promoted_lookups,
                     schema=schema,
                     fmap_cache=fmap_cache,
+                    _seen=_seen,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2064,6 +2114,7 @@ def _collect_prefetch_only_sets(
                 promoted_lookups=promoted_lookups,
                 schema=schema,
                 fmap_cache=fmap_cache,
+                _seen=_seen,
             )
             continue
 
@@ -2094,6 +2145,7 @@ def _collect_prefetch_only_sets(
                     promoted_lookups=promoted_lookups,
                     schema=schema,
                     fmap_cache=fmap_cache,
+                    _seen=_seen,
                 )
             continue
 
@@ -2155,6 +2207,7 @@ def _collect_prefetch_only_sets(
                     promoted_lookups=promoted_lookups,
                     schema=schema,
                     fmap_cache=fmap_cache,
+                    _seen=_seen,
                 )
             # If this path was promoted to prefetch by the AnnotatedField promotion
             # pass, also build a PrefetchPlan for it so child annotations are injected.
@@ -2527,6 +2580,7 @@ def _walk_filtered_prefetches(
     seen: dict[str, set[tuple[bool, str, str]]],
     hook_map: dict | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    _seen: set[tuple[int, int, type[Model] | None, str]] | None = None,
 ) -> None:
     """Collect filtered Prefetch objects for nested list fields with filters.
 
@@ -2544,7 +2598,14 @@ def _walk_filtered_prefetches(
             unfiltered nested lists, mutated in place (Phase E AC2b).
         _fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).
+        _seen: Selection contexts already expanded for these bound variables.
     """
+    if _seen is None:
+        _seen = set()
+    context = (id(selection_set), id(gql_type), model, prefix)
+    if context in _seen:
+        return
+    _seen.add(context)
     relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
     # Pre-warm the concrete-field cache entry so the .only()-narrowing pass
     # (_collect_only_fields_is_full_load / _collect_only_fields) can reuse it
@@ -2574,6 +2635,7 @@ def _walk_filtered_prefetches(
                     seen,
                     hook_map=hook_map,
                     _fmap_cache=_fmap_cache,
+                    _seen=_seen,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2600,6 +2662,7 @@ def _walk_filtered_prefetches(
                 seen,
                 hook_map=hook_map,
                 _fmap_cache=_fmap_cache,
+                _seen=_seen,
             )
             continue
 
@@ -2713,6 +2776,7 @@ def _walk_filtered_prefetches(
                             seen,
                             hook_map=hook_map,
                             _fmap_cache=_fmap_cache,
+                            _seen=_seen,
                         )
                     continue
                 # Window path declined (pre-checks failed) → fall through to plain path.
@@ -2754,6 +2818,7 @@ def _walk_filtered_prefetches(
                     seen,
                     hook_map=hook_map,
                     _fmap_cache=_fmap_cache,
+                    _seen=_seen,
                 )
             continue
 
@@ -2773,6 +2838,7 @@ def _walk_filtered_prefetches(
                     seen,
                     hook_map=hook_map,
                     _fmap_cache=_fmap_cache,
+                    _seen=_seen,
                 )
             continue
 
@@ -2788,6 +2854,7 @@ def _walk_filtered_prefetches(
                 seen,
                 hook_map=hook_map,
                 _fmap_cache=_fmap_cache,
+                _seen=_seen,
             )
 
 
@@ -2800,6 +2867,7 @@ def _walk_annotated_fields(
     aliases: dict,
     names: set,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    _seen: set[tuple[int, int, int]] | None = None,
 ) -> None:
     """Walk a GraphQL selection set and collect AnnotatedField declarations.
 
@@ -2817,12 +2885,19 @@ def _walk_annotated_fields(
         names: Accumulator set of snake_case field names of selected AnnotatedFields.
         _fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).
+        _seen: Selection contexts already expanded into these accumulators.
     """
     # Lazy import avoids the fields <-> utils circular import.
     from .fields import AnnotatedField  # noqa: PLC0415
 
     if selection_set is None:
         return
+    if _seen is None:
+        _seen = set()
+    context = (id(selection_set), id(gql_type), id(graphene_type))
+    if context in _seen:
+        return
+    _seen.add(context)
 
     rel_map = (
         _relation_field_map(
@@ -2847,6 +2922,7 @@ def _walk_annotated_fields(
                     aliases,
                     names,
                     _fmap_cache=_fmap_cache,
+                    _seen=_seen,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2869,6 +2945,7 @@ def _walk_annotated_fields(
                 aliases,
                 names,
                 _fmap_cache=_fmap_cache,
+                _seen=_seen,
             )
             continue
 
@@ -2931,6 +3008,7 @@ def _walk_annotated_fields(
                 aliases,
                 names,
                 _fmap_cache=_fmap_cache,
+                _seen=_seen,
             )
 
 
@@ -3332,6 +3410,76 @@ def _iter_promotion_fields(
             yield node
 
 
+def _iter_unique_promotion_fields(
+    selection_set: SelectionSetNode | None,
+    current_type: GraphQLObjectType | None,
+    schema: GraphQLSchema,
+    fragments: dict[str, FragmentDefinitionNode] | None,
+    variable_values: dict[str, Any] | None,
+    active_fragments: frozenset[str] = frozenset(),
+    _seen: set[tuple[int, int]] | None = None,
+) -> Iterator[FieldNode]:
+    """Yield each promotion field context once for set-like planning.
+
+    The duplicate-preserving field iterator remains available to callers that
+    need one node per spread occurrence. Promotion planning only needs each
+    reachable field node once for a given GraphQL type.
+
+    Args:
+        selection_set: The selections at the current GraphQL type level.
+        current_type: The resolved object type at that level, if available.
+        schema: The schema used to check fragment applicability.
+        fragments: Named fragment definitions in this operation.
+        variable_values: Bound include and skip directive values.
+        active_fragments: Named fragments on the current recursion path.
+        _seen: Selection and GraphQL type contexts already expanded.
+
+    Yields:
+        Applicable field nodes without duplicate fragment expansion.
+    """
+    if selection_set is None:
+        return
+    if _seen is None:
+        _seen = set()
+    context = (id(selection_set), id(current_type))
+    if context in _seen:
+        return
+    _seen.add(context)
+    for node in selection_set.selections:
+        if is_selection_skipped(node, variable_values):
+            continue
+        if isinstance(node, FragmentSpreadNode):
+            name = node.name.value
+            if name in active_fragments:
+                continue
+            fragment = (fragments or {}).get(name)
+            if fragment is not None and _promotion_fragment_applies(
+                fragment.type_condition, current_type, schema
+            ):
+                yield from _iter_unique_promotion_fields(
+                    fragment.selection_set,
+                    current_type,
+                    schema,
+                    fragments,
+                    variable_values,
+                    active_fragments | {name},
+                    _seen,
+                )
+        elif isinstance(node, InlineFragmentNode):
+            if _promotion_fragment_applies(node.type_condition, current_type, schema):
+                yield from _iter_unique_promotion_fields(
+                    node.selection_set,
+                    current_type,
+                    schema,
+                    fragments,
+                    variable_values,
+                    active_fragments,
+                    _seen,
+                )
+        else:
+            yield node
+
+
 def _apply_optimizations(
     base: QuerySet,
     model: type[Model],
@@ -3510,7 +3658,7 @@ def _apply_optimizations(
                     else {}
                 )
 
-                for fnode in _iter_promotion_fields(
+                for fnode in _iter_unique_promotion_fields(
                     sel_set, gql_t, info.schema, info.fragments, info.variable_values
                 ):
                     fname = fnode.name.value
@@ -3553,7 +3701,7 @@ def _apply_optimizations(
                                     )
                                     or {}
                                 )
-                    for sel in _iter_promotion_fields(
+                    for sel in _iter_unique_promotion_fields(
                         fsub, sub_gql, info.schema, info.fragments, info.variable_values
                     ):
                         sname = sel.name.value
@@ -3585,7 +3733,7 @@ def _apply_optimizations(
                 )
                 # Also walk through wrapper field (results).
                 if fields_asts[0].selection_set:
-                    for fnode in _iter_promotion_fields(
+                    for fnode in _iter_unique_promotion_fields(
                         fields_asts[0].selection_set,
                         return_type,
                         info.schema,

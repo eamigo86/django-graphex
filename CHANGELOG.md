@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bound optimizer planning for valid repeated-fragment graphs to distinct
+  model, type, and relation-path contexts. Existing projections, prefetches,
+  annotation promotion, GraphQL results, and SQL query counts remain unchanged.
 - Reject cyclic named-fragment graphs before cost/depth expansion. Direct
   `analyze_cost()` now raises `GraphQLError` for a cyclic document rather than
   returning a truncated cost, including cycles outside the selected operation;

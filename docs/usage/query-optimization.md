@@ -55,6 +55,14 @@ It is transparent to the `DjangoListObjectType` wrapper (`results` / `totalCount
 / `pageInfo`), to **fragments** and to **inline fragments**, and matches both
 `camelCase` and `snake_case` field names.
 
+Repeated spreads of an acyclic fragment are planned once per distinct optimizer
+context (model, GraphQL type, and relation path), rather than expanding the same
+subtree once for every spread route. For example, two spreads of a fragment
+selecting `author { name }` keep the same `select_related("author")` and column
+projection as before. Reusing that fragment under different relation paths still
+plans each path separately. This changes optimizer planning work, not GraphQL
+execution, response fields, query cost, or the number of SQL queries.
+
 ## Example
 
 ```python
