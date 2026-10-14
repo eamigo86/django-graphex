@@ -727,9 +727,14 @@ related objects alongside the parent. The same engine backs both
     security. If the request schema has no registered destination output type
     with an overridden `get_queryset`, the existing ID-link path is unchanged
     and adds no lookup. The hook must synchronously return a Django
-    `QuerySet` for that destination model; a broader returned queryset cannot
-    authorize an ID absent from it. Each distinct requested ID under an active
-    hook requires an existence lookup. Omitted relations stay untouched;
+    `QuerySet` for the destination's concrete model; a proxy queryset for the
+    same table is valid, but a multi-table-inheritance parent queryset is not.
+    Class methods, static methods, plain functions, and callable-object hooks
+    follow the same rule. A broader returned queryset cannot authorize an ID
+    absent from it. A JOIN may repeat a visible row, and an ordered slice only
+    authorizes rows inside its window: both remain valid hook results. Each
+    distinct requested ID under an active hook requires a membership lookup.
+    Omitted relations stay untouched;
     nullable `null` and empty nested inputs keep their existing meanings.
 
     Forward `OneToOneField`, reverse adoption, generic relations, and payloads

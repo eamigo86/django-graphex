@@ -30,9 +30,9 @@ import enum
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import router, transaction
-from django.db.models import ForeignKey, ManyToManyField
+from django.db.models import ForeignKey, ManyToManyField, Subquery
 
 from .backends import backend_for_nested
 from .errors import ErrorType
@@ -359,6 +359,8 @@ class NestedFieldsMixin:
             GraphQLError: If a child host's "authorize" denies the nested write
                 (PERMISSION_DENIED / 403). The atomic block rolls the whole
                 write back on the way out.
+            TypeError: If a destination row-scope hook returns an invalid
+                queryset for a generated FK or M2M ID link.
         """
         nested = cls._meta.nested_fields
         nested = nested if isinstance(nested, dict) else {}
@@ -496,7 +498,8 @@ class NestedFieldsMixin:
 
         Raises:
             _NestedError: If a requested link is hidden or nonexistent.
-            TypeError: If a destination hook returns a queryset for another model.
+            TypeError: If a destination hook returns a non-queryset value or a
+                queryset for a different concrete model.
         """
         from .types import DjangoObjectType
 
@@ -523,8 +526,9 @@ class NestedFieldsMixin:
             output_type = registry.get_type_for_model(target) if registry else None
             if output_type is None or not issubclass(output_type, DjangoObjectType):
                 continue
+            hook = output_type.get_queryset
             if (
-                output_type.get_queryset.__func__
+                getattr(hook, "__func__", hook)
                 is DjangoObjectType.get_queryset.__func__
             ):
                 continue
@@ -572,15 +576,26 @@ class NestedFieldsMixin:
                 continue
             queryset = target._default_manager.db_manager(alias).all()
             scoped = apply_object_type_get_queryset(queryset, output_type, info)
-            if not (
-                issubclass(scoped.model, target) or issubclass(target, scoped.model)
-            ):
+            if scoped.model._meta.concrete_model is not target._meta.concrete_model:
                 raise TypeError(
                     f"{output_type.__name__}.get_queryset returned a queryset "
                     f"for {scoped.model.__name__}, expected {target.__name__}."
                 )
             for identifier in dict.fromkeys(ids):
-                if get_Object_or_None(scoped, **{lookup: identifier}) is None:
+                # Membership, not uniqueness: JOINs may duplicate a row and a
+                # sliced scope cannot be filtered after its window is applied.
+                try:
+                    present = (
+                        target._default_manager.db_manager(scoped.db)
+                        .filter(
+                            **{lookup: identifier},
+                            pk__in=Subquery(scoped.values("pk")),
+                        )
+                        .exists()
+                    )
+                except (ValueError, TypeError, ValidationError):
+                    present = False
+                if not present:
                     raise _NestedError(
                         [
                             ErrorType(

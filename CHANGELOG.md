@@ -10,7 +10,10 @@
   unscoped/default-hook paths retain their previous behavior and query
   cost; child-write permissions, relation reads, and ORM filter joins are
   unchanged. Apps that intentionally link read-hidden rows must migrate their
-  destination scope or link workflow.
+  destination scope or link workflow. Destination scopes may use callable hooks,
+  duplicate-producing JOINs, ordered slices, or same-table proxies; membership
+  follows the actual returned queryset window. A queryset for a different
+  concrete table is rejected.
 
 - Reject ambiguous generated `choices` enum member names with
   `ImproperlyConfigured` instead of assigning positional suffixes that could
