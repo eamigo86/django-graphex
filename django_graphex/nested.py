@@ -685,8 +685,10 @@ class NestedFieldsMixin:
             info: GraphQL resolve info for the current request.
 
         Raises:
-            _NestedError: If a reverse child belongs to another parent, or an
-                existing nullable reverse-FK orphan has no update-serving host.
+            _NestedError: If a child is hidden by a write host, belongs to
+                another parent, lacks an update-serving host for orphan adoption,
+                has invalid reverse-one cardinality, or fails child validation.
+            GraphQLError: If child permission checks deny the write.
         """
         if kind in ("reverse_one", "reverse_many"):
             fk_name = relation.field.name  # FK on the child pointing to parent
