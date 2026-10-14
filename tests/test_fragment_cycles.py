@@ -43,6 +43,9 @@ def test_cyclic_fanout_is_rejected_before_expensive_walks(
     """A compact cyclic graph must not expand by its number of spread paths.
 
     Count actual cost and depth walker entries rather than relying on timing.
+
+    Args:
+        monkeypatch: Pytest fixture used to count walker entries.
     """
     counts = {"cost": 0, "depth": 0}
     original_cost = _CostAnalyzer._selection_set_cost
@@ -142,6 +145,9 @@ def test_default_view_rejects_cycle_without_running_resolver(
     """The default endpoint returns validation errors before resolver execution.
 
     Cost reporting must not turn the cyclic document into a raw server error.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the query resolver.
     """
     schema = test_schema.graphql_schema
     assert schema.query_type is not None
