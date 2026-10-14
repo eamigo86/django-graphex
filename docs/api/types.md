@@ -131,8 +131,8 @@ class UserType(DjangoObjectType):
 | `model` | `Model` | Required | Django model class |
 | `registry` | `Registry` | Global registry | Type registry instance |
 | `skip_registry` | `bool` | `False` | Skip automatic type registration |
-| `only_fields` | `tuple/list` | `()` | Include only specified model or declared output fields. Unknown names and bare strings fail at class definition. **A security boundary** — see below |
-| `exclude_fields` | `tuple/list` | `()` | Exclude specified model or declared output fields. Unknown names and bare strings fail at class definition. **A security boundary** — see below |
+| `only_fields` | `tuple/list` | `()` | Include only specified automatically derived model fields. Declared output names remain valid selectors but declarations compile independently. Unknown names and bare strings fail at class definition. **A security boundary for model projection** — see below |
+| `exclude_fields` | `tuple/list` | `()` | Exclude specified automatically derived model fields. Declared output names remain valid selectors but this option does not remove declarations. Unknown names and bare strings fail at class definition. **A security boundary for model projection** — see below |
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
 | `filter_fields` | `dict` | `None` | Field filtering configuration. An entry naming a projected-away column **fails the schema build** |
 | `interfaces` | `tuple` | `()` | GraphQL interfaces to implement |

@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth.models import User
 from django.core.exceptions import ImproperlyConfigured
+from django.db import models
+from django.test.utils import isolate_apps
 from graphql import GraphQLString
 
 from django_graphex.core import CharField
@@ -13,6 +15,79 @@ from django_graphex.registry import Registry
 from django_graphex.types import DjangoObjectType
 
 from .models import Author, CustomPKProduct, Track2GfkComment
+
+
+@pytest.mark.parametrize("option", ("only_fields", "exclude_fields"))
+@pytest.mark.parametrize("selector", ("entries", "entry_lookup"))
+@isolate_apps("tests")
+def test_reverse_accessor_and_query_name_selectors_remain_valid(
+    option: str, selector: str
+) -> None:
+    """Accept both reverse names already supported by output compilation.
+
+    Args:
+        option: Model projection option to configure.
+        selector: Python accessor or Django reverse query name.
+    """
+
+    class Owner(models.Model):
+        """Own entries through a differently named reverse accessor."""
+
+        name = models.CharField(max_length=20)
+
+        class Meta:
+            """Keep this dynamic model local to the test app."""
+
+            app_label = "tests"
+
+    class Entry(models.Model):
+        """Provide distinct reverse accessor and query names."""
+
+        owner = models.ForeignKey(
+            Owner,
+            on_delete=models.CASCADE,
+            related_name="entries",
+            related_query_name="entry_lookup",
+        )
+
+        class Meta:
+            """Keep this dynamic model local to the test app."""
+
+            app_label = "tests"
+
+    reg = Registry()
+
+    class EntryType(DjangoObjectType):
+        """Register the relation target for nested output compilation."""
+
+        class Meta:
+            """Select only the target identity."""
+
+            model = Entry
+            registry = reg
+            only_fields = ("id",)
+
+    class Projection:
+        """Configure the source type without changing unrelated options."""
+
+        model = Owner
+        registry = reg
+
+    setattr(
+        Projection,
+        option,
+        ("id", selector) if option == "only_fields" else (selector,),
+    )
+
+    class OwnerType(DjangoObjectType):
+        """Compile the source type with the selected relation."""
+
+        class Meta(Projection):
+            """Inherit the dynamic selector configuration."""
+
+    fields = OwnerType._meta.graphql_output_type.fields
+    assert ("entries" in fields) == (option == "only_fields")
+    assert "id" in fields
 
 
 @pytest.mark.parametrize("option", ("only_fields", "exclude_fields"))

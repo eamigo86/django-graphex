@@ -265,7 +265,21 @@ def _validate_output_selectors(
     """
     from ._strconv import to_camel_case
 
-    allowed = {name for name, _field in get_model_fields(model)}
+    allowed = set()
+    for name, model_field in get_model_fields(model):
+        allowed.add(name)
+        if getattr(model_field, "auto_created", False) and not getattr(
+            model_field, "concrete", False
+        ):
+            get_accessor = getattr(model_field, "get_accessor_name", None)
+            if callable(get_accessor):
+                accessor = get_accessor()
+                if (
+                    isinstance(accessor, str)
+                    and accessor
+                    and not accessor.endswith("+")
+                ):
+                    allowed.add(accessor)
     for base in cls.__mro__:
         for name, descriptor in base.__dict__.items():
             if isinstance(descriptor, (NativeMountedField, NativeField)):
@@ -1188,8 +1202,10 @@ class DjangoObjectType(NativeObjectType):
             registry: Registry to register this type in; defaults to the
                 global registry.
             skip_registry: When True, do not register this type.
-            only_fields: Model or declared output field names to include exclusively.
-            exclude_fields: Model or declared output field names to exclude.
+            only_fields: Model field names selected for automatic output projection.
+                Declared output names remain accepted but are compiled independently.
+            exclude_fields: Model field names omitted from automatic output projection.
+                Declared output names remain accepted but are not filtered.
             include_fields: Extra model field names to include.
             filter_fields: Field names usable for filtering.
             interfaces: GraphQL interfaces this type implements.
