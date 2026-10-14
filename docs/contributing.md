@@ -234,6 +234,13 @@ uvx 'diff-cover>=10.5.1,<11' coverage.xml \
   --compare-branch=origin/main --fail-under=95.01
 ```
 
+Tests that assert a model relation appears in a compiled output type must
+register the related model's output type in the **same test-local registry**.
+Use an allowlisted projection for sensitive models such as Django's `User`;
+do not rely on another test module importing a global type first. This keeps
+isolated test runs and shuffled full-suite runs equivalent without changing
+production's rule that unregistered relation targets are omitted.
+
 Assert the **exact exception** class and a stable message with `match=`; broad
 `pytest.raises(Exception)` checks can hide unrelated failures:
 

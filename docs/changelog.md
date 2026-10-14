@@ -14,6 +14,9 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Make the converter integration test register its User relation target in a
+  test-local, allowlisted registry. The test now passes in isolation without
+  weakening its relation assertion or changing production relation behavior.
 - Restore populated auto-derived `DecimalField` output under graphql-core 3.3
   by converting its Django `Decimal` value for the existing `Float` field.
   The SDL and exact Decimal input mapping remain unchanged; Float output still
