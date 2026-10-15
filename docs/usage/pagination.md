@@ -571,6 +571,27 @@ PageGraphqlPagination(
     }
     ```
 
+### Explicit null page
+
+The generated `page` argument remains nullable (`page: Int = 1`). Omitting it
+or passing `page: null` selects page 1, including when a nullable `Int`
+variable has the value `null`:
+
+```graphql
+query FirstPage($page: Int) {
+  users {
+    results(page: $page) { id username }
+    totalCount
+  }
+}
+```
+
+With `{ "page": null }`, this returns the same first-page rows and count as
+omitting `page`. Previously, explicit null produced a raw comparison error in
+the GraphQL response; clients that relied on that error should validate null
+before sending the request. `page: 0` still raises its existing error, and
+negative-page navigation is unchanged.
+
 ### Backward pagination
 
 `PageGraphqlPagination` accepts negative `page` values to navigate from the

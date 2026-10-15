@@ -1216,6 +1216,8 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
     def paginate_queryset(self, qs: Any, **kwargs: Any) -> Any:
         """Paginate a queryset using page number and page size parameters.
 
+        An explicit null page selects page 1, the same as omitting the argument.
+
         Args:
             qs: The queryset or list to paginate.
             **kwargs: The pagination arguments from the query.
@@ -1228,6 +1230,8 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
                 an invalid/relation-spanning ordering term (bad client input).
         """
         page = kwargs.pop(self.page_query_param, 1)
+        if page is None:
+            page = 1
         requested = (
             kwargs.get(self.page_size_query_param)
             if self.page_size_query_param
@@ -1286,6 +1290,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         - When "page < 0" (count-relative offset), returns None because the
           offset cannot be computed without the total row count at build time.
         - For "page >= 0", "offset = page_size * (page - 1)".
+        - An explicit null page is equivalent to omitting it (page 1).
 
         Args:
             **kwargs: Pagination arguments extracted from the GraphQL query
@@ -1295,6 +1300,8 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             A (offset, page_size, ordering) tuple, or None to fall back.
         """
         page = kwargs.pop(self.page_query_param, 1)
+        if page is None:
+            page = 1
         requested = (
             kwargs.get(self.page_size_query_param)
             if self.page_size_query_param

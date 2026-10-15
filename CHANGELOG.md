@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Treat explicit `page: null` as omitted `page` (first page 1) for page-number
+  pagination on root and nested lists. This replaces the previous raw
+  comparison error for null; clients relying on that error should reject null
+  before sending a request. The nullable `page: Int = 1` schema, zero-page
+  error, and negative-page behavior are unchanged.
+
 - Continue in-memory cursor pages ordered by FloatField, DecimalField, or
   UUIDField using server-emitted cursors. Nested materialized lists now match
   queryset-backed lists on the next page; cursor tokens, SDL, ordering,

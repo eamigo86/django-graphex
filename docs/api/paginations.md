@@ -321,11 +321,19 @@ Convert page pagination parameters to GraphQL field arguments.
 
 Paginate queryset using page number and page size parameters.
 
+The generated argument remains nullable `page: Int = 1`. Both omission and
+explicit `page: null` (literal or nullable `Int` variable) select page 1 for
+queryset-backed and nested lists. Previously, explicit null surfaced a raw
+comparison error; clients requiring null rejection must validate it before
+sending the request. Zero remains invalid and negative pages retain their
+existing count-relative behavior.
+
 **Parameters:**
 - `qs` (`QuerySet`): Django queryset to paginate
 - `**kwargs`: Query parameters including `page`, `pageSize` (optional), and `ordering`
 
-**Returns:** Paginated `QuerySet`
+**Returns:** Paginated `QuerySet` or in-memory list, depending on the input
+collection.
 
 **Raises:**
 - `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")` — `page=0`.
