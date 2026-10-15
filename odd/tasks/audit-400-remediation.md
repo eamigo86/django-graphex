@@ -72,7 +72,7 @@ Each task is an independently recoverable work unit. `T00` is tracking-only; all
 | T11b | D | **Date-part slice accepted 17503 (17458), wider T11 open.** `53b3481` changes only existing DateField 4/DateTimeField 7 numeric parts to Int; whole values unchanged. Initial/corrected immutable RED copies verified; first GREEN timezone-fixture and later test/docstring failures retained, corrected RED→same-byte GREEN. Independent fresh full/focal/coverage/patch/strict docs and parent PASS; author Playground/mypy not freshly repeated. T11a missing preimage unchanged. 565 authored lines advisory. `t11b-mf2-datepart-{implementation,independent}/README.md`, immutable T11c tracker preimage. | [x] |
 | T11c | D, accepted 17607 | **Human17513 bounded A12 only.** Correction `4c3e4bb` passes independent13+5/focal14/full5309/7/9, branch95.332%, combined97.494%, patches64/64+13/13 and strict docs. Root-only failure, missing old GREEN provenance, retained-DB read violation and root htmlcov overwrite stay qualified. Wider T11 and untested backend/performance paths remain open. | [x] |
 | T12 | D | Confirm/fix A13 and pagination ordering/count/page boundary claims; backend-specific and in-memory regression tests. | [ ] |
-| T12a | D | A13 compatible fix `e18f02b` + tests `5528767`: RED3→GREEN5, full5322/7/9, patch17/17. `t12a-a13-cursor-types-implementation/README.md`; independent check pending, T12 open. | [ ] |
+| T12a | D | **A13 accepted 17645 (emitted Float/Decimal/UUID only):** `e18f02b`/`5528767`; RED3→same-byte GREEN5, independent HTTP9/24/focal13/full5322/7/9, branch95.338779%/combined97.498208%/patch17/17/strict-docs PASS. Initial failures and unchanged malformed TypeError in `t12a-a13-cursor-types-{implementation,independent}/README.md`. T12 open. | [x] |
 | T13 | D | Confirm/fix HTTP/cache/error/introspection/limits and async-view claims, separating documented defaults from defects and optional hardening; each necessary incompatible public-default change needs its own explained user approval before implementation. | [ ] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
@@ -105,7 +105,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | A10 | 89 | **Partly confirmed, wider claim open:** Email T10b accepted17234, two positive fields T10c accepted17314, generated DB redaction T10d accepted17370; no `ok:false`/general validation expansion. Read-only `t10-a10-remaining-validation-triage/README.md`: one SQLite frontend accepts blankFalse empty and MinLength as documented no-`full_clean()` boundary; CharField max_length rejects as field error, BigInt max+1 at HTTP400 coercion. Other fields/backends, constraints/upsert policy remain open; no blanket false-positive claim. | T10 |
 | A11 | 90 | **Confirmed and independently closed in approved T04b scope:** `441899a` predicts exact per-result length before allocation; default 1,000,000 Unicode characters, None opt-out (human approval15570). Documentation/provenance corrected in `40f0f57`; independent real-middleware oracle/recheck and final parent spot pass. Report-scale output remains arithmetic-only, never allocated; no total-response quota or proof of global memory estimates is claimed. Not a false positive. | T04b/T04 |
 | A12 | 91 | One public M2M SQLite probe confirms separate explicit AND tag-label x/y branches return [], while chained ORM finds the two-tag parent; one tags object correctly requires SAME tag. Source folds one Q/one filter; JOIN_SQL capture empty, reverse-FK unprobed in triage. BP-A12-AND-MANY-001 approved 17513: independent related rows across separate explicit AND branches, same-row grouping within one relation filter; all other filtering/scoping policies unchanged. Query-result correction pending T11c strict-TDD implementation. `t11-a12-and-many-triage/README.md`; phase-1 map `t11c-a12-and-many-implementation/README.md`. | T11/T11c |
-| A13 | 92 | Confirmed; emitted Float/Decimal/UUID nested cursor fixed in T12a (`e18f02b`/`5528767`), independent check pending. | T12 |
+| A13 | 92 | Accepted bounded valid Float/Decimal/UUID cursor fix T12a/17645; malformed typed errors unchanged. | T12 |
 
 ### Security design (§4)
 
@@ -229,10 +229,10 @@ Behavior/tests/guide/two-changelog rollback boundary `4c3e4bbd0df9948c53eb3d2d48
 
 ## Progress and next action
 
-The 100-row ledger is authoritative; immutable proofs and preimage retain earlier PARTIAL results and failures.
+The 100-row ledger governs; immutable proofs retain earlier PARTIAL results.
 
 **Historical recovery:** Exact pre-acceptance tracker `t10d-a10-db-errors-implementation/tracker-pre-acceptance.md` SHA `e45a8b7946a5210b75194c72b84feb22fa3a6e304fdc81915b4e8dd286d715c6`/Git `c23d120`; pre-registration `tracker-preimplementation.md` SHA `959b492839deff1f6bba9c63b95a668cdda6606985fef9154b8e1e261a386a25`/Git `6e3726e4`. Prior PARTIAL/fix qualifications remain in task rows/immutable proof (T06 A3/A4/M-D7, T07c/T07f, T10b/T10c); no recasting failures.
 
-**Next action:** Independently verify T12a. T12/T11 and 15 blocks open; 35 subunits closed.
+**Next action:** Seek approval for malformed typed-cursor error policy; T12/T11 and 15 blocks open, 36 subunits closed.
 
-**Mirror:** `odd/audit-400-remediation/tasks`, project `django-graphex`, observation15165; store/read back the full current document plus locator `odd/tasks/audit-400-remediation.md`.
+**Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
