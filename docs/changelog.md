@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Evaluate zero-argument factories on hand-authored `InputType` fields for
+  each new GraphQL-coerced input object rather than once at schema build.
+  Factory values no longer appear as fixed SDL defaults; plain literal
+  defaults, explicit values/null, resolver dict shape, model-derived partial
+  updates, and validated-data factories keep their existing contracts. Clients
+  relying on a generated SDL factory value must move to runtime input behavior.
+
 - Make automatic model-signal subscription notifications best-effort across
   snapshot preparation and delivery. Ordinary notification errors now log
   metadata only and drop the event without failing a successful database save

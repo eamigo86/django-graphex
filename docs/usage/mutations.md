@@ -1469,6 +1469,17 @@ fields; rehydrate it with `Base64FileInput(**kwargs["avatar"])` to get a validat
 instance with `.filename`, `.data`, `.content_type` attributes **and** a
 `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
 
+For hand-authored `InputType` fields, a zero-argument Pydantic
+`default_factory` runs for each **new coerced input object** when that field is
+omitted. It no longer runs while the schema is built or puts a fixed value in
+the SDL. For example, a `uid` factory previously rendered a snapshot such as
+`uid: String = "uid-1"`; it now renders `uid: String`, and each separately
+coerced `{}` input gets a fresh UID. Update clients that relied on the SDL's
+fixed factory value. Plain literal defaults still render as SDL defaults;
+explicit values and `null` still bypass a zero-argument factory. A resolver
+still receives a snake-keyed `dict`, not an automatically validated Pydantic
+instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
+
 !!! warning "Compile the input type before you declare the mutation"
     `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`
     to be compiled **already** — it is read when `YourMutation.Field()` is

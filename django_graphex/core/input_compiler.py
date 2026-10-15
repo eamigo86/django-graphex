@@ -26,7 +26,7 @@ import decimal
 import uuid
 import warnings
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from graphql import (
     GraphQLBoolean,
@@ -63,6 +63,42 @@ class GdxInputSpec:
     name: str | None = None
     description: str | None = None
     nested_fields: tuple[NestedInputField, ...] = ()
+
+
+class _FactoryOutType:
+    """Populate omitted hand-authored fields after each GraphQL input coercion.
+
+    The mapping contains callables, never factory results. A pruned input type
+    receives a new adapter with only its surviving fields.
+
+    Args:
+        factories: Zero-argument factories keyed by resolver-facing field name.
+    """
+
+    def __init__(self, factories: dict[str, Callable[[], Any]]) -> None:
+        self.factories = factories
+
+    def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Apply each omitted field factory to this coerced input object.
+
+        Args:
+            values: The GraphQL-coerced mapping using field out-names.
+
+        Returns:
+            The same mapping with fresh defaults for omitted fields.
+
+        Raises:
+            GraphQLError: When a factory fails during input coercion.
+        """
+        for field_name, factory in self.factories.items():
+            if field_name not in values:
+                try:
+                    values[field_name] = factory()
+                except Exception:
+                    raise GraphQLError(
+                        f"Could not resolve default for input field {field_name!r}."
+                    ) from None
+        return values
 
 
 @dataclass(frozen=True)
@@ -420,12 +456,9 @@ def _default_value_for(field_info: Any) -> Any:
       omits the = ... marker entirely).
     - explicit None default -> None (SDL renders = null).
     - a concrete value (1, False, ...) -> that value (SDL = <value>).
-    - a default_factory -> the factory is invoked ONCE here at compile time
-      and the produced value is used. SINGLE-EVALUATION CONSTRAINT: the factory
-      runs exactly once (when the fields thunk builds), so a mutable factory
-      default (e.g. list) yields one shared default instance baked into the
-      SDL — this matches graphql-core's static-default model and never re-runs
-      the factory per request.
+    - a zero-argument default_factory -> graphql-core Undefined. Its result is
+      supplied by the input object's out_type callback for each new coerced
+      object, not frozen into SDL or shared between executions.
     - a Pydantic 2.10+ VALIDATED-DATA factory (default_factory=lambda data:
       ...) -> graphql-core Undefined. Such a factory needs the partially
       validated instance data, so it has no compile-time value and cannot be a
@@ -438,11 +471,7 @@ def _default_value_for(field_info: Any) -> Any:
     from pydantic_core import PydanticUndefined
 
     if field_info.default_factory is not None:
-        if getattr(field_info, "default_factory_takes_validated_data", False):
-            # Needs the validated data -> no compile-time value exists.
-            return Undefined
-        # Single evaluation: call the factory exactly once at compile time.
-        return field_info.default_factory()
+        return Undefined
     if field_info.default is PydanticUndefined:
         return Undefined
     return field_info.default
@@ -586,11 +615,13 @@ def compile_input_type(
         exclude_fields: When set, omits these field names from the wire surface.
         include_fields: Field names force-included even when "only_fields" /
             "exclude_fields" would skip them (issue #65).
-        emit_defaults: Whether to surface Pydantic field defaults as graphql-core
-            "default_value" (so the SDL renders "= <value>"). None (the default)
-            AUTO-DETECTS: a hand-authored "InputType" subclass (it carries
-            "_gdx_opts") emits its user-declared defaults; a Django-model-derived
-            schema from "build_model_schema" (no "_gdx_opts") does NOT. This gate
+        emit_defaults: Whether to surface literal Pydantic field defaults as
+            graphql-core "default_value" (so the SDL renders "= <value>") and
+            to run zero-argument factories per new coerced input object. None
+            (the default) AUTO-DETECTS: a hand-authored "InputType" subclass
+            (it carries "_gdx_opts") emits user-declared literal defaults and
+            runtime factories; a Django-model-derived schema from
+            "build_model_schema" (no "_gdx_opts") does NOT. This gate
             is load-bearing: graphql-core injects an input field's "default_value"
             into the coerced dict for OMITTED fields, and the mutation
             "save_object" path relies on "model_fields_set" to distinguish an
@@ -601,16 +632,19 @@ def compile_input_type(
             semantics. Pass True/False to force the behavior.
 
     Returns:
-        A "GraphQLInputObjectType" with a "lambda" thunk for fields.
+        A "GraphQLInputObjectType" with a lazy field thunk and, where enabled,
+        a per-object zero-argument factory callback.
     """
     # AUTO-DETECT (emit_defaults=None): only hand-authored ``InputType`` subclasses
-    # (which carry ``_gdx_opts``) surface their declared defaults into the SDL.
+    # (which carry ``_gdx_opts``) surface literal defaults in SDL and run
+    # zero-argument factories when new input objects are coerced.
     # Django-model-derived schemas (``<Model>Native`` from ``build_model_schema``)
     # must NOT, so the mutation omit-vs-null contract stays intact (see the
     # ``emit_defaults`` docstring above).
     _emit_defaults = (
         hasattr(model, "_gdx_opts") if emit_defaults is None else emit_defaults
     )
+    factory_fields: dict[str, Callable[[], Any]] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -699,14 +733,23 @@ def compile_input_type(
                 gql_type = gql_base_type
 
             # Build the GraphQLInputField with out_name = snake field_name.
-            # ``default_value`` carries the Pydantic default (Undefined when the
-            # field has none) so the SDL renders the correct ``= ...`` marker.
+            # ``default_value`` carries a concrete Pydantic literal default
+            # (Undefined for absent defaults or factories) so SDL renders only
+            # values that are genuinely fixed across input objects.
             # Gated on ``_emit_defaults``: the Django-mutation path leaves it
             # Undefined so graphql-core does NOT inject a value for omitted fields
             # (preserving the ``model_fields_set`` omit-vs-null contract).
             default_value = (
                 _default_value_for(field_info) if _emit_defaults else Undefined
             )
+            if (
+                _emit_defaults
+                and field_info.default_factory is not None
+                and not getattr(
+                    field_info, "default_factory_takes_validated_data", False
+                )
+            ):
+                factory_fields[field_name] = field_info.default_factory
             gql_field = GraphQLInputField(
                 type_=gql_type,
                 out_name=field_name,
@@ -831,6 +874,7 @@ def compile_input_type(
         name=name,
         fields=lambda: _build_fields(),
         description=description,
+        out_type=_FactoryOutType(factory_fields) if _emit_defaults else None,
         extensions={
             "gdx": GdxInputSpec(
                 pydantic_model=model,

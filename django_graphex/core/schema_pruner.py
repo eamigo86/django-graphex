@@ -402,10 +402,11 @@ class _Pruner:
     def _clone_input(self, gtype: Any) -> Any:
         """Clone an input object type, dropping the fields the caller may not use.
 
-        Only NESTED-object input fields carry an explicit
-        gdx_required_perms stamp, so every input field that exists today is
-        unaffected. Dropping one is safe: a nested input field is never NonNull
-        at the parent level.
+        Generated nested-object input fields carry explicit
+        gdx_required_perms stamps. Dropping one is safe: a nested input field
+        is never NonNull at the parent level. A hand-authored input field may
+        also be stamped; its factory callback must be restricted to surviving
+        out-names so pruning cannot reinsert a hidden field.
 
         A type that loses EVERY field is not cloned at all — the fixpoint has
         already dropped it from the survivors, and _field_survives has
@@ -418,6 +419,24 @@ class _Pruner:
         generated universe references an emptied input object.
         """
         kwargs = gtype.to_kwargs()
+        # A hand-authored input factory callback must not reinsert a field
+        # removed from this permission-scoped clone. Keep only the factories
+        # whose resolver-facing out-names survive the same field projection.
+        from django_graphex.core.input_compiler import _FactoryOutType
+
+        if isinstance(gtype.out_type, _FactoryOutType):
+            surviving = {
+                ifield.out_name or wire_name
+                for wire_name, ifield in self._filtered_input_fields[gtype.name].items()
+                if self._filter_key_survives(gtype, ifield)
+            }
+            kwargs["out_type"] = _FactoryOutType(
+                {
+                    name: factory
+                    for name, factory in gtype.out_type.factories.items()
+                    if name in surviving
+                }
+            )
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)
             for fname, ifield in self._filtered_input_fields[g.name].items()

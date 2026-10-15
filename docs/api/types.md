@@ -390,16 +390,26 @@ Get the type when the unmounted type is mounted.
 
 !!! note "Pydantic defaults on a hand-authored `InputType`"
 
-    A field declared on an `InputType` with a plain default (`limit: int = 10`)
-    or a `default_factory` (`Field(default_factory=list)`) surfaces that value as
-    the SDL default (`limit: Int = 10`); the factory runs **once**, at compile
-    time.
+    A plain default (`limit: int = 10`) remains a fixed SDL default
+    (`limit: Int = 10`). A zero-argument `default_factory` is different: its
+    field has **no SDL default**, and the factory runs for each new GraphQL-
+    coerced input object that omits the field. For example, `uid: str =
+    Field(default_factory=new_uid)` renders as `uid: String`, not a fixed
+    `uid: String = "uid-1"`. Two separate omitted inputs receive fresh values;
+    two aliases referencing the **same variable input object** share that one
+    coerced value. Explicit values and `null` do not invoke the factory.
+
+    Resolver input remains a plain `dict` with snake-case field names. A
+    factory returning a list now supplies a fresh list per new input object,
+    rather than a mutable list shared across requests. A factory error becomes
+    a GraphQL input error without exposing the original exception text.
 
     The one exception is Pydantic 2.10+'s **validated-data** factory
     (`Field(default_factory=lambda data: data["a"] + 1)`): it needs the
-    partially validated instance, so it has no compile-time value and the field
-    renders with **no** `= …` marker. Pydantic still applies it per instance
-    when the input is validated.
+    partially validated instance, so GraphQL cannot evaluate it; the field
+    renders with **no** `= …` marker and Pydantic still applies it when the
+    input is explicitly validated. Model-derived mutation inputs continue to
+    omit synthetic defaults so omitted updates remain distinct from `null`.
 
 ---
 
