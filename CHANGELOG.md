@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fix generated relation filters when a related field is named `year`,
+  `month`, `day`, `range`, or `exact`: nested field lookups now reach that
+  field, while direct relation `exact`/`in`/`range` lookups target the related
+  primary key even when a field has the same name. Generated SDL and input
+  shapes are unchanged; previously failing valid requests now return their
+  matching rows.
+
 - Treat explicit `page: null` as omitted `page` (first page 1) for page-number
   pagination on root and nested lists. This replaces the previous raw
   comparison error for null; clients relying on that error should reject null

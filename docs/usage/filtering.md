@@ -429,6 +429,14 @@ applies `.distinct()` so join fan-out doesn't duplicate rows.
     { posts(filter: { author: { id: { exact: 5 }, name: { icontains: "ada" } } }) { results { title } } }
     ```
 
+    A related model field may itself be named like a lookup. For example,
+    `{"author__year": ("exact",), "author__exact": ("exact",)}` still uses
+    nested field inputs: `author: { year: { exact: 2024 } }` and
+    `author: { exact: { exact: 7 } }`. A direct relation-PK declaration uses
+    scalar/list values instead, such as `author: { exact: 5 }` when no path
+    through `author` is declared. These are existing input shapes; the
+    related field name does not replace the PK lookup.
+
 !!! info "Nested lookups are unioned with the related type's own declaration"
 
     When the related model has its own root `filter_fields`, a nested request

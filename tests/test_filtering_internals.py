@@ -235,6 +235,8 @@ def test_is_pk_lookups_non_mapping_is_false() -> None:
     assert _is_pk_lookups(5) is False
     assert _is_pk_lookups({"exact": 1}) is True
     assert _is_pk_lookups({"name": {"exact": 1}}) is False
+    assert _is_pk_lookups({"exact": {"exact": 1}}) is False
+    assert _is_pk_lookups({"range": {"exact": "blue"}}) is False
 
 
 def test_to_q_none_node_is_empty() -> None:

@@ -444,7 +444,7 @@ def test_to_q_pk_lookups_on_to_many_relation_flag_distinct() -> None:
     """
     q, many = to_q({"articles": {"in": [1, 2]}}, Author)
     assert many is True
-    assert "articles__in" in str(q)
+    assert "articles__pk__in" in str(q)
 
 
 def test_to_q_pk_lookups_on_to_many_inside_combinators_flag_distinct() -> None:
@@ -489,10 +489,10 @@ def test_to_q_pk_lookups_on_relation() -> None:
     """Filtering a forward relation field directly with "exact" builds the pk-based lookup.
 
     This test breaks if a relation field filtered without drilling into a
-    sub-field stops building the "author__exact" lookup.
+    sub-field stops anchoring the lookup at "author__pk__exact".
     """
     q, _ = to_q({"author": {"exact": 5}}, Article)
-    assert "author__exact" in str(q)
+    assert "author__pk__exact" in str(q)
 
 
 # --------------------------------------------------------------------------- #

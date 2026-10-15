@@ -341,7 +341,7 @@ def test_direct_relation_and_unset_lookup_boundaries(db: None) -> None:
     assert _is_pk_lookups({"in": None}) is False
     assert _is_pk_lookups({"exact": Undefined}) is False
     q, many = to_q({"author": {"exact": None}}, ScalarKindsModel)
-    assert q == models.Q(author__isnull=True)
+    assert q == models.Q(author__pk__isnull=True)
     assert many is False
     for value in (
         {"date": {"exact": Undefined}},
@@ -394,7 +394,7 @@ def test_to_many_null_keeps_distinct_and_nested_prefix(db: None) -> None:
     assert result.count() == 2
     assert "DISTINCT" in str(result.query)
     direct_q, direct_many = to_q({"articles": {"exact": None}}, Author)
-    assert direct_q == models.Q(articles__isnull=True)
+    assert direct_q == models.Q(articles__pk__isnull=True)
     assert direct_many is True
     assert list(
         NativeFilterBackend()

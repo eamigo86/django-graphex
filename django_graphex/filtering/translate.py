@@ -52,16 +52,18 @@ def _is_pk_lookups(value: Any) -> bool:
     """Return whether a relation's value is a plain-pk lookups mapping.
 
     A relation declared directly (e.g. '"author": ("exact", "in")') yields a
-    value whose keys are lookup names ("exact"/"in"/...), not related-model
-    field names. Such a value is applied as a leaf against the FK column.
+    value whose keys are lookup names ("exact"/"in"/...), with scalar or list
+    values. A nested related field may itself be named "exact" or "range";
+    its lookup value is another mapping and must be traversed instead.
     An explicitly present "exact" with value None remains a leaf lookup.
 
     Args:
         value: The value mapped under a relation key.
 
     Returns:
-        True when every applicable key is a known lookup name (and there is
-        at least one), so the relation is treated as plain-pk lookups.
+        True when every applicable key is a known lookup name with a leaf
+        value (and there is at least one), so the relation is treated as
+        plain-pk lookups.
     """
     if not hasattr(value, "items"):
         return False
@@ -70,7 +72,9 @@ def _is_pk_lookups(value: Any) -> bool:
         for key, val in value.items()
         if _is_set(val) or (key == "exact" and val is None)
     ]
-    return bool(keys) and all(key in _LOOKUP_NAMES for key in keys)
+    return bool(keys) and all(
+        key in _LOOKUP_NAMES and not hasattr(value[key], "items") for key in keys
+    )
 
 
 def _is_to_many(model: type[Model], name: str) -> bool:
@@ -267,8 +271,10 @@ def to_q(
             # attribute 'items'`` (#1571).
             continue
 
-        # A scalar field, or a relation declared directly (plain-pk lookups:
-        # ``field__exact`` / ``field__in`` resolve against the related pk).
-        result &= _leaf_q(prefix, key, value)
+        # Anchor direct relation lookups at its PK. Without an explicit PK
+        # component, Django may interpret "relation__exact" or
+        # "relation__range" as related fields with those names.
+        leaf = f"{key}__pk" if related is not None else key
+        result &= _leaf_q(prefix, leaf, value)
 
     return result, touched_to_many
