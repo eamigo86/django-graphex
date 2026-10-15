@@ -92,7 +92,7 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination)
 
 ```python
 LimitOffsetGraphqlPagination(
-    default_limit=None,   # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    default_limit=100,    # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     max_limit=None,       # from DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
     ordering="",
     limit_query_param="limit",
@@ -256,7 +256,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination)
 
 ```python
 PageGraphqlPagination(
-    page_size=None,            # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    page_size=100,             # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     page_size_query_param=None,
     max_page_size=None,        # from DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
     ordering="",
@@ -474,7 +474,7 @@ CursorGraphqlPagination(
     ordering="-created",
     cursor_query_param="cursor",
     first_query_param="first",
-    page_size=None,       # defaults to DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    page_size=100,        # defaults to DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     max_page_size=None,   # defaults to DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
 )
 ```
@@ -666,10 +666,13 @@ clamped at the maximum:
 | `25` | `100` | – | `25` |
 | `25` | `100` | `500` | `100` (clamped) |
 
-So a list can never exceed its maximum, even unpaginated. With **no** default and
-**no** maximum (the out-of-the-box defaults), behavior is unchanged — the full
-queryset is returned. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` /
-`max_page_size`) to bound it.
+So a list can never exceed its maximum. The shipped default is now `100` with
+**no** maximum; an omitted size returns the first 100 rows, while an explicit
+request above 100 is allowed where the paginator exposes a size argument. The
+unbounded row above requires explicit `None` for both LimitOffset default and
+maximum; Page with both unset returns `results: null`, while Cursor falls back
+to 20. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` / `max_page_size`) when a
+hard ceiling is required.
 
 Clamping is **silent**: a request above the maximum does not raise an error —
 the effective size is `min(requested, max)`, matching the convention of Django

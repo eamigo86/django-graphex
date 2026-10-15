@@ -25,6 +25,7 @@ from graphql import graphql_sync
 
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -395,7 +396,19 @@ def _build_window_hook_schema(
     _AuthorListType = _gtype(
         "_WinHookAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_WIN})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_WIN,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -643,7 +656,19 @@ def _build_filtered_hook_schema():
     _AuthorListType = _gtype(
         "_FiltHookAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_FILT})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_FILT,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -782,7 +807,19 @@ def _build_unfiltered_hook_schema(has_hook=True):
     _AuthorListType = _gtype(
         "_UnfHookAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_UNFILT})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_UNFILT,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -946,7 +983,19 @@ def _build_site_b_schema():
     _AuthorListType = _gtype(
         "_SiteBAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_SITE_B})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_SITE_B,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -1120,7 +1169,19 @@ def _build_related_field_forward_schema():
     _PostListType = _gtype(
         "_RelFwdPostListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "registry": _REG_RELFWD,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -1338,7 +1399,19 @@ def _build_site_b_multi_schema():
     _AuthorListType = _gtype(
         "_SBMAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_SITE_B_MULTI})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_SITE_B_MULTI,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -1634,7 +1707,19 @@ class TestSafeModeDegrade(TestCase):
         _AuthorListType = _gtype(
             "_SMAuthorListType",
             (DjangoListObjectType,),
-            {"Meta": type("Meta", (), {"model": Author, "registry": _reg})},
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "model": Author,
+                        "registry": _reg,
+                        "pagination": LimitOffsetGraphqlPagination(
+                            default_limit=None, max_limit=None
+                        ),
+                    },
+                )
+            },
         )
 
         return DjangoGraphQLSchema(

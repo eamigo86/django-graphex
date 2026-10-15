@@ -450,9 +450,13 @@ def test_seed_native_sdl_byte_identical_to_head_baseline() -> None:
     byte-identical to the HEAD (pre-S-rel-4) baseline — S-rel-4 must be
     SDL-NEUTRAL.
     """
-    from tests.core._sdl_parity_seed import render_native_sdl
+    from tests.core._sdl_parity_seed import (
+        normalize_approved_page_size_delta,
+        render_native_sdl,
+    )
 
     sdl = render_native_sdl()
+    sdl = normalize_approved_page_size_delta(sdl)
     assert len(sdl) == _HEAD_SEED_SDL_LEN, (
         f"seed SDL length changed: {len(sdl)} != {_HEAD_SEED_SDL_LEN} "
         "(S-rel-4 must be SDL-neutral)"
@@ -665,14 +669,19 @@ def test_choices_seed_sdl_byte_identical_and_enum_renders() -> None:
     (S-enum-2 must be SDL-NEUTRAL) or the choices field stops rendering as its
     enum (S-enum-1 output unchanged).
     """
-    from tests.core._sdl_parity_seed import extract_type_block, render_native_sdl
+    from tests.core._sdl_parity_seed import (
+        extract_type_block,
+        normalize_approved_page_size_delta,
+        render_native_sdl,
+    )
     from tests.core.conftest import normalize_sdl
 
     sdl = render_native_sdl()
-    assert len(sdl) == _HEAD_SEED_SDL_LEN, (
-        f"seed SDL length changed: {len(sdl)} != {_HEAD_SEED_SDL_LEN}"
+    normalized = normalize_approved_page_size_delta(sdl)
+    assert len(normalized) == _HEAD_SEED_SDL_LEN, (
+        f"seed SDL length changed: {len(normalized)} != {_HEAD_SEED_SDL_LEN}"
     )
-    digest = hashlib.sha256(sdl.encode()).hexdigest()
+    digest = hashlib.sha256(normalized.encode()).hexdigest()
     assert digest == _HEAD_SEED_SDL_SHA256, (
         "seed SDL not byte-identical to HEAD — S-enum-2 must be SDL-neutral.\n"
         f"Got SHA256 {digest}, expected {_HEAD_SEED_SDL_SHA256}"

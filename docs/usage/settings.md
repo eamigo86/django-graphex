@@ -20,7 +20,7 @@ DJANGO_GRAPHEX = {
 
     # --- Pagination -------------------------------------------------------- #
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
-    "DEFAULT_PAGE_SIZE": None,
+    "DEFAULT_PAGE_SIZE": 100,
     "MAX_PAGE_SIZE": None,
 
     # --- Response cache ---------------------------------------------------- #
@@ -104,7 +104,7 @@ the default database connection, not arbitrary additional database aliases.
 | Setting | Default | Description |
 |---|---|---|
 | `DEFAULT_PAGINATION_CLASS` | `LimitOffsetGraphqlPagination` | Dotted path (or class) of the paginator applied to list fields that don't set their own. Set to `None` to disable default pagination (list fields then return a plain list). See [Pagination](pagination.md). |
-| `DEFAULT_PAGE_SIZE` | `None` | Page size used when the client omits it. `None` = unbounded unless a paginator default applies. |
+| `DEFAULT_PAGE_SIZE` | `100` | Size inherited by LimitOffset, Page, and Cursor paginators when their size constructor argument is omitted. Set a different positive value before importing the pagination classes to change the startup default. Explicit `None` retains each paginator's legacy behavior; it is not a universal “return all” option. |
 | `MAX_PAGE_SIZE` | `None` | Hard ceiling on the effective page size, applied **even when no page-size argument is sent**. `None` = no ceiling. |
 
 ## Response cache

@@ -98,12 +98,12 @@ LimitOffsetGraphqlPagination(
     `max_page_size` is silently clamped, and an omitted `pageSize` resolves as
     `page_size` → `max_page_size`.
 
-!!! info "`ordering` applies even when the list is unbounded"
+!!! info "`ordering` also applies when the list is unbounded"
 
-    The last row of the table above is the **shipped default**: with no
-    `pagination=` on the list type and no `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`
-    in your settings, the default `LimitOffsetGraphqlPagination` is unbounded and
-    returns the whole set. `ordering` is **not** part of that page-size decision —
+    The last row now requires an explicit `None` default and no maximum. With no
+    `pagination=` on the list type and no `DEFAULT_PAGE_SIZE` override, the
+    default `LimitOffsetGraphqlPagination` inherits 100. `ordering` is **not**
+    part of that page-size decision —
     it is applied (and validated) on every request, bounded or not. So
     `results(ordering: "username")` sorts correctly on a list that has no page
     size configured, and `results(ordering: "nonexistent")` is rejected there with
@@ -986,10 +986,21 @@ They serve as library-wide defaults; **instance arguments always take precedence
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DEFAULT_PAGINATION_CLASS` | `"django_graphex.paginations.LimitOffsetGraphqlPagination"` | Paginator class used when no `Meta.pagination` is set on a type. |
-| `DEFAULT_PAGE_SIZE` | `None` | Default page/limit size. `None` means unbounded (all rows). |
+| `DEFAULT_PAGE_SIZE` | `100` | Default page/limit size inherited by omitted constructor size arguments. `None` restores each paginator's legacy fallback, not universally “all rows.” |
 | `MAX_PAGE_SIZE` | `None` | Maximum page/limit size the client may request. `None` means no cap. |
 
 **Precedence:** instance arg (e.g. `LimitOffsetGraphqlPagination(default_limit=25)`) > `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`.
+
+Without an explicit size, global LimitOffset lists and omitted-size Page and
+Cursor instances return at most the first 100 rows. Fetch further rows with
+`offset: 100`, `page: 2`, or the returned cursor. This is a **default**, not a
+maximum: with `MAX_PAGE_SIZE: None`, a client can request more than 100 where
+the paginator exposes `limit`, `pageSize`, or `first`. A local positive size
+overrides the global default. If you deliberately set `DEFAULT_PAGE_SIZE: None`
+before startup (or pass an explicit `None` to an instance), LimitOffset remains
+unbounded, Page still returns `results: null` when no size or maximum applies,
+and Cursor keeps its 20-row final fallback. Do not use Page's `None` value as
+an “all results” mode.
 
 !!! warning "Global defaults are read at import time"
 

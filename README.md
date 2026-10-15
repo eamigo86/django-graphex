@@ -157,6 +157,14 @@ DJANGO_GRAPHEX = {
 }
 ```
 
+The library default is `DEFAULT_PAGE_SIZE: 100` and `MAX_PAGE_SIZE: None`.
+Omit `DEFAULT_PAGE_SIZE` to inherit 100 for LimitOffset, Page, and Cursor
+paginators; the explicit `20` above is an application override. A default is
+not a maximum: configure `MAX_PAGE_SIZE` to cap client-requested sizes. Clients
+that previously relied on an unbounded omitted-size list should paginate past
+the first 100 rows or explicitly opt out; `None` has paginator-specific legacy
+behavior and does not mean “all rows” for Page pagination.
+
 Two keys are **not** in that dict on purpose — both ship enabled, and pinning a
 key to its own default only hides that you depend on it:
 

@@ -154,7 +154,11 @@ class CostEngineTest(TestCase):
         self.assertEqual(_cost(schema, q2), 10)
 
     @override_settings(
-        DJANGO_GRAPHEX={"MAX_PAGE_SIZE": None, "DEFAULT_LIST_MULTIPLIER": 10}
+        DJANGO_GRAPHEX={
+            "MAX_PAGE_SIZE": None,
+            "DEFAULT_PAGE_SIZE": None,
+            "DEFAULT_LIST_MULTIPLIER": 10,
+        }
     )
     def test_default_multiplier_when_unbounded(self) -> None:
         """Assert an unbounded list field falls back to DEFAULT_LIST_MULTIPLIER.
@@ -170,7 +174,13 @@ class CostEngineTest(TestCase):
         q = "{ companies { properties { owner { name } } } }"
         self.assertEqual(_cost(schema, q), 111)
 
-    @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 1, "MAX_PAGE_SIZE": None})
+    @override_settings(
+        DJANGO_GRAPHEX={
+            "MAX_QUERY_COST": 1,
+            "MAX_PAGE_SIZE": None,
+            "DEFAULT_PAGE_SIZE": None,
+        }
+    )
     def test_unbounded_list_warns_once(self) -> None:
         """Assert an unbounded list field emits a one-shot "RuntimeWarning".
 

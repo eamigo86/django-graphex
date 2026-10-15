@@ -37,6 +37,7 @@ from graphql.language.ast import FragmentDefinitionNode, OperationDefinitionNode
 
 from django_graphex.core import ObjectType, field
 from django_graphex.fields import DjangoListObjectField, DjangoObjectField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.settings import graphql_api_settings
@@ -659,6 +660,7 @@ class AccountListType(DjangoListObjectType):
 
         model = Account
         registry = RO2O
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class ProfileListType(DjangoListObjectType):
@@ -675,6 +677,7 @@ class ProfileListType(DjangoListObjectType):
 
         model = Profile
         registry = RO2O
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class O2OQuery(ObjectType):
@@ -831,6 +834,7 @@ class RProfileListType(DjangoListObjectType):
 
         model = Profile
         registry = RGFK
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class OptNoteType(DjangoObjectType):
@@ -863,6 +867,7 @@ class OptNoteListType(DjangoListObjectType):
 
         model = OptNote
         registry = RGFK
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class GFKQuery(ObjectType):
@@ -2827,6 +2832,7 @@ class EPostListType(DjangoListObjectType):
 
         model = __import__("tests.models", fromlist=["Post"]).Post
         registry = RAUTHOR
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class EAuthorListType(DjangoListObjectType):
@@ -2843,6 +2849,7 @@ class EAuthorListType(DjangoListObjectType):
 
         model = __import__("tests.models", fromlist=["Author"]).Author
         registry = RAUTHOR
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class ETagListType(DjangoListObjectType):
@@ -2859,6 +2866,7 @@ class ETagListType(DjangoListObjectType):
 
         model = __import__("tests.models", fromlist=["Tag"]).Tag
         registry = RAUTHOR
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class EProfileType(DjangoObjectType):
@@ -2891,6 +2899,7 @@ class EProfileListType(DjangoListObjectType):
 
         model = Profile
         registry = RAUTHOR
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class EOptNoteType(DjangoObjectType):
@@ -2923,6 +2932,7 @@ class EOptNoteListType(DjangoListObjectType):
 
         model = OptNote
         registry = RAUTHOR
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class EAuthorQuery(ObjectType):

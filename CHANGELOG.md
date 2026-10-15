@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Change the library `DEFAULT_PAGE_SIZE` from `None` to `100`. Omitted sizes on
+  the global LimitOffset paginator and default-constructed Page/Cursor
+  paginators now return the first 100 rows; clients must paginate for later
+  rows. An explicit positive global or per-type size still wins. This is not a
+  new maximum (`MAX_PAGE_SIZE` remains `None`), and explicit `None` retains each
+  paginator's existing behavior, including Page's `results: null` when no
+  effective size exists. Set `DEFAULT_PAGE_SIZE` before importing paginator
+  classes at startup; existing instances are not hot-reloaded.
+
 - Fix generated relation filters when a related field is named `year`,
   `month`, `day`, `range`, or `exact`: nested field lookups now reach that
   field, while direct relation `exact`/`in`/`range` lookups target the related

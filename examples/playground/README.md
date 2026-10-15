@@ -218,7 +218,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Pagination** | | |
 | `LimitOffsetGraphqlPagination` | ✅ | `PostListType`, `NoteModelType`, `posts_flat` |
 | `PageGraphqlPagination` | ✅ | `AuthorListType` |
-| `CursorGraphqlPagination` | ✅ | `CommentListType` — also exposes `pageInfo` |
+| `CursorGraphqlPagination` | ✅ | `CommentListType` — also exposes `pageInfo`; omitting `first` inherits the library's 100-row default (`MAX_PAGE_SIZE` remains unset) |
 | **Filtering** | | |
 | `filter_fields` on object types | ✅ | All `DjangoObjectType` subclasses |
 | Filtering on list fields | ✅ | `posts(filter: { status: { exact: PUBLISHED }, title: { icontains: "…" } })` |

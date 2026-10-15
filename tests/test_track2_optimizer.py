@@ -26,6 +26,7 @@ from graphql import graphql_sync
 
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField, DjangoObjectField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType, DjangoUnionType
@@ -396,6 +397,9 @@ def _build_gfk_union_schema(
         class Meta:
             model = Track2GfkComment
             registry = reg
+            pagination = LimitOffsetGraphqlPagination(
+                default_limit=None, max_limit=None
+            )
 
     class Query(ObjectType):
         all_comments = DjangoListObjectField(GfkCommentListType)
@@ -701,6 +705,9 @@ def test_gfk_union_proxy_members_no_duplicate_content_type_valueerror() -> None:
         class Meta:
             model = Track2GfkComment
             registry = reg
+            pagination = LimitOffsetGraphqlPagination(
+                default_limit=None, max_limit=None
+            )
 
     class Query(ObjectType):
         all_comments = DjangoListObjectField(GfkCommentListType)

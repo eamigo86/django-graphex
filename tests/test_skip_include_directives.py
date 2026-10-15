@@ -1081,6 +1081,7 @@ class OptimizerFilteredPrefetchSkipTest(TestCase):
             DjangoListObjectField,
             DjangoNestedListObjectField,
         )
+        from django_graphex.paginations import LimitOffsetGraphqlPagination
         from django_graphex.registry import Registry
         from django_graphex.schema import DjangoGraphQLSchema
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -1105,6 +1106,9 @@ class OptimizerFilteredPrefetchSkipTest(TestCase):
             class Meta:
                 model = Author
                 registry = _reg
+                pagination = LimitOffsetGraphqlPagination(
+                    default_limit=None, max_limit=None
+                )
 
         class _SkipFiltQuery(ObjectType):
             authors = DjangoListObjectField(_SkipFiltAuthorListType)

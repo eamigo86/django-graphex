@@ -30,7 +30,7 @@ DEFAULTS = {
     # Dotted path (or class) of the default paginator applied to list fields
     # that don't set their own. None disables default pagination.
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
-    "DEFAULT_PAGE_SIZE": None,  # page size when the client omits one (None = unbounded)
+    "DEFAULT_PAGE_SIZE": 100,  # page size when the client omits one (None = no default)
     "MAX_PAGE_SIZE": None,  # hard ceiling on the effective page size (None = no cap)
     # Response shaping & cache
     "CLEAN_RESPONSE": False,  # strip null values from the response payload

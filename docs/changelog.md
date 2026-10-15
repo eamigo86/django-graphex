@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Change the library `DEFAULT_PAGE_SIZE` from `None` to `100`. Omitted sizes on
+  the global LimitOffset paginator and default-constructed Page/Cursor
+  paginators now return the first 100 rows; clients must paginate for later
+  rows. An explicit positive global or per-type size still wins. This is not a
+  new maximum (`MAX_PAGE_SIZE` remains `None`), and explicit `None` retains each
+  paginator's existing behavior, including Page's `results: null` when no
+  effective size exists. Set `DEFAULT_PAGE_SIZE` before importing paginator
+  classes at startup; existing instances are not hot-reloaded.
+
 - Fix generated relation filters when a related field is named `year`,
   `month`, `day`, `range`, or `exact`: nested field lookups now reach that
   field, while direct relation `exact`/`in`/`range` lookups target the related
@@ -2263,8 +2272,8 @@ forbids, or declare the read host with `model_operations = ("list", "retrieve")`
   operation name is now honoured when classifying the request, and an
   undeterminable operation bypasses the cache.
 - **`ordering` did nothing on any list that used the default paginator.** With
-  the shipped defaults (no `pagination=` on the list type, no `DEFAULT_PAGE_SIZE`
-  or `MAX_PAGE_SIZE`) the paginator is unbounded, and it returned the queryset
+  the then-shipped defaults (no `pagination=` on the list type, no `DEFAULT_PAGE_SIZE`
+  or `MAX_PAGE_SIZE`) the paginator was unbounded, and it returned the queryset
   from its unbounded early-return *before* reading `ordering` — so the argument
   was advertised in the schema, autocompleted in GraphiQL, and silently ignored:
   `ordering: "name"` and `ordering: "-name"` both returned insertion order, and

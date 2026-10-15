@@ -121,7 +121,7 @@ DJANGO_GRAPHEX = {
     "EXPOSE_QUERY_COST": False,    # True = add extensions.cost to responses
     "DEFAULT_LIST_MULTIPLIER": 10, # used only when no page size / cap is known
     "MAX_PAGE_SIZE": 100,          # the realistic per-list ceiling (recommended)
-    "DEFAULT_PAGE_SIZE": None,     # fallback when MAX_PAGE_SIZE is unset but a default is configured
+    "DEFAULT_PAGE_SIZE": 100,      # library default; not a hard cap
     # Argument names treated as a list's page size (default below):
     "COST_PAGINATION_ARGS": ("limit", "page_size", "first", "last"),
 }
@@ -132,7 +132,7 @@ DJANGO_GRAPHEX = {
 | `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected. `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
 | `EXPOSE_QUERY_COST` | `False` | When `True`, responses include `extensions.cost`. |
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
-| `DEFAULT_PAGE_SIZE` | `None` | Fallback multiplier for an unbounded list when `MAX_PAGE_SIZE` is not set. |
+| `DEFAULT_PAGE_SIZE` | `100` | Fallback multiplier when `MAX_PAGE_SIZE` is not set; also the library's inherited page size, not a hard cap. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. |
 

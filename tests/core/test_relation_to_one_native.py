@@ -259,9 +259,13 @@ def test_seed_native_sdl_byte_identical_to_head_baseline() -> None:
     byte-identical to the HEAD (pre-S-rel-2) baseline — S-rel-2 must be
     SDL-NEUTRAL.
     """
-    from tests.core._sdl_parity_seed import render_native_sdl
+    from tests.core._sdl_parity_seed import (
+        normalize_approved_page_size_delta,
+        render_native_sdl,
+    )
 
     sdl = render_native_sdl()
+    sdl = normalize_approved_page_size_delta(sdl)
     assert len(sdl) == _HEAD_SEED_SDL_LEN, (
         f"seed SDL length changed: {len(sdl)} != {_HEAD_SEED_SDL_LEN} "
         "(S-rel-2 must be SDL-neutral)"

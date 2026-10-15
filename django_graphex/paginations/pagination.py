@@ -1016,8 +1016,8 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         # validation allowlist all see the same terms. Resolved BEFORE the
         # unbounded early-return below: ``ordering`` is advertised on every list
         # field this paginator backs, so skipping it whenever no page size is
-        # configured made the argument silently inert under the SHIPPED defaults
-        # (``DEFAULT_PAGE_SIZE`` and ``MAX_PAGE_SIZE`` are both ``None``).
+        # configured made the argument silently inert under the former library
+        # defaults (both global page-size settings were ``None``).
         order, allowed = _resolve_ordering(
             kwargs, self.ordering_param, self.ordering, self.ordering_allowed_attnames
         )
@@ -1136,7 +1136,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         # Client can control the page using this query parameter.
         self.page_query_param = "page"
 
-        # The default page size. Defaults to `None`.
+        # The default page size inherits DEFAULT_PAGE_SIZE (100 if not overridden).
         self.page_size = page_size
 
         # Client can control the page size using this query parameter.

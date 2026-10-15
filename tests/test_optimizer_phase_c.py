@@ -1014,11 +1014,26 @@ class TestWalkerPaginationArgExtraction(TestCase):
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _g2_reg})},
         )
-        # No pagination -> no GenericPaginationField on results
+        # Explicitly opt out of the new 100-row default to retain this
+        # unbounded/no-window control path.
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+
         _PostListTypeCustom = _gtype(
             "_G2PostListTypeCustom",
             (DjangoListObjectType,),
-            {"Meta": type("Meta", (), {"model": Post, "registry": _g2_reg})},
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "model": Post,
+                        "registry": _g2_reg,
+                        "pagination": LimitOffsetGraphqlPagination(
+                            default_limit=None, max_limit=None
+                        ),
+                    },
+                )
+            },
         )
         _AuthorTypeCustom = _gtype(
             "_G2AuthorTypeCustom",
@@ -1919,7 +1934,7 @@ class TestC3FallbackRegressions(TestCase):
 
         _REG = Registry()
         # Unbounded: no default_limit, no max_limit → prefetch_window_slice returns None.
-        paginator = LimitOffsetGraphqlPagination()  # DEFAULT_PAGE_SIZE=None → unbounded
+        paginator = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
         _PostType = _gtype(
             "_UbPostType",
