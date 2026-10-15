@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Make an explicitly supplied `exact: null` in generated query filters select
+  SQL NULL rows, matching `isnull: true`; an omitted lookup still adds no
+  predicate. This includes nullable relation IDs and JSON fields (SQL NULL,
+  not JSON `null`). Clients using `exact: null` to mean “ignore this filter”
+  must omit the lookup. Other null lookups, custom filters, empty Boolean
+  operands, and the generated input schema are unchanged.
+
 - Hide table, column, and constraint details from unclassified Django
   `IntegrityError` failures in generated create/update/delete GraphQL fields,
   including nested writes. Clients now receive the fixed top-level message

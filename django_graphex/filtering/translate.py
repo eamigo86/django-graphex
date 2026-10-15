@@ -54,17 +54,22 @@ def _is_pk_lookups(value: Any) -> bool:
     A relation declared directly (e.g. '"author": ("exact", "in")') yields a
     value whose keys are lookup names ("exact"/"in"/...), not related-model
     field names. Such a value is applied as a leaf against the FK column.
+    An explicitly present "exact" with value None remains a leaf lookup.
 
     Args:
         value: The value mapped under a relation key.
 
     Returns:
-        True when every set key is a known lookup name (and there is at least
-        one), so the relation should be treated as plain-pk lookups.
+        True when every applicable key is a known lookup name (and there is
+        at least one), so the relation is treated as plain-pk lookups.
     """
     if not hasattr(value, "items"):
         return False
-    keys = [key for key, val in value.items() if _is_set(val)]
+    keys = [
+        key
+        for key, val in value.items()
+        if _is_set(val) or (key == "exact" and val is None)
+    ]
     return bool(keys) and all(key in _LOOKUP_NAMES for key in keys)
 
 
@@ -112,13 +117,20 @@ def _leaf_q(prefix: str, field: str, lookups: Any) -> Q:
         lookups: The "{lookup: value}" mapping for the field.
 
     Returns:
-        A "Q" combining every set lookup with "&".
+        A "Q" combining every set lookup with "&". Explicit "exact: null"
+        becomes "isnull=True" so JSON fields match SQL NULL rather than JSON
+        null; omitted and other null-valued lookups remain unset.
 
     Raises:
         GraphQLError: If a "range" lookup is not a two-element list.
     """
     q = Q()
     for lookup, value in lookups.items():
+        if lookup == "exact" and value is None:
+            # On JSONField, exact=None matches JSON null, not SQL NULL. The
+            # explicit-null filter contract matches SQL NULL for every field.
+            q &= Q(**{f"{prefix}{field}__isnull": True})
+            continue
         if not _is_set(value):
             continue
         if lookup == "range":

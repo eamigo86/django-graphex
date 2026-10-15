@@ -292,6 +292,27 @@ Multiple keys in the same object are **AND-ed** together.
 | `range` | `{ range: [10, 20] }` | between (a **two-element list**) |
 | `isnull` | `{ isnull: true }` | IS (NOT) NULL |
 
+An explicitly supplied `exact: null` matches rows whose field is **SQL NULL**,
+the same row set as `isnull: true`. This includes nullable scalar, choices,
+date/time, and foreign-key ID filters. For a non-nullable field it matches no
+rows. On a `JSONField`, it matches SQL NULL, **not** a stored JSON `null` value.
+Other lookups still keep their existing null handling. Omitting `exact` (or the
+whole filter) adds no predicate; it is not a request to match NULL rows:
+
+For a type that declares a nullable `published` date as filterable:
+
+```graphql
+# Only articles with a NULL published date.
+{ articles(filter: { published: { exact: null } }) { results { id } } }
+
+# No published-date predicate.
+{ articles(filter: { published: {} }) { results { id } } }
+```
+
+Clients that previously sent `exact: null` to mean “do not filter” must omit
+that lookup instead. Clients already using `isnull: true` do not need to change.
+The generated input types and their defaults are unchanged.
+
 Only the lookups you declared in `filter_fields` are exposed on each field.
 The table shows the default-set shapes; the extra catalog lookups (`iexact`,
 `contains`, date/time parts, …) follow the same pattern — see the
@@ -321,6 +342,10 @@ query {
 - `or: [a, b]` → `a OR b`
 - `not: a` → `NOT a`
 - sibling keys in the same node are AND-ed with the operators.
+
+Empty Boolean operands retain the existing no-op behavior: `or: []` and
+`not: {}` add no predicate, while `or: [{}, X]` contributes only `X`. The
+`exact: null` change does not assign classical Boolean identities to them.
 
 ## Filtering across relations
 
