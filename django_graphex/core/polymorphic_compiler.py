@@ -224,7 +224,9 @@ def compile_interface_type(
     Memoized (single instance per interface class). The shared fields are the
     interface's declared "_meta.fields" compiled via the SAME declared-field
     compiler the object types use (so an interface "name = graphene.String()"
-    becomes a matching "name: String" field). "resolve_type" bridges the
+    becomes a matching "name: String" field). Explicit field names are
+    rendered verbatim; otherwise declared attribute names are camel-cased.
+    "resolve_type" bridges the
     interface's own classmethod to a graphql-core type name.
 
     Args:
@@ -250,14 +252,16 @@ def compile_interface_type(
     ) -> dict[str, Any]:
         # Lazy thunk (cache-before-eval): the cache entry is registered BEFORE this
         # evaluates so a self-referential field closes through this instance.
-        from django_graphex.core.schema_compiler import compile_declared_field
+        from django_graphex.core.schema_compiler import (
+            _rendered_field_name,
+            compile_declared_field,
+        )
 
         declared = getattr(getattr(_cls, "_meta", None), "fields", None) or {}
-        from django_graphex._strconv import to_camel_case
 
         out: dict[str, Any] = {}
         for field_name, field in declared.items():
-            out[to_camel_case(field_name)] = compile_declared_field(
+            out[_rendered_field_name(field, field_name)] = compile_declared_field(
                 _cls, field_name, field, _registries
             )
         return out

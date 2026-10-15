@@ -359,11 +359,15 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
         src_cls: The source DjangoObjectType subclass.
 
     Returns:
-        A {camelCase_name: GraphQLField} dict of declared non-model fields
-        (empty when the class declares none).
+        A wire-name-to-GraphQLField mapping of declared non-model fields,
+        honoring explicit names before falling back to camelCase.
     """
     from ._strconv import to_camel_case
-    from .core.schema_compiler import _build_filter_list_field, compile_declared_field
+    from .core.schema_compiler import (
+        _build_filter_list_field,
+        _rendered_field_name,
+        compile_declared_field,
+    )
     from .fields import (
         DjangoFilterListField,
         DjangoFilterPaginateListField,
@@ -408,7 +412,7 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
             src_cls, field_name
         ):
             continue
-        out[to_camel_case(field_name)] = _mark_masked_column(
+        out[_rendered_field_name(field, field_name)] = _mark_masked_column(
             field_name,
             compile_declared_field(src_cls, field_name, field, registries),
         )
@@ -1787,10 +1791,9 @@ class DjangoInterfaceType(NativeObjectType):
     set.
 
     S6d re-parents this off graphene "Interface" onto the native graphene-free
-    "ObjectType" base. Like "DjangoUnionType" it is REGISTRY-ONLY: there is
-    NO compiled native "GraphQLInterfaceType" today -- concrete object types
-    name it via "Meta.interfaces" and the interface itself is a name +
-    "resolve_type" registry record. The native ObjectType base supplies the
+    "ObjectType" base. The native compiler creates a GraphQLInterfaceType
+    from its registry record; concrete object types name it via
+    "Meta.interfaces". The native ObjectType base supplies the
     ModelMetaclass identity (#1452), the graphene-free MUTABLE "_meta" (with
     the "name" the terminal sets), and the field-descriptor collection so
     declared interface fields (e.g. "name = graphene.String()") still land in

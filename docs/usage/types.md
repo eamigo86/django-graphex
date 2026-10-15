@@ -1478,6 +1478,18 @@ Implementors declare membership with the `Meta.interfaces`
 kwarg. Like `DjangoUnionType`, `DjangoInterfaceType` provides a mandatory
 `resolve_type` that maps each row to its concrete implementor.
 
+An explicit field `name=` is the GraphQL wire name on both the interface and
+each implementor; the Python attribute remains the resolver lookup name. For
+example, `internal_name = field(GraphQLString, name="name")` exposes `name`,
+not `internalName`. An implementor declaring the same custom field must use
+the same wire name and compatible GraphQL type. Without `name=`, attribute
+names continue to be camel-cased.
+
+**Migration:** Earlier versions accidentally exposed `internalName` for that
+interface declaration. After upgrading, clients must query `name`; no
+automatic `internalName` alias is added. Check queries and generated client
+types that use explicit names on interfaces or implementing custom fields.
+
 ## Limiting query shape: `max_depth` & `complexity`
 
 Every type above accepts two optional `Meta` options that protect your API from

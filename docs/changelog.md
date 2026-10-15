@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Honor an explicit `name=` on `DjangoInterfaceType` fields and matching
+  declared implementor fields. Their SDL, introspection, and queries now use
+  the requested wire name; attributes without an explicit name retain
+  camelCase. This changes the old accidental name (for example,
+  `internalName` to `name`), so clients must update affected queries and
+  generated types. No legacy alias is added.
+
 - Preserve generated mutation create/update inputs for Django columns named
   `model_dump`, `model_validate`, or `model_config`. These previously failed
   Pydantic schema construction; their GraphQL names, validation errors, and

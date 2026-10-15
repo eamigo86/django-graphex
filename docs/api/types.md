@@ -1085,6 +1085,12 @@ class DjangoInterfaceType(ObjectType)  # ObjectType = django_graphex.core
 
 No additional Meta options beyond the GraphQL interface basics.
 Implementors declare membership via the `Meta.interfaces` kwarg.
+The `name=` parameter on a declared interface field is its exact GraphQL wire
+name. Implementing types must expose the same name and compatible type;
+the Python attribute still determines resolver lookup. With no explicit name,
+the attribute is camel-cased. See the [migration note](../usage/types.md#djangointerfacetype-shared-fields-across-types): an old accidental field such
+as `internalName` becomes its requested wire name, for example `name`, without
+an automatic legacy alias.
 
 ### Methods
 

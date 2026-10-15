@@ -193,7 +193,8 @@ def test_valid_model_and_declared_selectors_remain_supported() -> None:
     assert "display" in AuthorType._meta.fields
     assert "explicit" in AuthorType._meta.fields
     assert "display" in AuthorType._meta.graphql_output_type.fields
-    assert "explicit" in AuthorType._meta.graphql_output_type.fields
+    assert "wireAlias" in AuthorType._meta.graphql_output_type.fields
+    assert "explicit" not in AuthorType._meta.graphql_output_type.fields
 
 
 def test_generic_foreign_key_and_set_selectors_remain_supported() -> None:
