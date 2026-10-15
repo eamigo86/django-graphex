@@ -379,23 +379,51 @@ class TestTypedCursorHttp:
         ), result
 
     @pytest.mark.django_db
-    def test_typed_invalid_cursor_value_current_http_error(self) -> None:
+    @pytest.mark.parametrize(
+        "field,value,invalid_value,schema,type_name",
+        [
+            ("floating", 1.1, "not-a-float", FLOAT_SCHEMA, "float"),
+            (
+                "decimal",
+                Decimal("1.10"),
+                "not-a-decimal",
+                DECIMAL_SCHEMA,
+                "decimal.Decimal",
+            ),
+            ("uuid_field", uuid.UUID(int=1), "not-a-uuid", UUID_SCHEMA, "UUID"),
+        ],
+    )
+    def test_typed_invalid_cursor_value_current_http_error(
+        self,
+        field: str,
+        value: float | Decimal | uuid.UUID,
+        invalid_value: str,
+        schema: DjangoGraphQLSchema,
+        type_name: str,
+    ) -> None:
         """Retain the existing encoded invalid-boundary error behavior.
 
         Typed invalid input policy is outside this compatible fix.
+
+        Args:
+            field: Django ordering field under test.
+            value: One real value to force a typed comparison.
+            invalid_value: Encoded cursor component that cannot parse.
+            schema: Isolated public schema for this ordering field.
+            type_name: Existing runtime type named by the error.
         """
         author = Author.objects.create(name="cursor-parent-invalid")
         ScalarKindsModel.objects.create(
-            char="invalid-boundary", author=author, floating=1.1
+            char="invalid-boundary", author=author, **{field: value}
         )
-        token = CursorGraphqlPagination.encode_cursor("not-a-float", 1)
-        query = """query($cursor: String!) { authors { results { scalarKinds { results(first: 2, cursor: $cursor) { id floating } pageInfo(first: 2, cursor: $cursor) { endCursor hasNextPage } } } } }"""
-        result = self._post(FLOAT_SCHEMA, query, {"cursor": token})
+        token = CursorGraphqlPagination.encode_cursor(invalid_value, 1)
+        query = """query($cursor: String!) { authors { results { scalarKinds { results(first: 2, cursor: $cursor) { id } pageInfo(first: 2, cursor: $cursor) { endCursor hasNextPage } } } } }"""
+        result = self._post(schema, query, {"cursor": token})
         assert "errors" in result, result
         messages = [error["message"] for error in result["errors"]]
         assert len(messages) == 2, result
         assert all(
-            "not supported between instances of 'float' and 'str'" in message
+            f"not supported between instances of '{type_name}' and 'str'" in message
             for message in messages
         ), result
 
