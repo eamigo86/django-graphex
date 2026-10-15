@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Validate supplied nonempty Django `EmailField` values with Django's email
+  syntax rules in generated create/update and nested inputs. Invalid values
+  now produce the existing structured field error without persistence; the
+  GraphQL `String` schema and omission, null, empty-string, default, and
+  partial-update behavior remain unchanged. This does not enable `full_clean()`
+  or change other Django field validators. Clients previously sending malformed
+  nonempty addresses must correct them.
+
 - Replace Django collector details in generated delete `PROTECT`/`RESTRICT`
   failures with a generic GraphQL execution error. Both mutation frontends keep
   the existing field-null, HTTP and atomic rollback behavior; blocked deletes

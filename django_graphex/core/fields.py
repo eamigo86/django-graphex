@@ -18,7 +18,9 @@ import uuid
 import warnings
 from typing import Any
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import File
+from django.core.validators import validate_email
 from django.db import models
 from django.utils.functional import Promise
 from pydantic import ConfigDict, Field, create_model, field_serializer, field_validator
@@ -303,6 +305,26 @@ def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
     return (py_type, Field(description=description, **constraints))
 
 
+def _validate_email_syntax(value: str | None) -> str | None:
+    """Validate a supplied nonempty email using Django's syntax validator.
+
+    Args:
+        value: Pydantic-coerced EmailField value, including allowed nulls.
+
+    Returns:
+        The original value without normalization.
+
+    Raises:
+        ValueError: The supplied nonempty value has invalid email syntax.
+    """
+    if value:
+        try:
+            validate_email(value)
+        except DjangoValidationError as exc:
+            raise ValueError(exc.messages[0]) from None
+    return value
+
+
 def writable_fields(model: type[models.Model]) -> list[models.Field]:
     """Return the model's writable scalar and relation fields.
 
@@ -501,10 +523,13 @@ def build_model_schema(
                 description="Django object unique identification field",
             ),
         )
+    email_names: list[str] = []
     for field in writable_fields(model):
         if field.name in exclude or field.attname in exclude:
             continue
         definitions[field.name] = _field_def(field, partial)
+        if isinstance(field, models.EmailField):
+            email_names.append(field.name)
     # M2M: a list of pks, always optional (attached after the parent saves).
     for field in m2m_fields(model):
         if field.name in exclude:
@@ -540,6 +565,21 @@ def build_model_schema(
         # Only generated schemas that previously failed construction relax this
         # Pydantic namespace check. Ordinary model schemas retain their config.
         kwargs["__config__"] = ConfigDict(protected_namespaces=())
+    if email_names:
+        kwargs["__validators__"] = {
+            f"_gdx_email_syntax_{index}": field_validator(
+                next(
+                    (
+                        internal
+                        for internal, original in original_names.items()
+                        if original == name
+                    ),
+                    name,
+                ),
+                mode="after",
+            )(_validate_email_syntax)
+            for index, name in enumerate(email_names)
+        }
     schema = create_model(f"{model.__name__}Native", **kwargs, **definitions)  # type: ignore[call-overload]
     schema.__gdx_original_fields__ = original_names
     _SCHEMA_CACHE[cache_key] = schema

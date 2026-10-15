@@ -39,6 +39,16 @@ can't see — **foreign-key existence**, **field-level `unique`**, `unique_toget
 and `Meta.constraints` `UniqueConstraint` entries — and supports partial updates
 and nested writes (atomic, relation-aware).
 
+For a model `EmailField`, generated create/update inputs also run Django's email
+**syntax** validator on a supplied, nonempty value. An invalid address returns
+`ok: false` with an `errors` entry for the email field; neither the parent nor
+a nested child is saved. The GraphQL input remains `String`. This does not run
+`full_clean()` or add model-wide/custom field-validator parity: omitted fields,
+explicit `null` where allowed, empty strings, defaults, and partial updates
+retain their existing behavior. In particular, this change does not make
+`blank=False` reject an empty string. Keep application-specific email rules in
+your declared `validate_<field>()` hook or `Meta.pydantic_model`.
+
 ### Uniqueness validation
 
 The backend checks all three Django uniqueness mechanisms before saving, so

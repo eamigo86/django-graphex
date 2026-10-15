@@ -61,6 +61,12 @@ Every `DjangoModelMutation` includes these standard fields:
 | `errors` | `List[ErrorType]` | Validation errors |
 | `{model_name}` | `ObjectType` | The created/updated/deleted object |
 
+Generated inputs validate a supplied, nonempty Django `EmailField` value with
+Django's email syntax validator. Invalid syntax returns the usual `ok: false`
+payload with `errors[].field` naming that field; its GraphQL type remains
+`String`. Empty, omitted, nullable and defaulted values keep their existing
+rules. See the [native backend guide](../usage/backends.md#native-pydantic-backend).
+
 ### Class Methods
 
 #### `__init_subclass_with_meta__(**kwargs)` (classmethod)
