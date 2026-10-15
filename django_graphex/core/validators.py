@@ -91,6 +91,15 @@ def _object_wrapper(fn: Callable, host_cls: type) -> Callable:
     """
 
     def _validator(self: BaseModel) -> BaseModel:
+        """Apply an object validator using original Django field names.
+
+        Returns:
+            The validated model with any returned field changes applied.
+
+        Raises:
+            ValueError: The application validator rejects the input.
+            AssertionError: The application validator asserts an invalid value.
+        """
         original_names: dict[str, str] = getattr(
             type(self), "__gdx_original_fields__", {}
         )

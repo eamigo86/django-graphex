@@ -12,6 +12,7 @@ import datetime
 import decimal
 import enum
 import functools
+import inspect
 import ipaddress
 import uuid
 import warnings
@@ -20,7 +21,7 @@ from typing import Any
 from django.core.files.base import File
 from django.db import models
 from django.utils.functional import Promise
-from pydantic import ConfigDict, Field, create_model
+from pydantic import ConfigDict, Field, create_model, field_serializer, field_validator
 from pydantic.fields import FieldInfo
 from pydantic_core import core_schema
 
@@ -382,6 +383,57 @@ def _isolated_model_config_name(model: type[models.Model], base: type | None) ->
     return candidate
 
 
+def _retarget_model_config_hooks(base: type, internal_name: str) -> type:
+    """Bind inherited original-name field hooks to an isolated generated field.
+
+    The caller's Pydantic base and decorator metadata remain unchanged. Other
+    field bindings, hook modes, serializer usage, and inherited method binding
+    retain their existing behavior.
+
+    Args:
+        base: User-provided or inline-validator Pydantic base.
+        internal_name: Private generated field replacing model_config.
+
+    Returns:
+        A derived base with retargeted hooks, or the original base if none
+        target the isolated field.
+    """
+    decorators = base.__pydantic_decorators__
+    namespace: dict[str, Any] = {"__module__": __name__}
+    for name, decorator in decorators.field_validators.items():
+        info = decorator.info
+        if "model_config" not in info.fields:
+            continue
+        fields = tuple(
+            internal_name if field_name == "model_config" else field_name
+            for field_name in info.fields
+        )
+        namespace[name] = field_validator(
+            *fields,
+            mode=info.mode,
+            check_fields=info.check_fields,
+            json_schema_input_type=info.json_schema_input_type,
+        )(inspect.getattr_static(base, name))
+    for name, decorator in decorators.field_serializers.items():
+        info = decorator.info
+        if "model_config" not in info.fields:
+            continue
+        fields = tuple(
+            internal_name if field_name == "model_config" else field_name
+            for field_name in info.fields
+        )
+        namespace[name] = field_serializer(
+            *fields,
+            mode=info.mode,
+            return_type=info.return_type,
+            when_used=info.when_used,
+            check_fields=info.check_fields,
+        )(inspect.getattr_static(base, name))
+    if len(namespace) == 1:
+        return base
+    return type(f"{base.__name__}ModelConfigHooks", (base,), namespace)
+
+
 def build_model_schema(
     model: type[models.Model],
     *,
@@ -467,12 +519,19 @@ def build_model_schema(
     original_names: dict[str, str] = {}
     if "model_config" in definitions:
         internal_name = _isolated_model_config_name(model, base)
-        annotation, field_info = definitions.pop("model_config")
+        annotation, field_info = definitions["model_config"]
         isolated_info = FieldInfo.merge_field_infos(
             field_info, Field(validation_alias="model_config")
         )
-        definitions[internal_name] = (annotation, isolated_info)
+        definitions = {
+            internal_name if name == "model_config" else name: (
+                (annotation, isolated_info) if name == "model_config" else definition
+            )
+            for name, definition in definitions.items()
+        }
         original_names[internal_name] = "model_config"
+        if base is not None:
+            base = _retarget_model_config_hooks(base, internal_name)
 
     kwargs: dict[str, Any] = {"__module__": __name__}
     if base is not None:

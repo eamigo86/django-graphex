@@ -123,7 +123,10 @@ Generated create/update inputs accept Django columns named `model_dump`,
 use the original Django names. The generated validation schema isolates
 `model_config` under a private Pydantic field name so it does not replace
 Pydantic's configuration. Inline `validate_model_config` and object-level
-`validate` hooks still receive the original Django name.
+`validate` hooks still receive the original Django name. Inherited
+`Meta.pydantic_model` field validators and serializers declared for
+`model_config` also run on the isolated field; the caller's base model and
+its decorator metadata are not modified.
 
 Only generated schemas with `model_dump` or `model_validate` relax Pydantic's
 protected-name check. Pydantic may warn that these fields shadow its model

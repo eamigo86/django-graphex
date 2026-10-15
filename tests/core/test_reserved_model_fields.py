@@ -12,7 +12,14 @@ from django.db import connection, models
 from django.test import RequestFactory
 from django.test.utils import isolate_apps
 from graphql import GraphQLString, graphql_sync
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 import django_graphex
 from django_graphex.core import ObjectType, field
@@ -24,6 +31,283 @@ from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoModelType
 from tests._schema_isolation import isolated_pair
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("host_kind", ["type", "mutation"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("hook_kind", ["validator", "serializer"])
+def test_inherited_model_config_hooks_use_original_field(
+    host_kind: str, operation: str, hook_kind: str
+) -> None:
+    """Run inherited Pydantic field hooks on the isolated Django column.
+
+    Args:
+        host_kind: Public generated mutation frontend.
+        operation: Generated create or update mutation.
+        hook_kind: Inherited validator or serializer binding to exercise.
+
+    Raises:
+        ValueError: The inherited hook rejects blocked input, which the
+            generated mutation reports as a structured validation error.
+    """
+    calls: list[str] = []
+    with isolate_apps():
+        model_cls = type(
+            f"ConfigHooks_{host_kind}_{operation}_{hook_kind}",
+            (models.Model,),
+            {
+                "__module__": __name__,
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "app_label": "tests",
+                        "db_table": f"t_config_hooks_{host_kind}_{operation}_{hook_kind}",
+                    },
+                ),
+                "model_config": models.CharField(max_length=40),
+            },
+        )
+
+        if hook_kind == "validator":
+
+            class Rules(BaseModel):
+                """Reject a disallowed original Django column value."""
+
+                model_config = ConfigDict(extra="forbid")
+
+                @field_validator("model_config", check_fields=False)
+                @classmethod
+                def reject(cls, value: str) -> str:
+                    """Reject blocked input before it can be persisted.
+
+                    Args:
+                        value: Original Django column value.
+
+                    Returns:
+                        The allowed value.
+
+                    Raises:
+                        ValueError: The value is blocked by the application.
+                    """
+                    calls.append(value)
+                    if value == "blocked":
+                        raise ValueError("application rule rejects value")
+                    return value
+
+            hook_info = Rules.__pydantic_decorators__.field_validators["reject"].info
+        else:
+
+            class Rules(BaseModel):
+                """Serialize a field using its original Django column name."""
+
+                model_config = ConfigDict(extra="forbid")
+
+                @field_serializer("model_config", check_fields=False)
+                def upper(self, value: str) -> str:
+                    """Transform the original column before persistence.
+
+                    Args:
+                        value: Validated original Django column value.
+
+                    Returns:
+                        Uppercase value for the persisted model.
+                    """
+                    calls.append(value)
+                    return value.upper()
+
+            hook_info = Rules.__pydantic_decorators__.field_serializers["upper"].info
+
+        assert hook_info.fields == ("model_config",)
+        with connection.schema_editor() as editor:
+            editor.create_model(model_cls)
+        try:
+            private_registry = Registry()
+            if host_kind == "type":
+
+                class ConfigType(DjangoModelType):
+                    class Meta:
+                        model = model_cls
+                        pydantic_model = Rules
+                        input_field_name = "payload"
+                        output_field_name = "record"
+                        model_operations = ("create", "update")
+
+                host = ConfigType
+            else:
+
+                class ConfigMutation(DjangoModelMutation):
+                    class Meta:
+                        model = model_cls
+                        registry = private_registry
+                        pydantic_model = Rules
+                        input_field_name = "payload"
+                        output_field_name = "record"
+                        model_operations = ("create", "update")
+
+                host = ConfigMutation
+
+            class Query(ObjectType):
+                ping = field(GraphQLString)
+
+            class MutationRoot(ObjectType):
+                create = host.CreateField()
+                update = host.UpdateField()
+
+            schema = DjangoGraphQLSchema(
+                query=Query,
+                mutation=MutationRoot,
+                registries=isolated_pair(private_registry),
+            ).graphql_schema
+            row = (
+                model_cls.objects.create(model_config="original")
+                if operation == "update"
+                else None
+            )
+            supplied = "blocked" if hook_kind == "validator" else "lower"
+            payload = (
+                f'id: "{row.pk}", modelConfig: "{supplied}"'
+                if row is not None
+                else f'modelConfig: "{supplied}"'
+            )
+            result = graphql_sync(
+                schema,
+                f"mutation {{ {operation}(payload: {{{payload}}}) "
+                "{ ok errors { field messages } record { id modelConfig } } }",
+                context_value=RequestFactory().post(
+                    "/graphql/", content_type="application/json"
+                ),
+            )
+            assert result.errors is None
+            response = result.data[operation]
+            assert calls == [supplied]
+            assert hook_info.fields == ("model_config",)
+            if hook_kind == "validator":
+                assert response["ok"] is False
+                assert {error["field"] for error in response["errors"]} == {
+                    "model_config"
+                }
+                if row is None:
+                    assert not model_cls.objects.exists()
+                else:
+                    row.refresh_from_db()
+                    assert row.model_config == "original"
+            else:
+                assert response["ok"] is True
+                assert response["record"]["modelConfig"] == "LOWER"
+                assert model_cls.objects.get().model_config == "LOWER"
+        finally:
+            with connection.schema_editor() as editor:
+                editor.delete_model(model_cls)
+
+
+def test_inherited_mixed_hooks_preserve_modes_and_caller_base() -> None:
+    """Retarget only the isolated binding in inherited mixed-field hooks.
+
+    The user base, its configuration, and decorators on ordinary fields must
+    remain intact after the generated schema is constructed.
+
+    Raises:
+        ValidationError: The inherited strict-extras policy rejects a key.
+    """
+    with isolate_apps():
+        model_cls = type(
+            "MixedConfigHooks",
+            (models.Model,),
+            {
+                "__module__": __name__,
+                "Meta": type("Meta", (), {"app_label": "tests"}),
+                "model_config": models.CharField(max_length=40),
+                "note": models.CharField(max_length=40),
+            },
+        )
+        calls: list[str] = []
+
+        class ParentRules(BaseModel):
+            """Declare inherited mixed-field and object validation rules."""
+
+            model_config = ConfigDict(extra="forbid")
+
+            @field_validator("model_config", "note", mode="before", check_fields=False)
+            @classmethod
+            def prefix(cls, value: str) -> str:
+                """Transform both selected fields before normal validation.
+
+                Args:
+                    value: Supplied field value.
+
+                Returns:
+                    Prefixed value.
+                """
+                calls.append(f"field:{value}")
+                return f"pre-{value}"
+
+            @field_serializer("model_config", check_fields=False)
+            def upper(self, value: str) -> str:
+                """Serialize the isolated field through the inherited hook.
+
+                Args:
+                    value: Validated field value.
+
+                Returns:
+                    Uppercase serialized value.
+                """
+                calls.append(f"serialize:{value}")
+                return value.upper()
+
+            @field_serializer("note", check_fields=False)
+            def note_suffix(self, value: str) -> str:
+                """Keep unrelated inherited field serialization intact.
+
+                Args:
+                    value: Validated ordinary field value.
+
+                Returns:
+                    Value with its serializer suffix.
+                """
+                calls.append(f"serialize-note:{value}")
+                return f"{value}-out"
+
+            @model_validator(mode="after")
+            def record(self) -> ParentRules:
+                """Retain ordinary inherited object-validator execution.
+
+                Returns:
+                    The unchanged validated model.
+                """
+                calls.append("model")
+                return self
+
+        class ChildRules(ParentRules):
+            """Inherit all custom base rules without mutating their metadata."""
+
+        schema = build_model_schema(model_cls, base=ChildRules)
+        internal_name = next(iter(schema.__gdx_original_fields__))
+        validated = schema(model_config="lower", note="plain")
+        assert getattr(validated, internal_name) == "pre-lower"
+        assert validated.note == "pre-plain"
+        assert calls == ["field:lower", "field:plain", "model"]
+        dumped = BaseModel.model_dump(validated)
+        assert dumped[internal_name] == "PRE-LOWER"
+        assert dumped["note"] == "pre-plain-out"
+        assert calls[-2:] == ["serialize:pre-lower", "serialize-note:pre-plain"]
+        for base in (ParentRules, ChildRules):
+            assert base.__pydantic_decorators__.field_validators[
+                "prefix"
+            ].info.fields == (
+                "model_config",
+                "note",
+            )
+            assert base.__pydantic_decorators__.field_serializers[
+                "upper"
+            ].info.fields == ("model_config",)
+            assert base.__pydantic_decorators__.field_serializers[
+                "note_suffix"
+            ].info.fields == ("note",)
+            assert base.model_config["extra"] == "forbid"
+        with pytest.raises(ValidationError):
+            schema(model_config="lower", note="plain", unknown="forbidden")
 
 
 @pytest.mark.django_db(transaction=True)

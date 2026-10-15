@@ -19,6 +19,8 @@ All notable changes to this library are documented here. The format is based on
   Pydantic schema construction; their GraphQL names, validation errors, and
   persisted Django attributes now retain the original naming. Existing
   working column names and model-derived omission semantics are unchanged.
+  Inherited `Meta.pydantic_model` validators and serializers for `model_config`
+  continue to run without modifying the caller's base model.
 
 - Evaluate zero-argument factories on hand-authored `InputType` fields for
   each new GraphQL-coerced input object rather than once at schema build.
