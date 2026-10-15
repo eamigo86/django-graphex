@@ -83,7 +83,14 @@ from graphql import (
 from django_graphex._strconv import to_camel_case
 from django_graphex.registry import get_global_registry
 
-from .lookups import default_lookups_for
+from .lookups import DATE_LOOKUPS, DATETIME_LOOKUPS, default_lookups_for
+
+_DATE_PART_LOOKUPS = frozenset({"year", "month", "day", "week_day"}).intersection(
+    DATE_LOOKUPS
+)
+_DATETIME_PART_LOOKUPS = frozenset(
+    {"year", "month", "day", "week_day", "hour", "minute", "second"}
+).intersection(DATETIME_LOOKUPS)
 
 if TYPE_CHECKING:
     from django_graphex.core.base import SchemaRegistries
@@ -364,8 +371,15 @@ def _lookups_input_type(
     else:
         scalar = _field_scalar(field)
 
+    if isinstance(field, models.DateTimeField):
+        int_lookups = _DATETIME_PART_LOOKUPS
+    elif isinstance(field, models.DateField):
+        int_lookups = _DATE_PART_LOOKUPS
+    else:
+        int_lookups = frozenset()
+
     name = to_camel_case(f"{model._meta.object_name}_{field_name}_Lookups")
-    return _build_lookups_type(name, scalar, lookups)
+    return _build_lookups_type(name, scalar, lookups, int_lookups=int_lookups)
 
 
 def _pk_lookups_input_type(
@@ -393,7 +407,11 @@ def _pk_lookups_input_type(
 
 
 def _build_lookups_type(
-    name: str, scalar: Any, lookups: tuple[str, ...]
+    name: str,
+    scalar: Any,
+    lookups: tuple[str, ...],
+    *,
+    int_lookups: frozenset[str] = frozenset(),
 ) -> GraphQLInputObjectType:
     """Assemble a "<...>Lookups" input type from a scalar and lookup names.
 
@@ -401,6 +419,7 @@ def _build_lookups_type(
         name: The GraphQL type name.
         scalar: The graphql-core scalar (or enum) for the field's value.
         lookups: The lookup names to expose.
+        int_lookups: Existing numeric date/datetime parts to expose as Int.
 
     Returns:
         A "GraphQLInputObjectType" whose fields each carry "out_name".
@@ -413,6 +432,8 @@ def _build_lookups_type(
                 out[lookup] = GraphQLInputField(GraphQLBoolean, out_name=lookup)
             elif lookup in ("in", "range"):
                 out[lookup] = GraphQLInputField(GraphQLList(scalar), out_name=lookup)
+            elif lookup in int_lookups:
+                out[lookup] = GraphQLInputField(GraphQLInt, out_name=lookup)
             else:
                 out[lookup] = GraphQLInputField(scalar, out_name=lookup)
         return out

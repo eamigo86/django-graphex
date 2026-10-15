@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Type explicitly declared numeric `DateField` and `DateTimeField` part filters
+  as GraphQL `Int` so integer literals and variables reach Django. `DateField`
+  supports `year`, `month`, `day`, `week_day`; `DateTimeField` also supports
+  `hour`, `minute`, `second`. Clients using `$year: Date` or
+  `$year: DateTime` must change to `$year: Int` and send an integer. Lookup
+  exposure/defaults, full-value ISO `Date`/`DateTime` filters, `TimeField`,
+  null/Boolean behavior, and subscription filters are unchanged.
+
 - Make an explicitly supplied `exact: null` in generated query filters select
   SQL NULL rows, matching `isnull: true`; an omitted lookup still adds no
   predicate. This includes nullable relation IDs and JSON fields (SQL NULL,

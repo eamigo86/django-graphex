@@ -245,6 +245,18 @@ class ArticleListType(DjangoListObjectType):
         }
 ```
 
+Date and datetime part lookups take **integer** inputs. On a `DateField`,
+`year`, `month`, `day`, and `week_day` are `Int`; on a `DateTimeField`, those
+four plus `hour`, `minute`, and `second` are `Int`. Django numbers `week_day`
+from Sunday (`1`) through Saturday (`7`). These lookups remain opt-in unless
+added to `COMMON_FILTER_LOOKUPS`; the list-form defaults do not gain them.
+
+The full-value lookups (`exact`, comparisons, `in`, and `range`) keep their
+existing `Date` or `DateTime` input types and ISO values. If a client declared
+`$year: Date` or `$year: DateTime` for a part lookup, change the variable to
+`$year: Int` and supply an integer such as `2024`. This is an input-schema
+change; it does not alter `TimeField` part types or subscription filters.
+
 To change the **global base set** that every list-form field receives, use the
 setting:
 
