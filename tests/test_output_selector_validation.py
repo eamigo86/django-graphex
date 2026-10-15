@@ -7,13 +7,15 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.test.utils import isolate_apps
-from graphql import GraphQLString
+from graphql import GraphQLString, graphql_sync, print_schema
 
-from django_graphex.core import CharField
+from django_graphex.core import CharField, ObjectType
 from django_graphex.core.descriptors import field
 from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoObjectType
 
+from ._schema_isolation import isolated_pair
 from .models import Author, CustomPKProduct, Track2GfkComment
 
 
@@ -193,8 +195,53 @@ def test_valid_model_and_declared_selectors_remain_supported() -> None:
     assert "display" in AuthorType._meta.fields
     assert "explicit" in AuthorType._meta.fields
     assert "display" in AuthorType._meta.graphql_output_type.fields
-    assert "wireAlias" in AuthorType._meta.graphql_output_type.fields
-    assert "explicit" not in AuthorType._meta.graphql_output_type.fields
+    assert "explicit" in AuthorType._meta.graphql_output_type.fields
+    assert "wireAlias" not in AuthorType._meta.graphql_output_type.fields
+
+
+def test_noninterface_declared_wire_name_keeps_existing_contract() -> None:
+    """Keep a non-interface declared field under its Python wire name.
+
+    An explicit field name does not expand the approved interface migration.
+    """
+    reg = Registry()
+
+    class AuthorType(DjangoObjectType):
+        """Expose one declared field without implementing an interface."""
+
+        explicit = field(GraphQLString, name="wireAlias")
+
+        class Meta:
+            """Bind the local model and output registry."""
+
+            model = Author
+            registry = reg
+            only_fields = ("name", "explicit")
+
+        def resolve_explicit(root: Author, info: object) -> str:
+            """Resolve using the Python field name.
+
+            Args:
+                root: Author value returned by the root resolver.
+                info: GraphQL resolution context.
+
+            Returns:
+                The source name with a stable prefix.
+            """
+            return f"python:{root.name}"
+
+    class Query(ObjectType):
+        """Expose an unsaved author without database access."""
+
+        author = field(AuthorType, resolver=lambda *_: Author(name="Ada"))
+
+    schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(reg))
+    result = graphql_sync(schema.graphql_schema, "{author{explicit}}")
+
+    assert result.errors is None
+    assert result.data == {"author": {"explicit": "python:Ada"}}
+    assert "explicit: String" in print_schema(schema.graphql_schema)
+    assert "wireAlias: String" not in print_schema(schema.graphql_schema)
 
 
 def test_generic_foreign_key_and_set_selectors_remain_supported() -> None:

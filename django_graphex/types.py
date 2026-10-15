@@ -357,10 +357,12 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
 
     Args:
         src_cls: The source DjangoObjectType subclass.
+        registries: Schema-local registries used to compile declared fields.
 
     Returns:
         A wire-name-to-GraphQLField mapping of declared non-model fields,
-        honoring explicit names before falling back to camelCase.
+        honoring explicit names only for interface implementors and otherwise
+        retaining the existing camelCase wire name.
     """
     from ._strconv import to_camel_case
     from .core.schema_compiler import (
@@ -412,7 +414,12 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
             src_cls, field_name
         ):
             continue
-        out[_rendered_field_name(field, field_name)] = _mark_masked_column(
+        wire_name = (
+            _rendered_field_name(field, field_name)
+            if getattr(meta, "interfaces", ())
+            else to_camel_case(field_name)
+        )
+        out[wire_name] = _mark_masked_column(
             field_name,
             compile_declared_field(src_cls, field_name, field, registries),
         )

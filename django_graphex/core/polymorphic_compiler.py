@@ -250,6 +250,15 @@ def compile_interface_type(
         _cls: type = interface_cls,
         _registries: SchemaRegistries = registries,
     ) -> dict[str, Any]:
+        """Compile declared interface fields within the schema-local pair.
+
+        Args:
+            _cls: Interface class whose fields are compiled.
+            _registries: Registries belonging to the current schema.
+
+        Returns:
+            Rendered wire names mapped to native GraphQL fields.
+        """
         # Lazy thunk (cache-before-eval): the cache entry is registered BEFORE this
         # evaluates so a self-referential field closes through this instance.
         from django_graphex.core.schema_compiler import (
