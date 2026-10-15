@@ -410,7 +410,7 @@ admit that row. For example, the same query can return either response:
 ```
 
 ```json
-{"data": {"comment": {"target": {"appLabel": "billing", "modelName": "account", "id": "7"}}}}
+{"data": {"comment": {"target": {"appLabel": "billing", "modelName": "Account", "id": "7"}}}}
 ```
 
 The JSON examples assume `CLEAN_RESPONSE=False` (the default). Enabling
@@ -876,10 +876,13 @@ a request that reaches the full schema (custom provider, flag off) is denied a
       folded into the response-cache key, so two callers sharing a cache
       identity but holding different relevant perms can never read each other's
       cached bodies. It uses the same all-grants exception for flat GFKs, so
-      a grant or revoke changes both caches on the next request. Neither
-      cache stores a target row decision: a registered target row hook runs
-      for each fresh execution. (Superusers and flag-off requests contribute
-      an empty segment — keys stay byte-identical to the unpruned setup.)
+      a grant or revoke changes both cache keys on the next request. The
+      schema-variant cache stores immutable effective grants, not a target
+      row decision. The [HTTP response cache](caching.md) retains the resulting
+      allowed or null target payload until its existing expiry or invalidation;
+      a registered target row hook runs for each fresh GraphQL execution, not
+      on an HTTP cache hit. (Superusers and flag-off requests contribute an
+      empty segment — keys stay byte-identical to the unpruned setup.)
 
 ## See also
 
