@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Run the documented synchronous WS/SSE subscription `schema_provider` in a
+  thread-sensitive worker. Real Django users with cold permission caches can
+  now use `pruned_schema_for` without synchronous ORM access on the event loop.
+  Provider inputs, schema results, per-socket/per-request caching, and existing
+  transport error behavior are unchanged; coroutine-returning providers are
+  not a new supported contract.
+
 - Redact the whole flat `GenericForeignKeyType` target to `null` in
   permission-pruned schemas when the actual target model's read permission is
   absent or its registered row hook excludes the row. The flat SDL, unpruned

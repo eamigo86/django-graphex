@@ -71,6 +71,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
+from asgiref.sync import sync_to_async
 from graphql import (
     ExecutionResult,
     OperationType,
@@ -515,21 +516,50 @@ def subscription_ws_consumer(
                     exc_info=exc,
                 )
 
-        def _resolve_schema(self) -> "GraphQLSchema":
+        async def _resolve_schema(self) -> "GraphQLSchema":
             """Return the schema for THIS connection (provider wins, cached once).
 
             When a "schema_provider" was supplied it is resolved ONCE per socket
             using "scope['user']" and cached on the instance, so every
             multiplexed operation on this connection shares the SAME pruned schema
-            (matching the HTTP pruned schema for that user). Otherwise the baked
-            "schema" is returned unchanged.
+            (matching the HTTP pruned schema for that user). The synchronous
+            provider runs in a thread-sensitive worker so permission reads
+            cannot block the event loop. Otherwise the baked "schema" is
+            returned unchanged.
+
+            Returns:
+                The connection's schema, cached after successful resolution.
+
+            Raises:
+                Exception: Propagates any exception from the custom provider;
+                    the operation wrapper frames it without caching a schema.
             """
             cached = getattr(self, "_conn_schema", None)
             if cached is not None:
                 return cached
             if schema_provider is not None:
                 user = self.scope.get("user") if self.scope else None
-                resolved = schema_provider(user)
+
+                def _resolve_provider() -> "GraphQLSchema":
+                    """Resolve and cache one provider result on the sync worker.
+
+                    Returns:
+                        The existing or newly resolved connection schema.
+
+                    Raises:
+                        Exception: Propagates the provider's failure unchanged.
+                    """
+                    # Several operations may start on one socket together.
+                    # Recheck in the thread-sensitive worker so the provider
+                    # still runs once, even while another operation awaits it.
+                    cached = getattr(self, "_conn_schema", None)
+                    if cached is not None:
+                        return cached
+                    resolved = schema_provider(user)
+                    self._conn_schema = resolved
+                    return resolved
+
+                return await sync_to_async(_resolve_provider, thread_sensitive=True)()
             else:
                 resolved = schema
             self._conn_schema = resolved
@@ -613,7 +643,7 @@ def subscription_ws_consumer(
             context = TransportContext(self.scope)
 
             # Per-connection schema (provider wins, resolved once via scope user).
-            conn_schema = self._resolve_schema()
+            conn_schema = await self._resolve_schema()
 
             # Subscription-less (fully-pruned) schema short-circuit: a per-user
             # pruned schema whose Subscription root is None would make graphql-core

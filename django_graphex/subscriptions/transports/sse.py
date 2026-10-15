@@ -209,11 +209,10 @@ async def _resolve_request_user(request: "HttpRequest") -> Any:
     noticed: an empty session resolves to "AnonymousUser" without touching the
     database.
 
-    Touching one attribute from a thread resolves the lazy object IN PLACE, so
-    this is the whole fix for every later reader — the hooks, the middleware
-    chain and any resolver reaching back through "context.request" all see a
-    plain, already-loaded user. The WS transport needs no equivalent: Channels'
-    "AuthMiddleware" awaits the lookup before the consumer runs.
+    Touching one attribute from a thread resolves the lazy object IN PLACE for
+    later readers. It does not load the user's permissions: a synchronous
+    schema provider must also run outside the event loop. The WS transport's
+    auth middleware resolves its user, but has the same provider requirement.
 
     Args:
         request: The incoming HTTP request, possibly carrying a lazy user.
@@ -407,13 +406,17 @@ def subscription_sse_view(
         if csrf_header_missing(request, BaseGraphQLView.get_content_type(request)):
             return HttpResponseForbidden(CSRF_GUARD_MESSAGE)
 
-        # Resolve the lazy user ONCE, in a thread, before either the provider
-        # below or any subscribe hook reads it from inside this async view.
+        # Resolve the lazy user before a provider or subscribe hook reads it.
         user = await _resolve_request_user(request)
 
         # Per-connection schema resolution: the provider (when given) wins and is
-        # resolved with the request user, matching the HTTP pruned schema.
-        conn_schema = schema_provider(user) if schema_provider is not None else schema
+        # resolved with the request user. A synchronous provider may query the
+        # ORM for cold permissions, so keep it off the event loop as well.
+        conn_schema = (
+            await sync_to_async(schema_provider, thread_sensitive=True)(user)
+            if schema_provider is not None
+            else schema
+        )
 
         body = _read_request_body(request)
         if body is None:

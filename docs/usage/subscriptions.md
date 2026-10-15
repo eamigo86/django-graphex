@@ -196,6 +196,15 @@ Both transports accept an optional `schema_provider` in addition to the plain
 `schema=`. A `schema_provider` is a callable `provider(user) -> GraphQLSchema`
 resolved **per connection** with the connection's user (`request.user` for SSE,
 `scope["user"]` for WebSocket). When given, it **wins** over `schema=`.
+The provider contract is **synchronous**: the async transports run it through
+a thread-sensitive adapter, so a real user's initially cold permission lookup
+can use Django's synchronous ORM without running on the event loop. Request
+context variables propagate to that worker; do not depend on an arbitrary
+event-loop thread-local value being present there. Provider exceptions retain
+their transport behavior: SSE raises before opening a stream, while WebSocket
+frames the failed operation as an error without closing unrelated operations.
+This does not turn a coroutine-returning provider into a supported async
+provider; return a `GraphQLSchema` directly.
 
 This lets a subscription connection use the **same pruned schema as HTTP**: wire
 the provider to the bundled `pruned_schema_for` helper so a subscription

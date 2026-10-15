@@ -755,6 +755,13 @@ pruned schema reaches them through their `schema_provider` — a callable
 bundled `pruned_schema_for` helper, which honors the **same**
 `PERMISSION_SCOPED_SCHEMA` flag (read per connection; an active superuser gets
 the full schema; with the flag off it returns the full schema unchanged):
+Both async transports execute this synchronous provider in a thread-sensitive
+worker. Resolving an SSE lazy user does not warm its permissions; the worker
+also keeps `get_all_permissions()` and its initial database query off the
+event loop. The WebSocket provider remains cached once per socket, and SSE
+resolves it once per request. A custom provider should return a schema
+synchronously rather than a coroutine; request context variables propagate
+to the worker, but event-loop thread-local state is not a portable contract.
 
 === "WebSocket (asgi.py)"
 
