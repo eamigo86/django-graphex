@@ -1,7 +1,9 @@
 """Execute the playground's django-graphex 3.1 security contract in isolation."""
 
+import ast
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +11,71 @@ from pathlib import Path
 import pytest
 
 PLAYGROUND = Path(__file__).resolve().parents[1] / "examples" / "playground"
+
+
+def test_cursor_pagination_readme_matches_playground_settings() -> None:
+    """Keep the documented cursor default and cap aligned with this app.
+
+    The schema omits a local cursor size, so its paginator inherits the
+    Playground settings rather than the unconfigured library defaults.
+
+    """
+    settings_tree = ast.parse((PLAYGROUND / "config/settings.py").read_text())
+    assignment = next(
+        node
+        for node in settings_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "DJANGO_GRAPHEX"
+            for target in node.targets
+        )
+    )
+    assert isinstance(assignment.value, ast.Dict)
+    configured = {
+        ast.literal_eval(key): ast.literal_eval(value)
+        for key, value in zip(assignment.value.keys, assignment.value.values)
+        if isinstance(key, ast.Constant)
+        and key.value in {"DEFAULT_PAGE_SIZE", "MAX_PAGE_SIZE"}
+    }
+    assert configured == {"DEFAULT_PAGE_SIZE": 10, "MAX_PAGE_SIZE": 100}
+
+    schema_tree = ast.parse((PLAYGROUND / "blog/schema.py").read_text())
+    comment_list = next(
+        node
+        for node in schema_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "CommentListType"
+    )
+    meta = next(
+        node
+        for node in comment_list.body
+        if isinstance(node, ast.ClassDef) and node.name == "Meta"
+    )
+    pagination = next(
+        node.value
+        for node in meta.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "pagination"
+            for target in node.targets
+        )
+    )
+    assert isinstance(pagination, ast.Call)
+    assert isinstance(pagination.func, ast.Name)
+    assert pagination.func.id == "CursorGraphqlPagination"
+    assert {keyword.arg for keyword in pagination.keywords} == {"ordering"}
+
+    row = next(
+        line
+        for line in (PLAYGROUND / "README.md").read_text().splitlines()
+        if line.startswith("| `CursorGraphqlPagination` |")
+    )
+    documented_default = re.search(r"DEFAULT_PAGE_SIZE\s*=\s*(\d+)", row)
+    documented_maximum = re.search(r"MAX_PAGE_SIZE\s*=\s*(\d+)", row)
+    assert documented_default is not None, row
+    assert documented_maximum is not None, row
+    assert int(documented_default.group(1)) == configured["DEFAULT_PAGE_SIZE"]
+    assert int(documented_maximum.group(1)) == configured["MAX_PAGE_SIZE"]
+    assert "remains unset" not in row
 
 
 def test_playground_310_auth_and_cache_contract_is_executable() -> None:
