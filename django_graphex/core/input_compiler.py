@@ -676,7 +676,9 @@ def compile_input_type(
         _excl = set(exclude_fields) if exclude_fields else None
         _incl = set(include_fields) if include_fields else None
 
-        for field_name, field_info in model.model_fields.items():
+        original_names: dict[str, str] = getattr(model, "__gdx_original_fields__", {})
+        for internal_name, field_info in model.model_fields.items():
+            field_name = original_names.get(internal_name, internal_name)
             if field_name in _nested_out_names:
                 continue
             if field_name in _relation_replace:

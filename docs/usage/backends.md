@@ -115,6 +115,22 @@ class UserType(DjangoModelType):
 Under the hood these compile to Pydantic `field_validator` / `model_validator`, so
 they also work on `DjangoModelMutation` and **compose** with `Meta.pydantic_model`.
 
+### Django columns named like Pydantic internals
+
+Generated create/update inputs accept Django columns named `model_dump`,
+`model_validate`, or `model_config`. Their GraphQL names remain `modelDump`,
+`modelValidate`, and `modelConfig`; validation errors and saved model attributes
+use the original Django names. The generated validation schema isolates
+`model_config` under a private Pydantic field name so it does not replace
+Pydantic's configuration. Inline `validate_model_config` and object-level
+`validate` hooks still receive the original Django name.
+
+Only generated schemas with `model_dump` or `model_validate` relax Pydantic's
+protected-name check. Pydantic may warn that these fields shadow its model
+methods; other models keep their existing configuration. Prefer ordinary
+column names for new models, but existing database columns do not need a
+GraphQL or database rename.
+
 ### Custom validation: `Meta.pydantic_model`
 
 For reusable rule sets (or when you prefer an explicit schema), provide a Pydantic

@@ -15,7 +15,7 @@ from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 from django.db import IntegrityError, connections, models, router, transaction
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ..backends import SerializerBackend
 from ..errors import ErrorType
@@ -450,7 +450,19 @@ class PydanticBackend(SerializerBackend):
 
         # Only client-provided fields (so Django defaults apply on create and
         # untouched fields are left alone on update).
-        payload = validated.model_dump(include=set(validated.model_fields_set))
+        included = set(validated.model_fields_set)
+        # A generated Django column named model_dump shadows the instance
+        # method. Use Pydantic's descriptor only for that formerly unusable
+        # schema; leave custom bases' normal serialization behavior intact.
+        if "model_dump" in schema.model_fields:
+            payload = BaseModel.model_dump(validated, include=included)
+        else:
+            payload = validated.model_dump(include=included)
+        original_names: dict[str, str] = getattr(schema, "__gdx_original_fields__", {})
+        if original_names:
+            payload = {
+                original_names.get(key, key): value for key, value in payload.items()
+            }
 
         # Unwrap enum (choices) members to their stored value.
         # List/tuple values are also recursed into so that multi-valued choice

@@ -20,7 +20,8 @@ from typing import Any
 from django.core.files.base import File
 from django.db import models
 from django.utils.functional import Promise
-from pydantic import Field, create_model
+from pydantic import ConfigDict, Field, create_model
+from pydantic.fields import FieldInfo
 from pydantic_core import core_schema
 
 
@@ -361,6 +362,26 @@ _SCHEMA_CACHE: dict[
 ] = {}
 
 
+def _isolated_model_config_name(model: type[models.Model], base: type | None) -> str:
+    """Choose a private Pydantic name for a Django model_config column.
+
+    Args:
+        model: Django model whose writable names must remain distinct.
+        base: Optional inherited Pydantic model with its own field names.
+
+    Returns:
+        A name absent from the Django columns and inherited Pydantic fields.
+    """
+    occupied = {field.name for field in writable_fields(model)}
+    occupied.update(field.name for field in m2m_fields(model))
+    if base is not None:
+        occupied.update(getattr(base, "model_fields", {}))
+    candidate = "gdx_model_config_field"
+    while candidate in occupied:
+        candidate += "_"
+    return candidate
+
+
 def build_model_schema(
     model: type[models.Model],
     *,
@@ -374,6 +395,11 @@ def build_model_schema(
     "(model, partial, base, frozenset(exclude))": identical calls return the
     SAME class object rather than rebuilding it (the class is stateless per
     "validate" call, so sharing it is safe).
+
+    A generated field named model_config is stored under a private Pydantic
+    name but keeps its original validation alias. Only schemas containing a
+    previously unusable model_dump or model_validate field relax Pydantic's
+    protected namespace check; ordinary generated schemas are unchanged.
 
     Args:
         model: The Django model class.
@@ -438,9 +464,24 @@ def build_model_schema(
             pk_type = int
         definitions[field.name] = (list[pk_type] | None, Field(default=None))  # type: ignore[valid-type]
 
+    original_names: dict[str, str] = {}
+    if "model_config" in definitions:
+        internal_name = _isolated_model_config_name(model, base)
+        annotation, field_info = definitions.pop("model_config")
+        isolated_info = FieldInfo.merge_field_infos(
+            field_info, Field(validation_alias="model_config")
+        )
+        definitions[internal_name] = (annotation, isolated_info)
+        original_names[internal_name] = "model_config"
+
     kwargs: dict[str, Any] = {"__module__": __name__}
     if base is not None:
         kwargs["__base__"] = base
+    if {"model_dump", "model_validate"} & definitions.keys():
+        # Only generated schemas that previously failed construction relax this
+        # Pydantic namespace check. Ordinary model schemas retain their config.
+        kwargs["__config__"] = ConfigDict(protected_namespaces=())
     schema = create_model(f"{model.__name__}Native", **kwargs, **definitions)  # type: ignore[call-overload]
+    schema.__gdx_original_fields__ = original_names
     _SCHEMA_CACHE[cache_key] = schema
     return schema

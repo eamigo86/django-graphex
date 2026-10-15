@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Preserve generated mutation create/update inputs for Django columns named
+  `model_dump`, `model_validate`, or `model_config`. These previously failed
+  Pydantic schema construction; their GraphQL names, validation errors, and
+  persisted Django attributes now retain the original naming. Existing
+  working column names and model-derived omission semantics are unchanged.
+
 - Evaluate zero-argument factories on hand-authored `InputType` fields for
   each new GraphQL-coerced input object rather than once at schema build.
   Factory values no longer appear as fixed SDL defaults; plain literal
