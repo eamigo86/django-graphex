@@ -648,6 +648,9 @@ def compile_input_type(
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
+        factory_candidates: dict[
+            str, tuple[str, GraphQLInputField, Callable[[], Any]]
+        ] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -742,6 +745,12 @@ def compile_input_type(
             default_value = (
                 _default_value_for(field_info) if _emit_defaults else Undefined
             )
+            gql_field = GraphQLInputField(
+                type_=gql_type,
+                out_name=field_name,
+                description=field_info.description,
+                default_value=default_value,
+            )
             if (
                 _emit_defaults
                 and field_info.default_factory is not None
@@ -749,13 +758,11 @@ def compile_input_type(
                     field_info, "default_factory_takes_validated_data", False
                 )
             ):
-                factory_fields[field_name] = field_info.default_factory
-            gql_field = GraphQLInputField(
-                type_=gql_type,
-                out_name=field_name,
-                description=field_info.description,
-                default_value=default_value,
-            )
+                factory_candidates[alias] = (
+                    field_name,
+                    gql_field,
+                    field_info.default_factory,
+                )
             fields[alias] = gql_field
 
         # ----------------------------------------------------------------
@@ -867,6 +874,21 @@ def compile_input_type(
                 extensions=({"gdx_required_perms": perms} if perms is not None else {}),
             )
 
+        # The base and injected loops can replace a field at the same wire
+        # alias. Only the final emitted field may contribute a factory; an
+        # overwritten field must not reappear in the resolver input mapping.
+        factory_fields.clear()
+        factory_fields.update(
+            {
+                field_name: factory
+                for alias, (
+                    field_name,
+                    gql_field,
+                    factory,
+                ) in factory_candidates.items()
+                if fields.get(alias) is gql_field
+            }
+        )
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation

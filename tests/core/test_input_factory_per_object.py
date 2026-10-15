@@ -487,3 +487,132 @@ def test_model_derived_input_keeps_omitted_factory_field_absent() -> None:
     assert calls == []
     assert DerivedInput.model_validate({}).tags == ["model"]
     assert calls == [1]
+
+
+def test_overwritten_wire_alias_only_runs_effective_field_factory() -> None:
+    """Do not restore a field replaced by a later shared wire alias.
+
+    The existing compiler exposes only the final GraphQL input field. Its
+    resolver-facing out-name alone may receive an omitted-field default.
+    """
+    calls: list[str] = []
+    seen: list[dict[str, object]] = []
+
+    def earlier_default() -> str:
+        """Mark an overwritten factory invocation as an unwanted side effect."""
+        calls.append("earlier")
+        return "earlier-default"
+
+    def later_default() -> str:
+        """Create the effective field default on each omitted input."""
+        calls.append("later")
+        return "later-default"
+
+    class SharedWireInput(InputType):
+        earlier: str = Field(default_factory=earlier_default, alias="wire")
+        later: str | None = Field(default_factory=later_default, alias="wire")
+
+    input_type = compile_input_type(SharedWireInput, name="SharedWireInput")
+
+    class SubmitSharedWire(Mutation):
+        result = field(GraphQLString)
+
+        class Arguments:
+            payload = GraphQLArgument(GraphQLNonNull(input_type))
+
+        @staticmethod
+        def mutate(
+            _root: object, _info: object, payload: dict[str, object]
+        ) -> dict[str, str]:
+            """Capture the public GraphQL-coerced input mapping.
+
+            Args:
+                _root: Unused root object.
+                _info: Unused execution information.
+                payload: Coerced resolver input.
+
+            Returns:
+                A mutation payload confirming execution.
+            """
+            seen.append(dict(payload))
+            return {"result": "ok"}
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "SharedWireQuery", {"ping": GraphQLField(GraphQLString)}
+        ),
+        mutation=GraphQLObjectType(
+            "SharedWireMutation", {"submit": SubmitSharedWire.Field()}
+        ),
+    )
+    assert list(input_type.fields) == ["wire"]
+    assert input_type.fields["wire"].out_name == "later"
+    assert calls == []
+
+    for wire, expected in (
+        ("", "later-default"),
+        ('wire: "given"', "given"),
+        ("wire: null", None),
+    ):
+        result = graphql_sync(
+            schema, f"mutation {{ submit(payload: {{{wire}}}) {{ result }} }}"
+        )
+        assert result.errors is None, result.errors
+        assert result.data == {"submit": {"result": "ok"}}
+        assert seen[-1] == {"later": expected}
+    assert calls == ["later"]
+
+
+def test_literal_field_overwriting_factory_alias_does_not_run_factory() -> None:
+    """Do not run a hidden factory when the final wire field is literal.
+
+    Existing last-alias-wins projection and fixed literal SDL defaults remain
+    intact even when an earlier field at that alias declared a factory.
+    """
+    calls: list[str] = []
+    seen: list[dict[str, object]] = []
+
+    def hidden_default() -> str:
+        """Count any invocation of the overwritten factory."""
+        calls.append("hidden")
+        return "hidden-default"
+
+    class LiteralWinsInput(InputType):
+        earlier: str = Field(default_factory=hidden_default, alias="wire")
+        later: str = Field(default="literal-default", alias="wire")
+
+    input_type = compile_input_type(LiteralWinsInput, name="LiteralWinsInput")
+
+    def resolve(_root: object, _info: object, payload: dict[str, object]) -> str:
+        """Observe the effective input mapping without model validation.
+
+        Args:
+            _root: Unused GraphQL root.
+            _info: Unused execution information.
+            payload: Coerced resolver input.
+
+        Returns:
+            A harmless query value.
+        """
+        seen.append(dict(payload))
+        return "ok"
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "LiteralWinsQuery",
+            {
+                "probe": GraphQLField(
+                    GraphQLString,
+                    args={"payload": GraphQLArgument(input_type)},
+                    resolve=resolve,
+                )
+            },
+        )
+    )
+    assert list(input_type.fields) == ["wire"]
+    assert input_type.fields["wire"].out_name == "later"
+    assert 'wire: String = "literal-default"' in print_schema(schema)
+    result = graphql_sync(schema, "{ probe(payload: {}) }")
+    assert result.errors is None, result.errors
+    assert seen == [{"later": "literal-default"}]
+    assert calls == []
