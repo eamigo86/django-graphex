@@ -355,6 +355,25 @@ query {
 - `not: a` → `NOT a`
 - sibling keys in the same node are AND-ed with the operators.
 
+For a many-to-many or reverse foreign-key relation, **separate explicit `and`
+branches may match different related rows**. For example, a post with one tag
+labelled `x` and another labelled `y` now matches:
+
+```graphql
+{ posts(filter: { and: [
+  { tags: { label: { exact: "x" } } }
+  { tags: { label: { exact: "y" } } }
+] }) { results { title } } }
+```
+
+Criteria grouped inside **one** relation object still require the **same**
+related row. Use `tags: { label: { exact: "x" }, color: { exact: "blue" } }`
+when one tag must satisfy both. The distinction also applies when an `and`
+appears beneath `or` or `not`; it does not change scalar/to-one filters, null
+lookups, the generated input schema, or subscription filters. Clients that
+depended on separate `and` branches matching one related row should group
+those criteria inside one relation object.
+
 Empty Boolean operands retain the existing no-op behavior: `or: []` and
 `not: {}` add no predicate, while `or: [{}, X]` contributes only `X`. The
 `exact: null` change does not assign classical Boolean identities to them.

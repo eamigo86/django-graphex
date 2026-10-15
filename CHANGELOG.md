@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Let separate explicit `and` filter branches over a many-to-many or reverse
+  foreign-key relation match different related rows, including when nested
+  beneath `or` or `not`. Criteria in one relation object still match the same
+  related row. Queries that previously returned no parent may now return one;
+  group criteria in one relation object to require same-row matching. Scalar,
+  to-one, null and empty-Boolean behavior, generated SDL, and subscription
+  filters are unchanged.
+
 - Type explicitly declared numeric `DateField` and `DateTimeField` part filters
   as GraphQL `Int` so integer literals and variables reach Django. `DateField`
   supports `year`, `month`, `day`, `week_day`; `DateTimeField` also supports

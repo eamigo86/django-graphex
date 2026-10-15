@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from django.db.models import Exists, OuterRef, Q
+from graphql import Undefined
+
 from .translate import to_q
 
 if TYPE_CHECKING:
@@ -18,6 +21,91 @@ if TYPE_CHECKING:
     from django_graphex.registry import Registry
 
 __all__ = ("FilterBackend", "NativeFilterBackend", "resolve_filter_backend")
+
+
+def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
+    """Find an explicit AND branch that crosses a multi-valued relation.
+
+    Relation objects are deliberately opaque here. Their criteria describe
+    one related row, even when that object contains its own Boolean operators.
+
+    Args:
+        node: A generated filter input node.
+        model: The root model being filtered.
+
+    Returns:
+        Whether a root-scope AND needs independently matched related rows.
+    """
+    if node is None or node is Undefined:
+        return False
+    for key, value in node.items():
+        if value is None or value is Undefined:
+            continue
+        if key == "and":
+            for child in value:
+                child_q, child_many = to_q(child, model, _combinator="and")
+                if child_q and child_many:
+                    return True
+        elif key == "or":
+            if any(_has_independent_many_and(child, model) for child in value):
+                return True
+        elif key == "not" and _has_independent_many_and(value, model):
+            return True
+    return False
+
+
+def _independent_many_q(
+    node: Any, queryset: QuerySet, combinator: str | None = None
+) -> Q:
+    """Compile root-scope Boolean input with independent to-many AND branches.
+
+    Each to-many branch is tested in one correlated SQL EXISTS against the
+    incoming queryset. This retains its row scope, annotations and database
+    alias without materializing primary keys or evaluating one query per row.
+    A relation object remains one ordinary Q so all of its criteria bind the
+    same related row, including nullable outer-join behavior.
+
+    Args:
+        node: A generated filter input node.
+        queryset: The already-scoped root queryset.
+        combinator: Enclosing Boolean operator for unknown-field validation.
+
+    Returns:
+        A SQL-composable condition for the node.
+    """
+    result = Q()
+    if node is None or node is Undefined:
+        return result
+
+    for key, value in node.items():
+        if value is None or value is Undefined:
+            continue
+        if key == "and":
+            for child in value:
+                child_q = _independent_many_q(child, queryset, "and")
+                if not child_q:
+                    continue
+                _, child_many = to_q(child, queryset.model, _combinator="and")
+                if child_many:
+                    branch = queryset.filter(pk=OuterRef("pk")).filter(child_q)
+                    result &= Q(Exists(branch))
+                else:
+                    result &= child_q
+        elif key == "or":
+            combined = Q()
+            has_any = False
+            for child in value:
+                child_q = _independent_many_q(child, queryset, "or")
+                combined = child_q if not has_any else (combined | child_q)
+                has_any = True
+            if has_any:
+                result &= combined
+        elif key == "not":
+            result &= ~_independent_many_q(value, queryset, "not")
+        else:
+            leaf_q, _ = to_q({key: value}, queryset.model, _combinator=combinator)
+            result &= leaf_q
+    return result
 
 
 class FilterBackend:
@@ -134,6 +222,8 @@ class NativeFilterBackend(FilterBackend):
         q, touched_to_many = to_q(value, queryset.model)
         if not q:
             return queryset
+        if _has_independent_many_and(value, queryset.model):
+            q = _independent_many_q(value, queryset)
         queryset = queryset.filter(q)
         if touched_to_many:
             queryset = queryset.distinct()
