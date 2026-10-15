@@ -441,6 +441,37 @@ not-found response. If clients previously inspected Django's blocked-delete
 collector message, migrate to the generic message and GraphQL error path;
 neither the protected relation nor its row IDs are disclosed.
 
+Generated create, update, and delete fields also hide an unclassified Django
+`IntegrityError` that reaches GraphQL execution, including one from a nested
+child. Instead of exposing SQL constraint, table, or column names, the field is
+`null` and the top-level error message is
+`A database constraint prevented this operation.` The error keeps its normal
+GraphQL path and location, and a valid request retains the normal execution
+response status (typically HTTP 200). For example, a database-only check that
+previously surfaced `CHECK constraint failed: private_constraint` now returns:
+
+```json
+{
+  "data": {"createItem": null},
+  "errors": [{
+    "message": "A database constraint prevented this operation.",
+    "locations": [{"line": 2, "column": 3}],
+    "path": ["createItem"]
+  }]
+}
+```
+
+Nested parent/child writes still roll back together, and an earlier sibling
+write rolls back when `ATOMIC_MUTATIONS=True` (or a request-wide
+`ATOMIC_REQUESTS` transaction applies). With both off, that sibling can still
+commit. This is **not** an `ok: false` conversion: supported field-level
+unique, foreign-key, and many-to-many conflicts still use structured
+`errors[]`, while an unclassified integrity failure does not. Direct backend
+calls still raise the original exception. No general model validation,
+`full_clean()`, constraint pre-scan, or automatic upsert is added. Clients
+inspecting raw database messages must migrate to the fixed message and
+GraphQL error path.
+
 !!! tip "FK checks stay inside the mutation's rollback boundary"
     In true autocommit, a valid plain mutation issues a single `INSERT` or
     `UPDATE`; it does not pre-check each FK. Within an outer transaction,

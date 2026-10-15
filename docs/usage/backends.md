@@ -63,9 +63,9 @@ validation, not `full_clean()` or a general database-constraint conversion.
 
 ### Uniqueness validation
 
-The backend checks all three Django uniqueness mechanisms before saving, so
-violations surface as a structured `ErrorType` in the mutation response rather than
-propagating as an `IntegrityError` HTTP 500:
+The backend checks the supported Django uniqueness mechanisms on write failure,
+so attributable violations surface as a structured `ErrorType` in the mutation
+response rather than as a top-level GraphQL error:
 
 | Mechanism | Where errors land |
 |---|---|
@@ -77,8 +77,12 @@ propagating as an `IntegrityError` HTTP 500:
 **Conditional and expression-based constraints** (`condition=Q(...)` or
 `expressions=[...]`) are **not** pre-checked: replicating their predicate
 server-side is not reliable, so they remain DB-enforced. If a conditional
-constraint is violated the database will raise an `IntegrityError`, which the
-backend does not currently catch.
+constraint is violated the database can raise an `IntegrityError` that the
+backend cannot attribute to a field. Generated mutation fields replace its SQL
+detail with the top-level GraphQL message
+`A database constraint prevented this operation.`; the backend's direct
+`save_object` call still raises the original exception. This does not add
+`full_clean()`, predicate scans, or structured errors for those constraints.
 
 ### Nested writes
 
@@ -216,9 +220,14 @@ argument are **not** pre-checked by the backend. Replicating these predicates
 server-side is unreliable (they may reference database functions or
 non-deterministic expressions), so the backend skips them deliberately.
 
-**What breaks:** if a conditional unique constraint is violated, the database
-raises an `IntegrityError` that is **not** caught by the backend. This propagates
-as an HTTP 500 instead of a structured `{ ok: false, errors: [...] }` response.
+**Failure contract:** when a conditional unique constraint is violated, the
+database raises an `IntegrityError` that the backend cannot map to a field. A
+generated create/update/delete field reports the generic top-level GraphQL
+execution error above (normally HTTP 200 with that field set to `null`), not
+an `ok: false` payload; nested writes roll back. The direct backend API still
+raises the original `IntegrityError`. Expression-based constraints remain
+database-enforced and use the same generated-field boundary if they raise an
+unmapped `IntegrityError`; no expression-specific predicate check is added.
 
 **Workaround:** add a `validate_<field>()` or `validate()` method that queries
 for the conflict and raises `ValueError` before the backend reaches the DB

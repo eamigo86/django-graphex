@@ -126,6 +126,11 @@ See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
 
 **Returns:** `(ok: bool, obj_or_errors)` — the saved object, or a list of `ErrorType`
 
+An unclassified database `IntegrityError` is not returned in this tuple: it
+escapes the helper after its nested transaction rolls back. The generated
+GraphQL field replaces its public message with the generic top-level error;
+calling the backend directly still raises the original exception.
+
 ### CRUD Operations
 
 #### `create(root, info, **kwargs)` (classmethod)

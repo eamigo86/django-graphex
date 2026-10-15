@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Hide table, column, and constraint details from unclassified Django
+  `IntegrityError` failures in generated create/update/delete GraphQL fields,
+  including nested writes. Clients now receive the fixed top-level message
+  `A database constraint prevented this operation.` instead of raw database
+  text; the field remains `null`, with its GraphQL path and normal HTTP shape.
+  Nested and atomic sibling rollback remain intact. Mapped unique/FK field
+  errors stay structured, direct backend exceptions stay unchanged, and no
+  general constraint validation or upsert is added.
+
 - Validate supplied negative `PositiveIntegerField` and
   `PositiveSmallIntegerField` generated inputs before SQL, returning a
   structured field error without saving that mutation. Zero, positive values,

@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import enum
 from contextlib import nullcontext
-from typing import TYPE_CHECKING, Any
+from functools import wraps
+from typing import TYPE_CHECKING, Any, Callable
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
-from django.db import router, transaction
+from django.db import IntegrityError, router, transaction
 from django.db.models import ForeignKey, ManyToManyField, Subquery
+from graphql import GraphQLError
 
 from .backends import backend_for_nested
 from .errors import ErrorType
@@ -67,6 +69,47 @@ _NESTED_OPS = frozenset({"create", "update"})
 #: names no row I could find", so it cannot double as "I did not look" -- the
 #: two must stay distinguishable for the caller to hand its own lookup over.
 _UNRESOLVED: Any = object()
+
+
+def _redact_generated_integrity_error(
+    resolver: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Hide unclassified database details at a generated mutation field.
+
+    The resolver has already left any nested or backend atomic block when its
+    exception reaches this adapter, so replacing the exception does not prevent
+    rollback. Backend-attributed validation errors remain ordinary return values.
+
+    Args:
+        resolver: Adapted generated create, update, or delete resolver.
+
+    Returns:
+        A resolver with the same successful result and a generic integrity error.
+    """
+
+    @wraps(resolver)
+    def guarded(root: Any, info: Any, **kwargs: Any) -> Any:
+        """Call the generated resolver without exposing SQL diagnostics.
+
+        Args:
+            root: GraphQL root value.
+            info: GraphQL resolver metadata.
+            **kwargs: Generated mutation arguments.
+
+        Returns:
+            The original resolver result.
+
+        Raises:
+            GraphQLError: If an unclassified database integrity failure escapes.
+        """
+        try:
+            return resolver(root, info, **kwargs)
+        except IntegrityError:
+            raise GraphQLError(
+                "A database constraint prevented this operation."
+            ) from None
+
+    return guarded
 
 
 def host_registries(registry: Any) -> tuple[Any, ...]:

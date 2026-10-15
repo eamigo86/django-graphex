@@ -23,6 +23,7 @@ from .core.validators import build_validator_model
 from .errors import ErrorType
 from .nested import (
     NestedFieldsMixin,
+    _redact_generated_integrity_error,
     hosts_for_nested,
     hosts_serving,
     record_nested_input,
@@ -820,7 +821,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             if _resolver is None:
                 continue  # pragma: no cover — model_operations already validated
             # classmethods are bound (inspect.ismethod → True), passthrough
-            _resolver = _adapt_self(_resolver, owner=cls)
+            _resolver = _redact_generated_integrity_error(
+                _adapt_self(_resolver, owner=cls)
+            )
             _gql_field = _GraphQLField(
                 _gql_output_type,
                 args=_args,

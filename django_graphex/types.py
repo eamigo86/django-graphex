@@ -30,7 +30,12 @@ from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
 )
-from .nested import NestedFieldsMixin, hosts_serving, register_nested_host
+from .nested import (
+    NestedFieldsMixin,
+    _redact_generated_integrity_error,
+    hosts_serving,
+    register_nested_host,
+)
 from .paginations.pagination import (
     BaseDjangoGraphqlPagination,
     projected_ordering_attnames,
@@ -3950,7 +3955,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         _gql_field = _GQLField(
             _gql_output_type,
             args=_args,
-            resolve=_adapt_self(_resolver_map[operation], owner=cls),
+            resolve=_redact_generated_integrity_error(
+                _adapt_self(_resolver_map[operation], owner=cls)
+            ),
             description=getattr(cls._meta, "description", None)
             or f"Native {operation} mutation for {model.__name__}",
         )

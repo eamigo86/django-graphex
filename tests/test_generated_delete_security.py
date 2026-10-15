@@ -129,7 +129,7 @@ def _sibling_write(root: Any, info: Any) -> str:
 
 
 def _fail_delete(self: Category, *args: Any, **kwargs: Any) -> None:
-    """Raise a non-collector database error from deletion.
+    """Raise a non-collector integrity error from deletion.
 
     Args:
         self: The model instance being deleted.
@@ -297,10 +297,10 @@ def test_generated_delete_keeps_success_and_not_found_contract(
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("schema", SCHEMAS)
 @override_settings(DEBUG=False, DJANGO_GRAPHEX={"ATOMIC_MUTATIONS": False})
-def test_unrelated_database_error_is_not_generic(
+def test_unclassified_integrity_error_uses_generic_generated_policy(
     schema: DjangoGraphQLSchema, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Do not widen collector handling to arbitrary persistence errors.
+    """Redact unclassified integrity errors under the approved broader policy.
 
     Args:
         schema: One of the two generated-delete frontends.
@@ -312,5 +312,7 @@ def test_unrelated_database_error_is_not_generic(
     monkeypatch.setattr(Category, "delete", _fail_delete)
     payload = json.loads(_post(schema, DELETE_QUERY, {"id": str(category.pk)}).content)
     assert payload["data"] == {"deleteCategory": None}
-    assert payload["errors"][0]["message"] == "a9-unrelated-db-error"
+    assert payload["errors"][0]["message"] == (
+        "A database constraint prevented this operation."
+    )
     assert Category.objects.filter(pk=category.pk).exists()
