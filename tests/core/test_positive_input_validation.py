@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import json
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from django.db import connection, models
@@ -12,6 +12,7 @@ from django.test import Client, RequestFactory, override_settings
 from django.test.utils import isolate_apps
 from django.urls import path
 from graphql import GraphQLError, GraphQLString, get_named_type, graphql_sync
+from pydantic import BaseModel, field_validator
 
 from django_graphex.core import ObjectType, field
 from django_graphex.core.fields import _positive_integer_validator
@@ -20,7 +21,7 @@ from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoModelType
 from django_graphex.views import GraphQLView
-from tests._schema_isolation import isolated_pair
+from tests._schema_isolation import isolated_default_pair, isolated_pair
 
 
 class _PositiveNestedParent(models.Model):
@@ -464,6 +465,170 @@ def test_positive_choices_validate_stored_number_and_keep_enum(
                         error["field"] for error in response["data"]["create"]["errors"]
                     } == {field_name}
                     assert not model_cls.objects.filter(**{field_name: -1}).exists()
+        finally:
+            with connection.schema_editor() as editor:
+                editor.delete_model(model_cls)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("host_kind", ["mutation", "type"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("field_name", ["positive", "small"])
+def test_custom_schema_preserves_nullable_positive_choice_enum(
+    host_kind: str, operation: str, field_name: str
+) -> None:
+    """Retain a custom-schema null choice through both generated mutation hosts.
+
+    Args:
+        host_kind: Generated mutation frontend.
+        operation: Create or update operation.
+        field_name: Nullable positive integer column.
+    """
+    with isolate_apps(), isolated_default_pair():
+        field_type = (
+            models.PositiveIntegerField
+            if field_name == "positive"
+            else models.PositiveSmallIntegerField
+        )
+        model_cls = type(
+            f"PositiveNullable_{host_kind}_{operation}_{field_name}",
+            (models.Model,),
+            {
+                "__module__": __name__,
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "app_label": "tests",
+                        "db_table": (
+                            f"t_positive_nullable_{host_kind}_{operation}_{field_name}"
+                        ),
+                    },
+                ),
+                field_name: field_type(
+                    choices=[(None, "Unset"), (0, "Zero"), (2, "Two")],
+                    null=True,
+                ),
+            },
+        )
+        calls: list[Any] = []
+
+        class Rules(BaseModel):
+            """Retain the generated null Enum in custom Pydantic validation."""
+
+            @field_validator(field_name, check_fields=False, mode="after")
+            @classmethod
+            def retain_enum(cls: type[BaseModel], value: Any) -> Any:
+                """Return the generated null-choice member after validation.
+
+                Args:
+                    cls: Generated Pydantic model class.
+                    value: Coerced field value.
+
+                Returns:
+                    The original value, or its generated null-choice member.
+                """
+                calls.append(value)
+                enum_type = next(
+                    member_type
+                    for member_type in get_args(cls.model_fields[field_name].annotation)
+                    if isinstance(member_type, type)
+                    and issubclass(member_type, enum.Enum)
+                )
+                return (
+                    next(member for member in enum_type if member.value is None)
+                    if value is None
+                    else value
+                )
+
+        private_registry = Registry()
+        if host_kind == "mutation":
+
+            class PositiveHost(DjangoModelMutation):
+                """Expose the nullable choice through generated mutation fields."""
+
+                class Meta:
+                    """Bind the model, custom schema, and private Registry."""
+
+                    model = model_cls
+                    registry = private_registry
+                    pydantic_model = Rules
+                    input_field_name = "payload"
+                    output_field_name = "record"
+                    model_operations = ("create", "update")
+
+        else:
+
+            class PositiveHost(DjangoModelType):
+                """Expose the nullable choice through generated model fields."""
+
+                class Meta:
+                    """Bind the model and custom schema."""
+
+                    model = model_cls
+                    pydantic_model = Rules
+                    input_field_name = "payload"
+                    output_field_name = "record"
+                    model_operations = ("create", "update")
+
+        class Query(ObjectType):
+            """Provide the required query root."""
+
+            ping = field(GraphQLString)
+
+        class MutationRoot(ObjectType):
+            """Expose generated create and update operations."""
+
+            create = PositiveHost.CreateField()
+            update = PositiveHost.UpdateField()
+
+        compiled = DjangoGraphQLSchema(
+            query=Query,
+            mutation=MutationRoot,
+            registries=isolated_pair(private_registry),
+        )
+        input_type = get_named_type(
+            compiled.graphql_schema.mutation_type.fields[operation].args["payload"].type
+        )
+        enum_type = get_named_type(input_type.fields[field_name].type)
+        null_name = next(
+            name
+            for name, choice in enum_type.values.items()
+            if getattr(choice.value, "value", choice.value) is None
+        )
+        with connection.schema_editor() as editor:
+            editor.create_model(model_cls)
+        try:
+            row = (
+                model_cls.objects.create(**{field_name: 2})
+                if operation == "update"
+                else None
+            )
+            payload = f"{field_name}: {null_name}"
+            if row is not None:
+                payload = f'id: "{row.pk}", {payload}'
+            status, response = _post(
+                compiled,
+                f"mutation {{ {operation}(payload: {{{payload}}}) "
+                "{ ok errors { field } record { id } } }",
+            )
+            assert status == 200
+            assert "errors" not in response
+            assert response["data"][operation]["ok"] is True
+            assert calls
+            saved = model_cls.objects.get()
+            assert saved.__dict__[field_name] is None
+            enum_member = next(
+                member
+                for member in enum_type.values.values()
+                if getattr(member.value, "value", member.value) is None
+            ).value
+            assert (
+                _positive_integer_validator(model_cls._meta.get_field(field_name))(
+                    enum_member
+                )
+                is enum_member
+            )
         finally:
             with connection.schema_editor() as editor:
                 editor.delete_model(model_cls)

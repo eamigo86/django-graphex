@@ -360,6 +360,8 @@ def _positive_integer_validator(
             numeric_value = model_field.to_python(stored_value)
         except (DjangoValidationError, TypeError, ValueError) as exc:
             raise ValueError("Input should be a valid integer") from exc
+        if numeric_value is None:
+            return value
         if numeric_value < 0:
             raise ValueError("Input should be greater than or equal to 0")
         return value
