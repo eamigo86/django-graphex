@@ -151,7 +151,12 @@ Delete an object by its ID.
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Mutation arguments including object ID
 
-**Returns:** Mutation response with deleted object or errors
+**Returns:** Mutation response with deleted object or structured not-found errors.
+
+**Raises:** A blocked `PROTECT` or `RESTRICT` deletion becomes a generic
+GraphQL execution error with the delete field set to `null`, not an
+`ok: false` payload. See [error handling](../usage/mutations.md#error-handling)
+for the response and rollback distinction.
 
 !!! note "Customizing persistence"
 

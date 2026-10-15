@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
+from django.db.models.deletion import ProtectedError, RestrictedError
 from django.utils.functional import SimpleLazyObject
 from graphql import GraphQLBoolean, GraphQLError
 
@@ -3642,6 +3643,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             A success response with the deleted object, or an error response
             when no matching object exists or it falls outside the scoped
             queryset.
+
+        Raises:
+            GraphQLError: If a protected or restricted relation blocks deletion.
         """
         cls.authorize(info, "delete", data=kwargs)
         pk = kwargs.get("id")
@@ -3654,7 +3658,10 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
-            old_obj.delete()
+            try:
+                old_obj.delete()
+            except (ProtectedError, RestrictedError):
+                raise GraphQLError("Deletion blocked by related objects.") from None
             setattr(old_obj, old_obj._meta.pk.attname, pk)
             return cls.perform_mutate(old_obj, info)
         else:

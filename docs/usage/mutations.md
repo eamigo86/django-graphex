@@ -402,6 +402,33 @@ also rolls back the default-database request transaction on GraphQL execution
 errors. The response can retain partial data for writes that were rolled back;
 do not treat partial response data as proof that a row was committed.
 
+Generated `DjangoModelMutation.DeleteField()` and
+`DjangoModelType.DeleteField()` return a **GraphQL execution error** when
+deletion is blocked by a Django `PROTECT` or `RESTRICT` relation. The message is
+`Deletion blocked by related objects.`; it does not expose related model names
+or row identifiers. For example, the delete field is `null` and the error has
+the field path rather than an `ok: false` mutation payload:
+
+```json
+{
+  "data": {"deleteCategory": null},
+  "errors": [{
+    "message": "Deletion blocked by related objects.",
+    "locations": [{"line": 2, "column": 3}],
+    "path": ["deleteCategory"]
+  }]
+}
+```
+
+The location reflects the caller's query. The HTTP status remains the normal
+GraphQL execution-response status (200 for a valid request). A previous sibling
+write still commits with `ATOMIC_MUTATIONS=False` and rolls back with
+`ATOMIC_MUTATIONS=True` or a request-wide `ATOMIC_REQUESTS` transaction. A
+missing or out-of-scope row continues to use the structured `ok: false`
+not-found response. If clients previously inspected Django's blocked-delete
+collector message, migrate to the generic message and GraphQL error path;
+neither the protected relation nor its row IDs are disclosed.
+
 !!! tip "FK checks stay inside the mutation's rollback boundary"
     In true autocommit, a valid plain mutation issues a single `INSERT` or
     `UPDATE`; it does not pre-check each FK. Within an outer transaction,

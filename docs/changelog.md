@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Replace Django collector details in generated delete `PROTECT`/`RESTRICT`
+  failures with a generic GraphQL execution error. Both mutation frontends keep
+  the existing field-null, HTTP and atomic rollback behavior; blocked deletes
+  do not become `ok: false` payloads. Clients relying on the old collector
+  message must migrate to the generic error and field path.
+
 - Honor an explicit `name=` on `DjangoInterfaceType` fields and matching
   declared implementor fields. Their SDL, introspection, and queries now use
   the requested wire name; attributes without an explicit name retain

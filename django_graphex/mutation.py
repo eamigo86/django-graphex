@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager
-from graphql import GraphQLBoolean
+from django.db.models.deletion import ProtectedError, RestrictedError
+from graphql import GraphQLBoolean, GraphQLError
 
 from ._strconv import to_camel_case
 from .backends import resolve_backend
@@ -973,6 +974,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A mutation response carrying the deleted object or errors.
+
+        Raises:
+            GraphQLError: If a protected or restricted relation blocks deletion.
         """
         pk = kwargs.get("id")
 
@@ -984,7 +988,10 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
-            old_obj.delete()
+            try:
+                old_obj.delete()
+            except (ProtectedError, RestrictedError):
+                raise GraphQLError("Deletion blocked by related objects.") from None
             setattr(old_obj, old_obj._meta.pk.attname, pk)
             return cls.perform_mutate(old_obj, info)
         else:
