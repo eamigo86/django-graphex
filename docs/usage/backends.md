@@ -42,7 +42,9 @@ and nested writes (atomic, relation-aware).
 For a model `EmailField`, generated create/update inputs also run Django's email
 **syntax** validator on a supplied, nonempty value. An invalid address returns
 `ok: false` with an `errors` entry for the email field; neither the parent nor
-a nested child is saved. The GraphQL input remains `String`. This does not run
+a nested child is saved. An `EmailField` without choices keeps its GraphQL `String` input; a field
+with choices keeps its existing Enum SDL, and validation checks the stored
+choice value rather than its display label. This does not run
 `full_clean()` or add model-wide/custom field-validator parity: omitted fields,
 explicit `null` where allowed, empty strings, defaults, and partial updates
 retain their existing behavior. In particular, this change does not make

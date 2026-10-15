@@ -9,7 +9,13 @@ import pytest
 from django.db import connection, models
 from django.test import RequestFactory
 from django.test.utils import isolate_apps
-from graphql import GraphQLString, graphql_sync, print_schema
+from graphql import (
+    GraphQLEnumType,
+    GraphQLString,
+    get_named_type,
+    graphql_sync,
+    print_schema,
+)
 from pydantic import BaseModel, ValidationError, field_validator
 
 from django_graphex.core import ObjectType, field
@@ -170,6 +176,149 @@ def test_generated_email_input_rejects_invalid_syntax(
                 editor.delete_model(model_cls)
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("host_kind", ["mutation", "type"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize(
+    ("choice_value", "expected_ok"),
+    [("two@example.com", True), ("bad@@example.com", False), ("", True)],
+)
+def test_generated_email_choices_preserve_enum_and_validate_values(
+    host_kind: str, operation: str, choice_value: str, expected_ok: bool
+) -> None:
+    """Validate choice values while preserving the existing Enum input.
+
+    Args:
+        host_kind: Generated mutation frontend to exercise.
+        operation: Create or update operation under test.
+        choice_value: Underlying email choice to supply.
+        expected_ok: Whether Django email syntax accepts the choice.
+    """
+    with isolate_apps():
+        choice_case = (
+            "valid"
+            if choice_value == "two@example.com"
+            else "empty"
+            if choice_value == ""
+            else "invalid"
+        )
+        model_cls = type(
+            f"EmailChoices_{host_kind}_{operation}_{choice_case}",
+            (models.Model,),
+            {
+                "__module__": __name__,
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "app_label": "tests",
+                        "db_table": f"t_email_choices_{host_kind}_{operation}_{choice_case}",
+                    },
+                ),
+                "email": models.EmailField(
+                    choices=[
+                        ("one@example.com", "One"),
+                        (choice_value, "Second"),
+                    ]
+                ),
+            },
+        )
+        with connection.schema_editor() as editor:
+            editor.create_model(model_cls)
+        try:
+            private_registry = Registry()
+            if host_kind == "mutation":
+
+                class EmailHost(DjangoModelMutation):
+                    """Expose generated mutation fields for the choices model."""
+
+                    class Meta:
+                        """Bind the temporary model and registry."""
+
+                        model = model_cls
+                        registry = private_registry
+                        input_field_name = "payload"
+                        output_field_name = "record"
+                        model_operations = ("create", "update")
+
+            else:
+
+                class EmailHost(DjangoModelType):
+                    """Expose generated CRUD fields for the choices model."""
+
+                    class Meta:
+                        """Bind the temporary model."""
+
+                        model = model_cls
+                        input_field_name = "payload"
+                        output_field_name = "record"
+                        model_operations = ("create", "update")
+
+            class Query(ObjectType):
+                """Provide the required query root."""
+
+                ping = field(GraphQLString)
+
+            class MutationRoot(ObjectType):
+                """Expose both generated operations."""
+
+                create = EmailHost.CreateField()
+                update = EmailHost.UpdateField()
+
+            compiled = DjangoGraphQLSchema(
+                query=Query,
+                mutation=MutationRoot,
+                registries=isolated_pair(private_registry),
+            )
+            schema = compiled.graphql_schema
+            input_type = get_named_type(
+                schema.mutation_type.fields[operation].args["payload"].type
+            )
+            email_type = get_named_type(input_type.fields["email"].type)
+            assert isinstance(email_type, GraphQLEnumType)
+            token = next(
+                name
+                for name, member in email_type.values.items()
+                if member.value == choice_value
+            )
+            row = (
+                model_cls.objects.create(email="one@example.com")
+                if operation == "update"
+                else None
+            )
+            payload = {"email": token}
+            if row is not None:
+                payload["id"] = str(row.pk)
+            query = (
+                f"mutation($payload: {input_type.name}!) {{ {operation}(payload: $payload) "
+                "{ ok errors { field messages } record { id email } } }"
+            )
+            request = RequestFactory().post(
+                "/graphql/",
+                json.dumps({"query": query, "variables": {"payload": payload}}),
+                content_type="application/json",
+            )
+            response = GraphQLView.as_view(schema=compiled)(request)
+            body = json.loads(response.content)
+            assert response.status_code == 200
+            assert body.get("errors") is None, body
+            assert body["data"][operation]["ok"] is expected_ok
+            if expected_ok:
+                assert model_cls.objects.get().email == choice_value
+            else:
+                assert {
+                    error["field"] for error in body["data"][operation]["errors"]
+                } == {"email"}
+                if row is None:
+                    assert not model_cls.objects.exists()
+                else:
+                    row.refresh_from_db()
+                    assert row.email == "one@example.com"
+        finally:
+            with connection.schema_editor() as editor:
+                editor.delete_model(model_cls)
+
+
 def test_email_syntax_preserves_optional_defaults_length_and_custom_rules() -> None:
     """Validate syntax only for supplied nonempty values after existing rules.
 
@@ -252,6 +401,34 @@ def test_reserved_named_email_keeps_original_error_field() -> None:
         with pytest.raises(ValidationError) as invalid:
             schema.model_validate({"model_config": "bad"})
         assert invalid.value.errors()[0]["loc"] == ("model_config",)
+
+
+def test_non_text_email_choice_reports_field_error() -> None:
+    """Reject a non-text choice value without exposing a Python type error.
+
+    Raises:
+        ValidationError: The non-text choice fails email syntax validation.
+    """
+    with isolate_apps():
+
+        class ChoiceEmail(models.Model):
+            """Include one malformed non-text choice alongside a valid email."""
+
+            email = models.EmailField(
+                choices=[(1, "Number"), ("ok@example.com", "Valid")]
+            )
+
+            class Meta:
+                """Keep the temporary model inside the test app."""
+
+                app_label = "tests"
+
+        schema = build_model_schema(ChoiceEmail)
+        with pytest.raises(ValidationError) as invalid:
+            schema.model_validate({"email": 1})
+        assert invalid.value.errors()[0]["loc"] == ("email",)
+        valid = schema.model_validate({"email": "ok@example.com"})
+        assert valid.email.value == "ok@example.com"
 
 
 @pytest.mark.django_db(transaction=True)

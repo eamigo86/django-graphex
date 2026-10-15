@@ -64,8 +64,10 @@ Every `DjangoModelMutation` includes these standard fields:
 Generated inputs validate a supplied, nonempty Django `EmailField` value with
 Django's email syntax validator. Invalid syntax returns the usual `ok: false`
 payload with `errors[].field` naming that field; its GraphQL type remains
-`String`. Empty, omitted, nullable and defaulted values keep their existing
-rules. See the [native backend guide](../usage/backends.md#native-pydantic-backend).
+`String` for fields without choices. Choice-backed email fields keep their
+existing Enum input and output SDL; syntax is checked on the stored choice
+value, not its label. Empty, omitted, nullable and defaulted values keep their
+existing rules. See the [native backend guide](../usage/backends.md#native-pydantic-backend).
 
 ### Class Methods
 

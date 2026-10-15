@@ -17,8 +17,10 @@ All notable changes to this library are documented here. The format is based on
 - Validate supplied nonempty Django `EmailField` values with Django's email
   syntax rules in generated create/update and nested inputs. Invalid values
   now produce the existing structured field error without persistence; the
-  GraphQL `String` schema and omission, null, empty-string, default, and
-  partial-update behavior remain unchanged. This does not enable `full_clean()`
+  GraphQL `String` schema for fields without choices, existing Enum SDL for
+  choice-backed fields, and omission, null, empty-string, default, and
+  partial-update behavior remain unchanged. Choice syntax checks use stored
+  values, not display labels. This does not enable `full_clean()`
   or change other Django field validators. Clients previously sending malformed
   nonempty addresses must correct them.
 

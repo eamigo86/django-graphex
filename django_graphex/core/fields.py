@@ -305,11 +305,12 @@ def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
     return (py_type, Field(description=description, **constraints))
 
 
-def _validate_email_syntax(value: str | None) -> str | None:
+def _validate_email_syntax(value: str | enum.Enum | None) -> str | enum.Enum | None:
     """Validate a supplied nonempty email using Django's syntax validator.
 
     Args:
-        value: Pydantic-coerced EmailField value, including allowed nulls.
+        value: Pydantic-coerced EmailField value, including choice Enums and
+            allowed nulls.
 
     Returns:
         The original value without normalization.
@@ -317,9 +318,12 @@ def _validate_email_syntax(value: str | None) -> str | None:
     Raises:
         ValueError: The supplied nonempty value has invalid email syntax.
     """
-    if value:
+    email_value = value.value if isinstance(value, enum.Enum) else value
+    if email_value is not None and email_value != "":
         try:
-            validate_email(value)
+            if not isinstance(email_value, str):
+                raise DjangoValidationError(validate_email.message, code="invalid")
+            validate_email(email_value)
         except DjangoValidationError as exc:
             raise ValueError(exc.messages[0]) from None
     return value
