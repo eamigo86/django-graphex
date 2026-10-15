@@ -645,10 +645,10 @@ page's last row — so it stays fast and stable. The list type also exposes a
 
     Cursors are **opaque**: treat them as an implementation detail returned by
     the server (`pageInfo.startCursor` / `pageInfo.endCursor`) and never build
-    or edit one client-side. A tampered or malformed cursor — corrupted
-    base64, wrong internal prefix, or a value that cannot be coerced to the
-    ordering field's type — is caught internally and raised as a clean
-    `GraphQLError("Invalid cursor")`.
+    or edit one client-side. Corrupted base64, a wrong internal prefix, or a
+    decoded value that cannot convert to FloatField, DecimalField, or UUIDField
+    raises `GraphQLError("Invalid cursor")`. This is not a blanket promise for
+    every other ordering-field type.
 
 ### Basic Usage
 
@@ -1006,19 +1006,22 @@ it always fires.
 
 ### Tampered or Malformed Cursors
 
-`CursorGraphqlPagination` decodes opaque cursor strings from clients. If a
-cursor is corrupted, hand-crafted, or contains a value incompatible with the
-ordering field's type, the paginator raises `GraphQLError("Invalid cursor")`
-instead of propagating an unhandled `ValueError` or Django `ValidationError`.
-
-The guard covers two failure points:
+`CursorGraphqlPagination` decodes opaque cursor strings from clients. The
+following failures return `GraphQLError("Invalid cursor")`:
 
 1. **Malformed base64 / wrong prefix** — `decode_cursor` raises `ValueError`.
-2. **Type mismatch** — the decoded value cannot be coerced by `qs.filter()` (e.g.
-   a string cursor passed to an `IntegerField` raises a Django `ValidationError`).
+2. **Float, Decimal, or UUID type mismatch** — the decoded ordering value
+   cannot convert to the corresponding runtime type, whether the list is
+   queryset-backed or already materialized in memory. Both `results` and
+   `pageInfo` report the same error. Queryset-backed filters also retain their
+   existing handling of Django validation failures.
 
-Both are caught and re-raised as `GraphQLError`, so clients always see a clean
-error response (HTTP 200, `errors[]`) rather than an HTTP 500.
+Other malformed ordering values are not covered by a uniform error policy.
+For example, a base64-valid cursor encoding `not-a-float` against a
+FloatField-ordered materialized list previously produced a raw comparison
+TypeError in `errors[]`; it now produces `Invalid cursor`. Clients matching
+the former error text should match the latter. The HTTP response remains 200,
+with the error in `errors[]`; valid server-emitted cursor bytes are unchanged.
 
 !!! example "Tampered cursor response"
     ```json

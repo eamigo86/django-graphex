@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
 import pytest
 from django.test import RequestFactory
+from graphql import GraphQLError
 
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField, DjangoNestedListObjectField
-from django_graphex.paginations.pagination import CursorGraphqlPagination
+from django_graphex.paginations.pagination import CursorGraphqlPagination, _coerce_like
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -380,37 +382,32 @@ class TestTypedCursorHttp:
 
     @pytest.mark.django_db
     @pytest.mark.parametrize(
-        "field,value,invalid_value,schema,type_name",
+        "field,value,invalid_value,schema",
         [
-            ("floating", 1.1, "not-a-float", FLOAT_SCHEMA, "float"),
+            ("floating", 1.1, "not-a-float", FLOAT_SCHEMA),
             (
                 "decimal",
                 Decimal("1.10"),
                 "not-a-decimal",
                 DECIMAL_SCHEMA,
-                "decimal.Decimal",
             ),
-            ("uuid_field", uuid.UUID(int=1), "not-a-uuid", UUID_SCHEMA, "UUID"),
+            ("uuid_field", uuid.UUID(int=1), "not-a-uuid", UUID_SCHEMA),
         ],
     )
-    def test_typed_invalid_cursor_value_current_http_error(
+    def test_typed_invalid_cursor_value_http_error(
         self,
         field: str,
         value: float | Decimal | uuid.UUID,
         invalid_value: str,
         schema: DjangoGraphQLSchema,
-        type_name: str,
     ) -> None:
-        """Retain the existing encoded invalid-boundary error behavior.
-
-        Typed invalid input policy is outside this compatible fix.
+        """Reject unconvertible typed bounds in both nested HTTP resolvers.
 
         Args:
             field: Django ordering field under test.
             value: One real value to force a typed comparison.
             invalid_value: Encoded cursor component that cannot parse.
             schema: Isolated public schema for this ordering field.
-            type_name: Existing runtime type named by the error.
         """
         author = Author.objects.create(name="cursor-parent-invalid")
         ScalarKindsModel.objects.create(
@@ -422,10 +419,61 @@ class TestTypedCursorHttp:
         assert "errors" in result, result
         messages = [error["message"] for error in result["errors"]]
         assert len(messages) == 2, result
-        assert all(
-            f"not supported between instances of '{type_name}' and 'str'" in message
-            for message in messages
-        ), result
+        assert messages == ["Invalid cursor", "Invalid cursor"], result
+
+        root_query = """query($cursor: String!) { scalarRows { results(first: 2, cursor: $cursor) { id } pageInfo(first: 2, cursor: $cursor) { endCursor hasNextPage } } }"""
+        root_result = self._post(schema, root_query, {"cursor": token})
+        assert [error["message"] for error in root_result["errors"]] == [
+            "Invalid cursor",
+            "Invalid cursor",
+        ], root_result
+
+    @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        "field,value,invalid_value",
+        [
+            ("floating", 1.1, "not-a-float"),
+            ("decimal", Decimal("1.10"), "not-a-decimal"),
+            ("uuid_field", uuid.UUID(int=1), "not-a-uuid"),
+        ],
+    )
+    def test_typed_invalid_cursor_direct_pagination_and_page_info(
+        self,
+        field: str,
+        value: float | Decimal | uuid.UUID,
+        invalid_value: str,
+    ) -> None:
+        """Reject the same decoded boundary on both supported data paths.
+
+        Args:
+            field: Django ordering field under test.
+            value: A real row value for typed comparison.
+            invalid_value: Cursor component that cannot convert to its type.
+        """
+        row = ScalarKindsModel.objects.create(
+            char=f"invalid-direct-{field}", **{field: value}
+        )
+        paginator = CursorGraphqlPagination(ordering=field, page_size=2)
+        token = paginator.encode_cursor(invalid_value, row.pk)
+        for source in ([row], ScalarKindsModel.objects.filter(pk=row.pk)):
+            with pytest.raises(GraphQLError, match="^Invalid cursor$"):
+                list(paginator.paginate_queryset(source, first=2, cursor=token))
+            with pytest.raises(GraphQLError, match="^Invalid cursor$"):
+                paginator.get_page_info(source, first=2, cursor=token)
+
+    @pytest.mark.parametrize(
+        "sample",
+        [1, date(2024, 1, 2), datetime(2024, 1, 2), time(12, 30), "value"],
+    )
+    def test_unapproved_other_type_coercion_fallback_is_unchanged(
+        self, sample: int | date | datetime | time | str
+    ) -> None:
+        """Keep the existing raw fallback outside the three approved types.
+
+        Args:
+            sample: A supported or unsupported sample outside the approved set.
+        """
+        assert _coerce_like("not-a-value", sample) == "not-a-value"
 
     @pytest.mark.django_db
     @pytest.mark.parametrize(

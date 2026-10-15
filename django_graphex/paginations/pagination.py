@@ -133,7 +133,8 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
     type (int, float, Decimal, UUID, date, etc.) before comparing — otherwise
     "10" < "2" (lexical) is wrong and unlike types raise TypeError. This keeps the
     in-memory path in parity with the DB path, whose filter coerces the same
-    string back to the field's runtime type. Unsupported samples and failed
+    string back to the field's runtime type. Unconvertible float, Decimal, and
+    UUID boundaries are invalid cursors; unsupported samples and other failed
     coercions retain the prior in-memory raw-string behavior.
 
     Args:
@@ -142,6 +143,9 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
 
     Returns:
         *raw* coerced to type(sample) when possible, else *raw* unchanged.
+
+    Raises:
+        GraphQLError: If a float, Decimal, or UUID boundary cannot be converted.
     """
     if sample is None or not isinstance(raw, str):
         return raw
@@ -155,18 +159,18 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
     if isinstance(sample, float):
         try:
             return float(raw)
-        except ValueError:
-            return raw
+        except ValueError as exc:
+            raise GraphQLError("Invalid cursor") from exc
     if isinstance(sample, Decimal):
         try:
             return Decimal(raw)
-        except InvalidOperation:
-            return raw
+        except InvalidOperation as exc:
+            raise GraphQLError("Invalid cursor") from exc
     if isinstance(sample, UUID):
         try:
             return UUID(raw)
-        except ValueError:
-            return raw
+        except ValueError as exc:
+            raise GraphQLError("Invalid cursor") from exc
     # Temporal samples: str(value) is ISO 8601, so fromisoformat is the exact
     # inverse. Order matters — datetime is a subclass of date, so it is checked
     # first. A parse failure keeps the raw string (lenient fallback).
