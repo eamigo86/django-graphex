@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
@@ -128,11 +130,11 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
 
     Cursor components are serialised as strings inside the opaque token, so the
     in-memory keyset comparison must convert them back to the row's own value
-    type (int, date, etc.) before comparing — otherwise "10" < "2" (lexical)
-    is wrong and int/date vs str raises TypeError. This keeps the
+    type (int, float, Decimal, UUID, date, etc.) before comparing — otherwise
+    "10" < "2" (lexical) is wrong and unlike types raise TypeError. This keeps the
     in-memory path in parity with the DB path, whose filter coerces the same
-    string back to the field's runtime type. Unsupported samples and any failed
-    coercion fall back to the raw string (lenient, matching the DB path).
+    string back to the field's runtime type. Unsupported samples and failed
+    coercions retain the prior in-memory raw-string behavior.
 
     Args:
         raw: The decoded cursor component (typically a string).
@@ -149,6 +151,21 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
         try:
             return int(raw)
         except (TypeError, ValueError):
+            return raw
+    if isinstance(sample, float):
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+    if isinstance(sample, Decimal):
+        try:
+            return Decimal(raw)
+        except InvalidOperation:
+            return raw
+    if isinstance(sample, UUID):
+        try:
+            return UUID(raw)
+        except ValueError:
             return raw
     # Temporal samples: str(value) is ISO 8601, so fromisoformat is the exact
     # inverse. Order matters — datetime is a subclass of date, so it is checked

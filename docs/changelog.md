@@ -14,6 +14,11 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Continue in-memory cursor pages ordered by FloatField, DecimalField, or
+  UUIDField using server-emitted cursors. Nested materialized lists now match
+  queryset-backed lists on the next page; cursor tokens, SDL, ordering,
+  queryset behavior, and invalid-cursor handling are unchanged.
+
 - Let separate explicit `and` filter branches over a many-to-many or reverse
   foreign-key relation match different related rows, including when nested
   beneath `or` or `not` and inside another relation object. One outer related

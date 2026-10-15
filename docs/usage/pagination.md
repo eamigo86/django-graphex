@@ -638,6 +638,11 @@ page's last row — so it stays fast and stable. The list type also exposes a
     `NULL` values sort **last** when ascending and **first** when descending,
     and pages cross a `NULL` boundary without dropping rows.
 
+    A cursor emitted for a FloatField, DecimalField, or UUIDField ordering
+    value can be reused on a nested list that has been materialized in memory.
+    Its next page matches the database-backed list for the same ordering; no
+    client-side cursor conversion is needed.
+
     Cursors are **opaque**: treat them as an implementation detail returned by
     the server (`pageInfo.startCursor` / `pageInfo.endCursor`) and never build
     or edit one client-side. A tampered or malformed cursor — corrupted
