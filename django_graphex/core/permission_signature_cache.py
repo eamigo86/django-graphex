@@ -7,12 +7,11 @@ select the pruned schema a user validates and executes against.
 
 Design (SDD "permission-scoped-schema" D3):
 
-- "permission_signature(perms, label_set)" is the SHA-256 hexdigest of the
-  newline-joined sorted "perms & label_set" — a projection onto ONLY the
-  schema-relevant perms. Perms outside the label-set collapse away, so two users
-  who differ only in irrelevant perms share one signature (and one pruned
-  schema). The signature is NOT keyed by user id, so a permission grant/revoke is
-  reflected on the caller's NEXT request (a new signature, never a stale schema).
+- "permission_signature(perms, label_set)" hashes their intersection. The
+  schema cache normally projects onto static labels, but a native flat GFK
+  fallback can expose an unregistered target model, so that schema uses all
+  grants for both its variant key and its effective resolver ACL. The signature
+  is NOT keyed by user id; grants and revocations are read on each request.
 - The cache is a module-level "_SignatureSchemaCache" (an "OrderedDict" +
   "threading.RLock"), NOT "functools.lru_cache": we need explicit "maxsize"
   eviction, a lock-guarded double-checked lazy build, and introspection for the
@@ -23,7 +22,7 @@ Design (SDD "permission-scoped-schema" D3):
   share the single instance.
 - "pruned_schema_for(user, full)" fast-paths an ACTIVE superuser to the FULL
   schema WITHOUT computing a signature (they see everything, so pruning is a
-  waste). Everyone else is projected, signed, and served from the LRU.
+  waste). Everyone else is signed and served from the LRU.
 
 The default "maxsize" (64) is CALIBRATED by the P4 benchmark
 (tests/spike/bench_permission_schema.py) and overridable via the
@@ -44,6 +43,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Callable
 
 from ..settings import graphql_api_settings
+from ._flat_gfk_scope import signature_grants
 from .schema_pruner import prune_schema
 
 if TYPE_CHECKING:
@@ -159,8 +159,8 @@ class _SignatureSchemaCache:
         """Return the pruned schema for *user* against the labeled *full* schema.
 
         An ACTIVE superuser bypasses to the FULL schema without a signature. Any
-        other user is projected onto the schema label-set, signed, and served
-        from the LRU (built lazily under the lock on a miss).
+        other user uses the relevant grants (all grants for a native flat GFK,
+        otherwise the schema label-set), signed and served from the LRU.
 
         Args:
             user: The request user (needs is_superuser / is_active and
@@ -178,7 +178,8 @@ class _SignatureSchemaCache:
 
         label_set = frozenset((full.extensions or {}).get(_LABEL_SET_KEY) or ())
         granted = frozenset(user.get_all_permissions())
-        signature = permission_signature(granted, label_set)
+        effective = signature_grants(full, granted, label_set)
+        signature = permission_signature(effective, effective)
         key = (id(full), signature)
 
         # Fast, lock-light pre-check: a hit refreshes recency and returns.
@@ -193,7 +194,7 @@ class _SignatureSchemaCache:
             if cached is not None:
                 self._entries.move_to_end(key)
                 return cached
-            built = prune_fn(full, granted & label_set)
+            built = prune_fn(full, effective)
             self._entries[key] = (_safe_ref(full), built)
             self._entries.move_to_end(key)
             self._evict_if_needed()

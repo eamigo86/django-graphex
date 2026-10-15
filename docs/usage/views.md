@@ -227,7 +227,8 @@ Semantics:
   immediately (no restart); with it `False` (default) behavior is byte-identical
   to today.
 - **Revoke-safe, cached** — pruned schemas are memoized in-process by the
-  caller's *permission signature* (`perms ∩ schema label-set`), in a bounded LRU
+  caller's *permission signature* (normally `perms ∩ schema label-set`, but all
+  grants when the schema has a native flat GFK fallback), in a bounded LRU
   ([`PERMISSION_SCHEMA_CACHE_MAXSIZE`](settings.md#security), default `64`). The
   signature is recomputed from the user's live permissions each request, so a
   grant or revocation is reflected on their **next** request — never a stale

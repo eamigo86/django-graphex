@@ -1409,6 +1409,11 @@ If the union is declared **after** the owner (mis-ordered), the converter emits
 a `WARNING` and falls back to the flat `GenericForeignKeyType` — the schema
 still builds, but the field is not a union.
 
+In a [permission-pruned schema](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution),
+the flat fallback retains its SDL but returns `null` for a target lacking the
+actual model's read permission or excluded by its registered row hook. This
+does not change explicitly typed unions or ordinary unpruned schemas.
+
 ### `resolve_type` is mandatory (and provided)
 
 `DjangoUnionType.resolve_type(instance, info)` maps a plain Django row to its

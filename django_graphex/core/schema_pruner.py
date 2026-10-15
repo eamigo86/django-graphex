@@ -69,6 +69,7 @@ from graphql import (
     is_union_type,
 )
 
+from django_graphex.core._flat_gfk_scope import EFFECTIVE_GRANTS_EXT
 from django_graphex.core.perm_labels import implicit_perms_for_type
 
 __all__ = ("prune_schema",)
@@ -88,8 +89,8 @@ def prune_schema(full: GraphQLSchema, granted: frozenset[str]) -> GraphQLSchema:
     Args:
         full: The labeled FULL "GraphQLSchema" (P0 stamped
             "extensions[gdx_required_perms]" on generated fields).
-        granted: The permission codenames the caller holds. Extra perms outside
-            the schema label-set are harmless.
+        granted: The caller's effective grants. A prior pruned clone restricts
+            this set by intersection so a later prune cannot widen access.
 
     Returns:
         A distinct "GraphQLSchema" whose reachable closure omits every field the
@@ -103,7 +104,8 @@ class _Pruner:
 
     def __init__(self, full: GraphQLSchema, granted: frozenset[str]) -> None:
         self._full = full
-        self._granted = granted
+        previous = (full.extensions or {}).get(EFFECTIVE_GRANTS_EXT)
+        self._granted = granted if previous is None else granted & previous
         # Named object / interface type -> its field map AFTER per-field perm
         # filtering (before the survivor fixpoint drops dangling-type fields).
         self._filtered_fields: dict[str, dict[str, GraphQLField]] = {}
@@ -149,7 +151,10 @@ class _Pruner:
             subscription=subscription,
             types=implementer_types or None,
             directives=self._full.directives,
-            extensions=dict(self._full.extensions or {}),
+            extensions={
+                **(self._full.extensions or {}),
+                EFFECTIVE_GRANTS_EXT: self._granted,
+            },
         )
 
     def _forwarded_implementer_clones(self) -> list[GraphQLObjectType]:

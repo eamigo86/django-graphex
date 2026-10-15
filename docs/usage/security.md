@@ -409,9 +409,12 @@ Security model:
   reveals a hidden field ever existed.
 - **No cross-permission cache leak** — the pruned schema, the in-process schema
   cache, and the HTTP **response cache** are all keyed by the caller's
-  *permission signature* (`perms ∩ schema label-set`). Two callers with different
-  relevant perms never share a pruned schema or a cached response body for the
-  same query.
+  *permission signature*. Normally that is `perms ∩ schema label-set`; schemas
+  with a native flat GFK fallback use all grants because an unregistered target
+  model is absent from the static labels. Two callers with different relevant
+  perms never share a pruned schema or a cached response body for the same
+  query. [Flat GFK targets](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution)
+  are also checked against the actual target row scope at execution.
 - **Empty root ⇒ generic 403** — a caller whose entire `Query` root is pruned
   away gets the endpoint's generic `403`, byte-identical to the
   `permission_classes` / `API_ACCESS_GROUP` denials — an empty schema is

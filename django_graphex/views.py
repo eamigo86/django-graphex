@@ -52,6 +52,7 @@ from graphql.pyutils import is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
+from .core._flat_gfk_scope import signature_grants
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
@@ -2426,7 +2427,8 @@ class AuthenticatedGraphQLView(GraphQLView):
           the FULL schema (no signature computed), so their key needs no
           signature segment.
         - Any other caller: returns the SHA-256 permission signature (the same
-          projection the LRU keys on: perms ∩ schema label-set), so two
+          grants the LRU keys on: normally schema labels, but all grants for a
+          native flat GFK fallback), so two
           callers who share a cache identity but hold DIFFERENT relevant perms
           never collide on one cached response body.
 
@@ -2446,7 +2448,8 @@ class AuthenticatedGraphQLView(GraphQLView):
         full = self.schema.graphql_schema
         label_set = frozenset((full.extensions or {}).get("gdx_label_set") or ())
         granted = frozenset(user.get_all_permissions())
-        return permission_signature(granted, label_set)
+        effective = signature_grants(full, granted, label_set)
+        return permission_signature(effective, effective)
 
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Enforce "permission_classes" and the access-group gate, then dispatch.

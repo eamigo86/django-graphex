@@ -38,11 +38,16 @@ from graphql import (
     GraphQLInt,
     GraphQLList,
     GraphQLNonNull,
+    GraphQLResolveInfo,
     GraphQLString,
     get_named_type,
 )
 
 from django_graphex._strconv import to_camel_case as _to_camel_case
+from django_graphex.core._flat_gfk_scope import (
+    EFFECTIVE_GRANTS_EXT,
+    FLAT_GFK_FALLBACK_EXT,
+)
 from django_graphex.core.scalars import (
     GdxBigInt,
     GdxDate,
@@ -299,7 +304,10 @@ def _get_gfk_flat_type() -> Any:
             # gdx bridge (D8 invariant): every native object type must carry
             # extensions['gdx'] or ``bridge.assert_gdx_bridge`` hard-fails when a
             # schema containing this type is built.
-            extensions={"gdx": GdxPayload(GdxMeta(name="GenericForeignKeyType"))},
+            extensions={
+                "gdx": GdxPayload(GdxMeta(name="GenericForeignKeyType")),
+                FLAT_GFK_FALLBACK_EXT: True,
+            },
         )
     return _GFK_FLAT_TYPE
 
@@ -310,14 +318,75 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
     The field resolver reads the GFK accessor (e.g. note.content_object) from
     the parent row; a null / unregistered-target content object renders as null
     (the field and all its sub-fields are nullable, matching graphene).
+
+    Args:
+        field: Django generic foreign key to expose on the owner type.
+
+    Returns:
+        The flat output field with a permission-aware target resolver.
     """
     field_name: str = field.name
     camel_name: str = _to_camel_case(field_name)
 
-    def _gfk_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
-        if isinstance(root, dict):
-            return root.get(_name)
-        return getattr(root, _name, None)
+    def _gfk_resolver(
+        root: Any, info: GraphQLResolveInfo | None, *, _name: str = field_name
+    ) -> Any:
+        """Resolve the target, redacting it under a pruned schema when denied.
+
+        Args:
+            root: Owner model or mapping containing the GFK accessor.
+            info: Resolve info carrying the effective prune ACL and Registry, or
+                None for a direct resolver call outside GraphQL execution.
+            _name: The Python GFK accessor name.
+
+        Returns:
+            The permitted target model, or None when unavailable or denied.
+
+        Raises:
+            TypeError: If a registered target hook returns an invalid queryset.
+        """
+        target = (
+            root.get(_name) if isinstance(root, dict) else getattr(root, _name, None)
+        )
+        if target is None:
+            return None
+        extensions = getattr(getattr(info, "schema", None), "extensions", None) or {}
+        granted = extensions.get(EFFECTIVE_GRANTS_EXT)
+        if granted is None:
+            return target  # ordinary full schemas retain the public wire contract
+
+        from django.db.models import Subquery
+
+        from django_graphex.core.perm_labels import required_perms_for
+        from django_graphex.types import DjangoObjectType
+        from django_graphex.utils import apply_object_type_get_queryset
+
+        model = type(target)
+        if not required_perms_for(model, "retrieve") <= granted:
+            return None
+        pair = extensions.get("gdx_registry")
+        registry = getattr(pair, "graphene", None)
+        output_type = registry.get_type_for_model(model) if registry else None
+        if output_type is None and registry:
+            output_type = registry.get_type_for_model(model._meta.concrete_model)
+        if output_type is None or not issubclass(output_type, DjangoObjectType):
+            return target
+        hook = output_type.get_queryset
+        if getattr(hook, "__func__", hook) is DjangoObjectType.get_queryset.__func__:
+            return target
+        queryset = model._default_manager.db_manager(target._state.db).all()
+        scoped = apply_object_type_get_queryset(queryset, output_type, info)
+        if scoped.model._meta.concrete_model is not model._meta.concrete_model:
+            raise TypeError(
+                f"{output_type.__name__}.get_queryset returned a queryset for "
+                f"{scoped.model.__name__}, expected {model.__name__}."
+            )
+        visible = (
+            model._default_manager.db_manager(scoped.db)
+            .filter(pk=target.pk, pk__in=Subquery(scoped.values("pk")))
+            .exists()
+        )
+        return target if visible else None
 
     return {
         camel_name: GraphQLField(

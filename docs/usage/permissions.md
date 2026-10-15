@@ -187,7 +187,10 @@ Notes:
   model's `view_{model_name}`, so a caller who cannot query `Comment` directly
   cannot reach it through `Post` either. Without that flag the schema is never
   pruned and a relation stays reachable — enable it if relation traversal must
-  be permission-checked.
+  be permission-checked. A [flat GenericForeignKey](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution)
+  is different: its field stays in the SDL, while the whole target becomes
+  `null` without the actual model's read permission or when a registered
+  target row hook excludes that row.
 - **Superusers pass automatically** — Django's `ModelBackend` grants every
   permission to an active superuser.
 - **Anonymous users are always denied** (the class is fail-closed).

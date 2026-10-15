@@ -392,6 +392,66 @@ a caller needs `billing.view_account` **and** `billing.view_invoice`.
     If the members are meant to be reachable independently, expose them as their
     own fields: each one is then gated by its own model's permission.
 
+#### Flat GFK targets are checked at resolution
+
+Without `Meta.unions`, a `GenericForeignKey` uses the flat
+`GenericForeignKeyType` with `appLabel`, `modelName`, and `id`. In a
+**permission-pruned** schema the field stays in the SDL, but its *whole target*
+is `null` unless the caller has the actual target model's standard read
+permission. A registered target `DjangoObjectType.get_queryset` must also
+admit that row. For example, the same query can return either response:
+
+```graphql
+{ comment { target { appLabel modelName id } } }
+```
+
+```json
+{"data": {"comment": {"target": null}}}
+```
+
+```json
+{"data": {"comment": {"target": {"appLabel": "billing", "modelName": "account", "id": "7"}}}}
+```
+
+The JSON examples assume `CLEAN_RESPONSE=False` (the default). Enabling
+`CLEAN_RESPONSE` removes null-valued response keys; it does not change the
+resolver's denied-target result or the permission decision.
+
+The second response requires `billing.view_account` and, when an `Account`
+output type is registered in the **request schema's Registry**, admission by
+its row hook. For example:
+
+```python
+from django.db.models import QuerySet
+from graphql import GraphQLResolveInfo
+from django_graphex.types import DjangoObjectType
+
+class AccountType(DjangoObjectType):
+    class Meta:
+        model = Account
+
+    @classmethod
+    def get_queryset(
+        cls, queryset: QuerySet, info: GraphQLResolveInfo
+    ) -> QuerySet:
+        return queryset.filter(tenant_id=info.context.user.tenant_id)
+```
+
+No registered target type or an inherited no-op hook adds no row-scope lookup
+after the GFK resolves. An overridden hook must return a synchronous
+`QuerySet` for the same concrete model; JOIN duplicates and ordered slices
+retain their membership meaning. An invalid hook result raises a GraphQL
+field error instead of exposing target metadata. A scoped lookup can add one
+database query per resolved target. A missing target also returns `null`.
+
+**Migration:** If callers previously read flat target IDs with only the
+owner's permission, grant the target model's read permission and check any
+registered target row hook's tenant policy. The same SDL now returns `null`
+for denied targets; do not interpret that as proof the target row is absent.
+This does not enable row-level security for other relations or ORM joins.
+Ordinary unpruned public schemas and explicitly typed GFK unions retain their
+existing behavior.
+
 ### `ordering` follows the pruned schema, not the full one
 
 A pruned relation takes its **column** with it. `Post.author` is what makes
@@ -790,11 +850,14 @@ a request that reaches the full schema (custom provider, flag off) is denied a
 
 !!! info "How pruned schemas are built, cached and invalidated"
 
-    - **One schema per permission-set, not per user.** Each caller's live
-      permissions are projected onto the schema's label-set and hashed into a
-      *permission signature* (SHA-256 of the sorted relevant perms). Callers who
-      differ only in irrelevant perms share one signature — and one pruned
-      schema.
+    - **One schema per permission-set, not per user.** Normally each caller's
+      live permissions are projected onto the schema's label-set and hashed
+      into a *permission signature* (SHA-256 of sorted relevant perms). Callers
+      who differ only in irrelevant perms share one pruned schema. A schema
+      with a native flat GFK fallback instead keys on **all** grants: its
+      target model may be unregistered and absent from the static label-set.
+      This can create more bounded LRU variants, but avoids sharing a target
+      decision across incompatible grants.
     - **Lazy, bounded LRU.** A pruned variant is built on the **first** request
       for its signature (concurrent first-requests build it exactly once) and
       cached in-process in an LRU bounded by
@@ -812,8 +875,11 @@ a request that reaches the full schema (custom provider, flag off) is denied a
       [`CACHE_ACTIVE`](caching.md) on, the caller's permission signature is
       folded into the response-cache key, so two callers sharing a cache
       identity but holding different relevant perms can never read each other's
-      cached bodies. (Superusers and flag-off requests contribute an empty
-      segment — keys stay byte-identical to the unpruned setup.)
+      cached bodies. It uses the same all-grants exception for flat GFKs, so
+      a grant or revoke changes both caches on the next request. Neither
+      cache stores a target row decision: a registered target row hook runs
+      for each fresh execution. (Superusers and flag-off requests contribute
+      an empty segment — keys stay byte-identical to the unpruned setup.)
 
 ## See also
 

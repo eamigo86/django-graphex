@@ -14,6 +14,15 @@ DJANGO_GRAPHEX = {
 The view uses Django's `"default"` cache backend.  Any backend Django supports
 (local-memory, Redis, Memcached, database, …) works out of the box.
 
+With permission-scoped schemas, both the schema-variant cache and this HTTP
+response cache include the caller's permission signature. Normally only
+schema-labeled grants contribute. A schema containing the native flat GFK
+fallback uses **all** grants for both keys because an unregistered target's
+read permission cannot be known from static schema labels. A target grant or
+revoke takes effect on the next request; a target row-scope hook still runs on
+each fresh execution, so ordinary response-cache lifetime and invalidation
+rules remain relevant. See [flat GFK authorization](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution).
+
 The document-validation cache is separate from this HTTP response cache. Its
 per-schema entries also distinguish validation rules, error and query limits,
 and suggestion visibility. GraphQL-core 3.3 can omit schema suggestions during

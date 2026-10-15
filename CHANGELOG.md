@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Redact the whole flat `GenericForeignKeyType` target to `null` in
+  permission-pruned schemas when the actual target model's read permission is
+  absent or its registered row hook excludes the row. The flat SDL, unpruned
+  schemas, and typed GFK unions are unchanged. Schema-variant and HTTP response
+  caches now include all grants only for schemas with the native flat fallback,
+  so target permission grants and revocations do not reuse stale responses.
+  Apps that relied on source-only permission for flat target metadata must
+  grant target read permission and review target row scopes.
+
 - Require a registered update-serving child write host to adopt an existing
   nullable reverse-FK orphan by ID through a generated parent update. The
   host's existing scope and permissions apply; without one the mutation

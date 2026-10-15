@@ -1054,6 +1054,12 @@ class CommentType(DjangoObjectType):
 
 See [Types — DjangoUnionType](../usage/types.md#djangouniontype-typed-genericforeignkey-targets) for the full usage guide including optimizer behavior.
 
+When a GFK uses the flat `GenericForeignKeyType` fallback, a
+[permission-pruned schema](../usage/permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution)
+keeps the same SDL but returns the whole target as `null` without the actual
+target model's read permission or when its registered row hook excludes it.
+Unpruned schemas and explicit typed unions retain their previous behavior.
+
 ---
 
 ## DjangoInterfaceType
