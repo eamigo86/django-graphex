@@ -368,11 +368,15 @@ labelled `x` and another labelled `y` now matches:
 
 Criteria grouped inside **one** relation object still require the **same**
 related row. Use `tags: { label: { exact: "x" }, color: { exact: "blue" } }`
-when one tag must satisfy both. The distinction also applies when an `and`
-appears beneath `or` or `not`; it does not change scalar/to-one filters, null
-lookups, the generated input schema, or subscription filters. Clients that
-depended on separate `and` branches matching one related row should group
-those criteria inside one relation object.
+when one tag must satisfy both. A deeper `and` keeps its outer relation row:
+`comments: { label: { exact: "focus" }, and: [
+{ tags: { label: { exact: "x" } } },
+{ tags: { label: { exact: "y" } } } ] }` requires one `focus` comment with
+two matching tags. Tags on different comments do not qualify. The distinction
+also applies beneath `or` or `not`; scalar and direct to-one predicates, null
+lookups, the generated input schema, and subscription filters are unchanged.
+Clients that depended on separate `and` branches matching one related row
+should group those criteria inside one relation object.
 
 Empty Boolean operands retain the existing no-op behavior: `or: []` and
 `not: {}` add no predicate, while `or: [{}, X]` contributes only `X`. The

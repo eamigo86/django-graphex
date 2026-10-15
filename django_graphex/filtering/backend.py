@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from django.db.models import Exists, OuterRef, Q
 from graphql import Undefined
 
-from .translate import to_q
+from .translate import _is_pk_lookups, _relation_target, to_q
 
 if TYPE_CHECKING:
     from django.db.models import Model, QuerySet
@@ -24,17 +24,14 @@ __all__ = ("FilterBackend", "NativeFilterBackend", "resolve_filter_backend")
 
 
 def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
-    """Find an explicit AND branch that crosses a multi-valued relation.
-
-    Relation objects are deliberately opaque here. Their criteria describe
-    one related row, even when that object contains its own Boolean operators.
+    """Find an explicit to-many AND at any related-model scope.
 
     Args:
         node: A generated filter input node.
-        model: The root model being filtered.
+        model: The model at the current relation-object scope.
 
     Returns:
-        Whether a root-scope AND needs independently matched related rows.
+        Whether an AND needs independently matched related rows.
     """
     if node is None or node is Undefined:
         return False
@@ -51,23 +48,29 @@ def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
                 return True
         elif key == "not" and _has_independent_many_and(value, model):
             return True
+        else:
+            related = _relation_target(model, key)
+            if related is not None and not _is_pk_lookups(value):
+                if _has_independent_many_and(value, related):
+                    return True
     return False
 
 
 def _independent_many_q(
     node: Any, queryset: QuerySet, combinator: str | None = None
 ) -> Q:
-    """Compile root-scope Boolean input with independent to-many AND branches.
+    """Compile Boolean input with independent to-many AND at each model scope.
 
     Each to-many branch is tested in one correlated SQL EXISTS against the
     incoming queryset. This retains its row scope, annotations and database
     alias without materializing primary keys or evaluating one query per row.
-    A relation object remains one ordinary Q so all of its criteria bind the
-    same related row, including nullable outer-join behavior.
+    A relation object with deeper independent branches selects one related
+    witness satisfying all of its criteria. The ordinary Q still decides
+    whether a missing related row satisfies nullable-join lookups.
 
     Args:
         node: A generated filter input node.
-        queryset: The already-scoped root queryset.
+        queryset: The queryset at this model scope.
         combinator: Enclosing Boolean operator for unknown-field validation.
 
     Returns:
@@ -104,7 +107,21 @@ def _independent_many_q(
             result &= ~_independent_many_q(value, queryset, "not")
         else:
             leaf_q, _ = to_q({key: value}, queryset.model, _combinator=combinator)
-            result &= leaf_q
+            related = _relation_target(queryset.model, key)
+            if (
+                related is not None
+                and not _is_pk_lookups(value)
+                and _has_independent_many_and(value, related)
+            ):
+                related_rows = related._base_manager.using(queryset.db).all()
+                matching = related_rows.filter(
+                    _independent_many_q(value, related_rows)
+                ).values("pk")
+                present = Q(**{f"{key}__in": matching})
+                missing = Q(**{f"{key}__isnull": True}) & leaf_q
+                result &= present | missing
+            else:
+                result &= leaf_q
     return result
 
 

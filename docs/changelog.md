@@ -16,10 +16,12 @@ All notable changes to this library are documented here. The format is based on
 
 - Let separate explicit `and` filter branches over a many-to-many or reverse
   foreign-key relation match different related rows, including when nested
-  beneath `or` or `not`. Criteria in one relation object still match the same
-  related row. Queries that previously returned no parent may now return one;
+  beneath `or` or `not` and inside another relation object. One outer related
+  row must satisfy that object's criteria; its deeper `and` branches may use
+  different rows of their own relation. Queries that previously returned no
+  parent may now return one;
   group criteria in one relation object to require same-row matching. Scalar,
-  to-one, null and empty-Boolean behavior, generated SDL, and subscription
+  direct to-one, null and empty-Boolean behavior, generated SDL, and subscription
   filters are unchanged.
 
 - Type explicitly declared numeric `DateField` and `DateTimeField` part filters

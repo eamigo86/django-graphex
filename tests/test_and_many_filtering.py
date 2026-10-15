@@ -93,6 +93,7 @@ class AndManyComment(models.Model):
     color = models.CharField(max_length=20)
     note = models.CharField(max_length=20, null=True)
     owner = models.ForeignKey(AndManyOwner, on_delete=models.CASCADE)
+    tags = models.ManyToManyField(AndManyTag, related_name="comments")
 
     class Meta:
         """Configure the test-local model or GraphQL type.
@@ -138,7 +139,7 @@ class AndManyCommentType(DjangoObjectType):
 
         model = AndManyComment
         registry = registry
-        only_fields = ("label", "color", "note", "owner")
+        only_fields = ("label", "color", "note", "owner", "tags")
 
 
 class AndManyOwnerType(DjangoObjectType):
@@ -180,6 +181,8 @@ class AndManyPostList(DjangoListObjectType):
             "comments__color": ("exact",),
             "comments__note": ("exact", "isnull"),
             "comments__owner__name": ("exact",),
+            "comments__tags__label": ("exact",),
+            "comments__tags__color": ("exact",),
         }
 
 
@@ -267,6 +270,98 @@ def _seed() -> None:
         (only_x, "x", "red", owner_x),
     ):
         AndManyComment.objects.create(post=post, label=label, color=color, owner=owner)
+
+
+def _seed_deeper() -> None:
+    """Create entries whose tag branches must share one outer child.
+
+    The wrong post has both tags, but only on different comments.
+    """
+    owner = AndManyOwner.objects.create(name="owner")
+    x_red = AndManyTag.objects.create(label="x", color="red")
+    y_blue = AndManyTag.objects.create(label="y", color="blue")
+    x_blue = AndManyTag.objects.create(label="x", color="blue")
+    posts = {
+        name: AndManyPost.objects.create(title=f"deep-{name}")
+        for name in ("good", "wrong", "same", "only", "missing")
+    }
+    for name, label, tags in (
+        ("good", "focus", (x_red, y_blue)),
+        ("wrong", "focus", (x_red,)),
+        ("wrong", "other", (y_blue,)),
+        ("same", "focus", (x_blue,)),
+        ("only", "focus", (x_red,)),
+    ):
+        comment = AndManyComment.objects.create(
+            post=posts[name],
+            label=label,
+            color="red",
+            note="filled",
+            owner=owner,
+        )
+        comment.tags.add(*tags)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("wrapper", "expected"),
+    [
+        ("plain", ["deep-good"]),
+        ("or", ["deep-good", "deep-missing"]),
+        ("not", ["deep-missing", "deep-only", "deep-same", "deep-wrong"]),
+    ],
+)
+def test_public_deeper_and_keeps_one_outer_comment(
+    wrapper: str, expected: list[str]
+) -> None:
+    """Independent tags must bind to the same matching focus comment.
+
+    Args:
+        wrapper: Boolean context for the deeper AND expression.
+        expected: Sorted post titles for that context.
+    """
+    _seed_deeper()
+    deeper = (
+        'comments: { label: { exact: "focus" }, and: ['
+        '{ tags: { label: { exact: "x" } } }, '
+        '{ tags: { label: { exact: "y" } } } ] }'
+    )
+    if wrapper == "or":
+        value = f'or: [{{ {deeper} }}, {{ title: {{ exact: "deep-missing" }} }}]'
+    elif wrapper == "not":
+        value = f"not: {{ {deeper} }}"
+    else:
+        value = deeper
+    query = "{ posts(filter: { " + value + " }) { results { title } totalCount } }"
+    payload = _payload(query)
+    rows = payload["data"]["posts"]
+    assert sorted(row["title"] for row in rows["results"]) == expected
+    assert rows["totalCount"] == len(expected)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_deeper_grouping_and_missing_child_sql_null() -> None:
+    """Grouped tags stay same-row; missing children retain SQL NULL matching.
+
+    The nullable OR branch must not turn the deeper tag AND into a different
+    outer comment witness.
+    """
+    _seed_deeper()
+    grouped = (
+        '{ posts(filter: { comments: { label: { exact: "focus" }, '
+        'tags: { label: { exact: "x" }, color: { exact: "blue" } } } }) '
+        "{ results { title } } }"
+    )
+    assert _post(grouped) == ["deep-same"]
+    nullable = (
+        "{ posts(filter: { comments: { or: ["
+        "{ note: { exact: null } }, "
+        '{ label: { exact: "focus" }, and: ['
+        '{ tags: { label: { exact: "x" } } }, '
+        '{ tags: { label: { exact: "y" } } } ] }'
+        "] } }) { results { title } } }"
+    )
+    assert _post(nullable) == ["deep-good", "deep-missing"]
 
 
 @pytest.mark.django_db(transaction=True)
