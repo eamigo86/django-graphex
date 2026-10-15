@@ -402,6 +402,18 @@ also rolls back the default-database request transaction on GraphQL execution
 errors. The response can retain partial data for writes that were rolled back;
 do not treat partial response data as proof that a row was committed.
 
+For generated `PositiveIntegerField` and `PositiveSmallIntegerField` inputs, a
+supplied negative value now returns `ok: false` with an error on that field
+before SQL persistence. This also changes the transaction result for an earlier
+successful sibling root: even with `ATOMIC_MUTATIONS=True`, the earlier write
+commits because this is structured mutation data, not a GraphQL execution
+error. For example, `createA` remains saved when a later `createB` returns
+`{ ok: false, errors: [{ field: "quantity", ... }] }`. If clients require the
+two root writes to succeed or fail together, they must coordinate that business
+operation explicitly; `ATOMIC_MUTATIONS` still rolls back on actual GraphQL
+execution errors. Zero, positive values, GraphQL `Int` bounds, and existing
+choice Enum names are unchanged.
+
 Generated `DjangoModelMutation.DeleteField()` and
 `DjangoModelType.DeleteField()` return a **GraphQL execution error** when
 deletion is blocked by a Django `PROTECT` or `RESTRICT` relation. The message is

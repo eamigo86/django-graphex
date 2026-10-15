@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Validate supplied negative `PositiveIntegerField` and
+  `PositiveSmallIntegerField` generated inputs before SQL, returning a
+  structured field error without saving that mutation. Zero, positive values,
+  `Int` bounds, choice Enum inputs, and omission/default behavior are unchanged.
+  Because this is `ok: false` data rather than a GraphQL execution error, an
+  earlier successful sibling root now commits even with `ATOMIC_MUTATIONS=True`;
+  clients requiring all-or-nothing business operations must account for that
+  migration. Unrelated execution errors still roll back.
+
+
 - Validate supplied nonempty Django `EmailField` values with Django's email
   syntax rules in generated create/update and nested inputs. Invalid values
   now produce the existing structured field error without persistence; the

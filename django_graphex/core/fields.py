@@ -16,7 +16,7 @@ import inspect
 import ipaddress
 import uuid
 import warnings
-from typing import Any
+from typing import Any, Callable
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import File
@@ -329,6 +329,44 @@ def _validate_email_syntax(value: str | enum.Enum | None) -> str | enum.Enum | N
     return value
 
 
+def _positive_integer_validator(
+    model_field: models.Field,
+) -> Callable[[int | enum.Enum | None], int | enum.Enum | None]:
+    """Validate a positive integer column without replacing choice Enums.
+
+    Args:
+        model_field: Django field used for integer conversion.
+
+    Returns:
+        A Pydantic after-validator preserving the original input value.
+    """
+
+    def validate(value: int | enum.Enum | None) -> int | enum.Enum | None:
+        """Reject negative stored values before database persistence.
+
+        Args:
+            value: Pydantic-coerced integer, choice Enum, or allowed null.
+
+        Returns:
+            The original value, including its choice Enum identity.
+
+        Raises:
+            ValueError: The value is negative or cannot be converted to an integer.
+        """
+        if value is None:
+            return value
+        stored_value = value.value if isinstance(value, enum.Enum) else value
+        try:
+            numeric_value = model_field.to_python(stored_value)
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            raise ValueError("Input should be a valid integer") from exc
+        if numeric_value < 0:
+            raise ValueError("Input should be greater than or equal to 0")
+        return value
+
+    return validate
+
+
 def writable_fields(model: type[models.Model]) -> list[models.Field]:
     """Return the model's writable scalar and relation fields.
 
@@ -528,12 +566,18 @@ def build_model_schema(
             ),
         )
     email_names: list[str] = []
+    positive_fields: list[models.Field] = []
     for field in writable_fields(model):
         if field.name in exclude or field.attname in exclude:
             continue
         definitions[field.name] = _field_def(field, partial)
         if isinstance(field, models.EmailField):
             email_names.append(field.name)
+        if field.get_internal_type() in (
+            "PositiveIntegerField",
+            "PositiveSmallIntegerField",
+        ):
+            positive_fields.append(field)
     # M2M: a list of pks, always optional (attached after the parent saves).
     for field in m2m_fields(model):
         if field.name in exclude:
@@ -569,21 +613,34 @@ def build_model_schema(
         # Only generated schemas that previously failed construction relax this
         # Pydantic namespace check. Ordinary model schemas retain their config.
         kwargs["__config__"] = ConfigDict(protected_namespaces=())
-    if email_names:
-        kwargs["__validators__"] = {
-            f"_gdx_email_syntax_{index}": field_validator(
-                next(
-                    (
-                        internal
-                        for internal, original in original_names.items()
-                        if original == name
-                    ),
-                    name,
+    validators: dict[str, Any] = {
+        f"_gdx_email_syntax_{index}": field_validator(
+            next(
+                (
+                    internal
+                    for internal, original in original_names.items()
+                    if original == name
                 ),
-                mode="after",
-            )(_validate_email_syntax)
-            for index, name in enumerate(email_names)
-        }
+                name,
+            ),
+            mode="after",
+        )(_validate_email_syntax)
+        for index, name in enumerate(email_names)
+    }
+    for index, model_field in enumerate(positive_fields):
+        validators[f"_gdx_positive_{index}"] = field_validator(
+            next(
+                (
+                    internal
+                    for internal, original in original_names.items()
+                    if original == model_field.name
+                ),
+                model_field.name,
+            ),
+            mode="after",
+        )(_positive_integer_validator(model_field))
+    if validators:
+        kwargs["__validators__"] = validators
     schema = create_model(f"{model.__name__}Native", **kwargs, **definitions)  # type: ignore[call-overload]
     schema.__gdx_original_fields__ = original_names
     _SCHEMA_CACHE[cache_key] = schema

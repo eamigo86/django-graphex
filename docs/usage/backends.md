@@ -51,6 +51,16 @@ retain their existing behavior. In particular, this change does not make
 `blank=False` reject an empty string. Keep application-specific email rules in
 your declared `validate_<field>()` hook or `Meta.pydantic_model`.
 
+Generated inputs for `PositiveIntegerField` and `PositiveSmallIntegerField`
+reject supplied negative values before a database write. They return the
+existing structured mutation error on the field (`ok: false`), rather than a
+database constraint error. Zero and positive values remain valid; the GraphQL
+input remains `Int`, with its existing upper bound. Choice-backed fields retain
+their existing Enum input and validate the stored numeric choice without
+replacing the Enum value. Omitted values, allowed nulls, defaults, partial
+updates, and `PositiveBigIntegerField` are unchanged. This is field-local input
+validation, not `full_clean()` or a general database-constraint conversion.
+
 ### Uniqueness validation
 
 The backend checks all three Django uniqueness mechanisms before saving, so
