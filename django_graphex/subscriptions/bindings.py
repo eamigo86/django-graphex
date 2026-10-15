@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from copy import deepcopy
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from asgiref.sync import async_to_sync
@@ -28,6 +29,51 @@ logger = logging.getLogger(__name__)
 # weak reference to tasks; without this set a task can be garbage-collected
 # before its done-callback fires, silently dropping the error log.
 _inflight_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+
+def _log_automatic_drop(
+    model_label: str, stream: str, action: str, stage: str, error: Exception
+) -> None:
+    """Report a dropped automatic event without logging its values or exception.
+
+    Args:
+        model_label: The model label associated with the signal binding.
+        stream: The subscription stream name.
+        action: The captured model action.
+        stage: The notification stage that failed.
+        error: The notification error; only its class name is logged.
+    """
+    try:
+        logger.error(
+            "Automatic notification dropped: model=%s stream=%s action=%s "
+            "stage=%s exception=%s",
+            model_label,
+            stream,
+            action,
+            stage,
+            type(error).__name__,
+        )
+    except Exception:
+        # A logging backend must not make a successful model write fail.
+        pass
+
+
+def _automatic_group_send_done(
+    task: asyncio.Task, model_label: str, stream: str, action: str
+) -> None:  # type: ignore[type-arg]
+    """Retrieve an automatic task failure without exposing event contents.
+
+    Args:
+        task: The completed asynchronous group-send task.
+        model_label: The notification model label.
+        stream: The subscription stream name.
+        action: The captured model action.
+    """
+    _inflight_tasks.discard(task)
+    try:
+        task.result()
+    except Exception as error:
+        _log_automatic_drop(model_label, stream, action, "async-delivery", error)
 
 
 def _group_send_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
@@ -50,7 +96,11 @@ def _group_send_done(task: asyncio.Task) -> None:  # type: ignore[type-arg]
 
 
 def _safe_group_send(
-    channel_layer: Any, group_name: str, message: dict[str, Any]
+    channel_layer: Any,
+    group_name: str,
+    message: dict[str, Any],
+    *,
+    automatic_context: tuple[str, str, str] | None = None,
 ) -> None:
     """Send "message" to "group_name" from a synchronous Django signal context.
 
@@ -73,6 +123,8 @@ def _safe_group_send(
         channel_layer: The Channels channel layer to send through.
         group_name: The group to broadcast to.
         message: The message payload.
+        automatic_context: Model, stream and action metadata for automatic
+            sends only. Manual sends retain their existing done callback.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -87,7 +139,17 @@ def _safe_group_send(
         # Keep a strong reference so the task is not GC'd before the callback
         # fires, then attach the callback that logs any failure and releases it.
         _inflight_tasks.add(task)
-        task.add_done_callback(_group_send_done)
+        if automatic_context is None:
+            task.add_done_callback(_group_send_done)
+        else:
+            task.add_done_callback(
+                partial(
+                    _automatic_group_send_done,
+                    model_label=automatic_context[0],
+                    stream=automatic_context[1],
+                    action=automatic_context[2],
+                )
+            )
     else:
         # WSGI / sync path: no running loop — async_to_sync is safe here.
         async_to_sync(channel_layer.group_send)(group_name, message)
@@ -167,17 +229,51 @@ class SubscriptionBinding:
         created: bool,
         **kwargs: Any,
     ) -> None:
+        """Prepare an automatic change event without failing a valid save.
+
+        Args:
+            sender: The signal's model sender.
+            instance: The model instance that was saved.
+            created: Whether the save inserted a new row.
+            **kwargs: Additional Django signal arguments.
+        """
         action = "create" if created else "update"
-        self._defer_snapshot(action, instance)
+        self._prepare_automatic_snapshot(action, instance)
 
     def _on_delete(self, sender: Any, instance: Model, **kwargs: Any) -> None:
-        self._defer_snapshot("delete", instance)
+        """Prepare an automatic delete event without failing a valid delete.
+
+        Args:
+            sender: The signal's model sender.
+            instance: The model instance that was deleted.
+            **kwargs: Additional Django signal arguments.
+        """
+        self._prepare_automatic_snapshot("delete", instance)
+
+    def _prepare_automatic_snapshot(self, action: str, instance: Model) -> None:
+        """Drop notification-only failures while retaining broken DB state.
+
+        Args:
+            action: The model action emitted by the signal.
+            instance: The model instance captured at signal time.
+
+        Raises:
+            Exception: If notification work left the active DB transaction broken.
+        """
+        try:
+            self._defer_snapshot(action, instance)
+        except Exception as error:
+            if transaction.get_connection().needs_rollback:
+                raise
+            _log_automatic_drop(
+                self.model_label, self.stream, action, "snapshot", error
+            )
 
     def _defer_snapshot(self, action: str, instance: Model) -> None:
         """Capture event state without retaining the mutable model instance."""
         if get_channel_layer() is None:
             transaction.on_commit(
-                lambda action=action: self._warn_missing_channel_layer(action)
+                lambda action=action: self._deliver_missing_layer_warning(action)
             )
             return
 
@@ -192,11 +288,33 @@ class SubscriptionBinding:
 
         transaction.on_commit(
             lambda action=action, pk_snapshot=pk_snapshot, index_snapshot=index_snapshot, data_snapshot=data_snapshot: (
-                self._broadcast_snapshot(
+                self._deliver_automatic_snapshot(
                     action, pk_snapshot, index_snapshot, data_snapshot
                 )
             )
         )
+
+    def _deliver_automatic_snapshot(
+        self,
+        action: str,
+        pk_snapshot: Any,
+        index_snapshot: dict[str, Any] | None,
+        data_snapshot: dict[str, Any] | None,
+    ) -> None:
+        """Drop a failed post-commit automatic delivery without aborting callbacks.
+
+        Args:
+            action: The captured model action.
+            pk_snapshot: The primary-key snapshot.
+            index_snapshot: The routing-index snapshot.
+            data_snapshot: The full-payload snapshot, if enabled.
+        """
+        try:
+            self._broadcast_snapshot(action, pk_snapshot, index_snapshot, data_snapshot)
+        except Exception as error:
+            _log_automatic_drop(
+                self.model_label, self.stream, action, "delivery", error
+            )
 
     def _warn_missing_channel_layer(self, action: str) -> None:
         """Log an event dropped because Channels is not configured."""
@@ -205,6 +323,19 @@ class SubscriptionBinding:
             action,
             self.model_label,
         )
+
+    def _deliver_missing_layer_warning(self, action: str) -> None:
+        """Keep an automatic warning backend from interrupting on-commit work.
+
+        Args:
+            action: The model action whose notification was dropped.
+        """
+        try:
+            self._warn_missing_channel_layer(action)
+        except Exception as error:
+            _log_automatic_drop(
+                self.model_label, self.stream, action, "delivery", error
+            )
 
     # -- broadcast ----------------------------------------------------------
     def _broadcast_snapshot(
@@ -270,7 +401,12 @@ class SubscriptionBinding:
                 "pk": pk_snapshot,
                 "payload": payload,
             }
-            _safe_group_send(channel_layer, group_name, message)
+            _safe_group_send(
+                channel_layer,
+                group_name,
+                message,
+                automatic_context=(self.model_label, self.stream, action),
+            )
 
     def broadcast(self, action: str, instance: Model) -> None:
         """Serialize once and fan out to the action and per-pk groups.

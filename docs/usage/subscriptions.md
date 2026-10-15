@@ -1149,7 +1149,33 @@ On the **ASGI path** (loop present), the coroutine is scheduled as a
 fire-and-forget task via `loop.create_task` — the call returns immediately
 without blocking the loop thread, and a done-callback logs any delivery failure
 via the module logger.  On the **WSGI / sync path** (no running loop),
-`async_to_sync` is used and errors propagate synchronously as before.
+`async_to_sync` is used. Explicit calls to `SubscriptionBinding.broadcast`
+retain synchronous error propagation; automatic model-signal notifications use
+the best-effort policy below.
+
+### Automatic notification failures
+
+Automatic `post_save` and `post_delete` notifications are **best-effort**.
+An ordinary error while preparing a notification snapshot or delivering it
+after commit drops that event and logs only the model label, stream, action,
+stage, and exception class. The payload, routing index, primary key, user, and
+exception message are not logged by this boundary. A successful database write
+still succeeds, and a failed delivery does not stop later `on_commit` callbacks.
+This also applies to generated mutations that save the model.
+
+This is a change from synchronous automatic delivery errors propagating into
+the caller. If an application depended on that exception to fail a mutation,
+it must handle notification delivery explicitly instead. **Explicit**
+`SubscriptionBinding.broadcast` calls retain their previous strict behavior.
+Model validation and database write errors still propagate; rollback still
+emits no event. Cancellation and other `BaseException` control signals are not
+converted into successful writes.
+
+Best-effort delivery does not guarantee that a subscriber receives the event:
+there is no retry, outbox, or durable queue. Monitor the metadata-only drop
+logs and use an application-owned outbox if delivery guarantees are required.
+An event's payload and routing data remain frozen at signal time, even when
+the same model instance changes before the transaction commits.
 
 ### Commit-time broadcast delivery
 

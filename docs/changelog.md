@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Make automatic model-signal subscription notifications best-effort across
+  snapshot preparation and delivery. Ordinary notification errors now log
+  metadata only and drop the event without failing a successful database save
+  or generated mutation; later commit callbacks continue. Rollback still emits
+  nothing, and explicit manual broadcasts remain strict. Applications that
+  depended on automatic delivery exceptions should handle delivery explicitly;
+  this does not add retries or an outbox.
+
 - Run the documented synchronous WS/SSE subscription `schema_provider` in a
   thread-sensitive worker. Real Django users with cold permission caches can
   now use `pruned_schema_for` without synchronous ORM access on the event loop.
