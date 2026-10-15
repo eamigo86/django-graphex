@@ -68,6 +68,10 @@ def _automatic_group_send_done(
         model_label: The notification model label.
         stream: The subscription stream name.
         action: The captured model action.
+
+    Raises:
+        CancelledError: If the completed task was canceled. Its inflight
+            reference is removed, but cancellation is not swallowed.
     """
     _inflight_tasks.discard(task)
     try:
@@ -125,6 +129,11 @@ def _safe_group_send(
         message: The message payload.
         automatic_context: Model, stream and action metadata for automatic
             sends only. Manual sends retain their existing done callback.
+
+    Raises:
+        Exception: If synchronous group delivery fails or task scheduling
+            fails. The automatic context changes only the asynchronous done
+            callback; it does not catch synchronous delivery errors here.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -236,6 +245,10 @@ class SubscriptionBinding:
             instance: The model instance that was saved.
             created: Whether the save inserted a new row.
             **kwargs: Additional Django signal arguments.
+
+        Raises:
+            Exception: If snapshot preparation leaves the active default
+                database transaction broken; its error still propagates.
         """
         action = "create" if created else "update"
         self._prepare_automatic_snapshot(action, instance)
@@ -247,6 +260,10 @@ class SubscriptionBinding:
             sender: The signal's model sender.
             instance: The model instance that was deleted.
             **kwargs: Additional Django signal arguments.
+
+        Raises:
+            Exception: If snapshot preparation leaves the active default
+                database transaction broken; its error still propagates.
         """
         self._prepare_automatic_snapshot("delete", instance)
 
