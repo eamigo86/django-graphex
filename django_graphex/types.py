@@ -3645,7 +3645,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             queryset.
 
         Raises:
-            GraphQLError: If a protected or restricted relation blocks deletion.
+            GraphQLError: If authorization is denied or a protected or
+                restricted relation blocks deletion.
+            ImproperlyConfigured: If the permission hook is awaitable.
         """
         cls.authorize(info, "delete", data=kwargs)
         pk = kwargs.get("id")
