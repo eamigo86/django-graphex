@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Plan queryset relations, annotations, filtered prefetches, and column
+  projection across all field nodes merged under one root GraphQL response key.
+  A relation selected only in a later root fragment no longer triggers
+  per-row queries; schema and public settings remain unchanged.
+
 - Clarify the explicit-`None` pagination documentation: when no request size,
   default, or maximum supplies a size, LimitOffset returns all rows, Page
   returns `results: null`, and Cursor uses its final 20-row fallback. Ordinary

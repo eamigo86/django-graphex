@@ -55,6 +55,13 @@ It is transparent to the `DjangoListObjectType` wrapper (`results` / `totalCount
 / `pageInfo`), to **fragments** and to **inline fragments**, and matches both
 `camelCase` and `snake_case` field names.
 
+When GraphQL merges repeated selections of the same root response field, the
+optimizer plans from all of their selection sets. For example, a direct
+`allPosts { results { title } }` selection and a fragment selecting
+`allPosts { results { author { name } } }` share one result; the optimizer still
+joins `author` and keeps its requested columns. A relation selected only in a
+later root field node does not require one extra query per returned post.
+
 Repeated spreads of an acyclic fragment are planned once per distinct optimizer
 context (model, GraphQL type, and relation path), rather than expanding the same
 subtree once for every spread route. For example, two spreads of a fragment

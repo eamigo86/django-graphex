@@ -7,7 +7,7 @@ import inspect
 import logging
 import re
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from decimal import Decimal
 from numbers import Number
 from typing import TYPE_CHECKING, Any
@@ -40,6 +40,7 @@ from graphql.language.ast import (
     FragmentSpreadNode,
     InlineFragmentNode,
     NamedTypeNode,
+    SelectionSetNode,
 )
 from text_unidecode import unidecode
 
@@ -51,7 +52,6 @@ from .settings import graphql_api_settings
 if TYPE_CHECKING:
     from django.db.models import Field
     from graphql import GraphQLResolveInfo, GraphQLType
-    from graphql.language.ast import SelectionSetNode
 
 
 # ``django.contrib.contenttypes.fields`` imports the ``ContentType`` MODEL at
@@ -3060,6 +3060,7 @@ def _walk_annotated_fields(
 def _collect_annotated_fields(
     info: Any,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    root_selection_set: SelectionSetNode | None = None,
 ) -> tuple[dict, dict, set]:
     """Collect AnnotatedField annotations for selected fields on the return type.
 
@@ -3073,13 +3074,15 @@ def _collect_annotated_fields(
         info: The GraphQL resolve info for the current field.
         _fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).
+        root_selection_set: The merged root selection, if already computed.
 
     Returns:
         A 3-tuple of (annotations dict, aliases dict, annotated_names set).
     """
     return_type = get_named_type(info.return_type)
-    field_nodes = info.field_nodes
-    if not field_nodes or not isinstance(return_type, GraphQLObjectType):
+    if root_selection_set is None:
+        root_selection_set = _root_selection_set(info.field_nodes)
+    if root_selection_set is None or not isinstance(return_type, GraphQLObjectType):
         return {}, {}, set()
     # The source class is recovered from
     # ``return_type.extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type``
@@ -3097,7 +3100,7 @@ def _collect_annotated_fields(
     _walk_annotated_fields(
         return_type,
         graphene_type,
-        field_nodes[0].selection_set,
+        root_selection_set,
         info,
         annotations,
         aliases,
@@ -3110,6 +3113,7 @@ def _collect_annotated_fields(
 def build_filtered_prefetches(
     info: GraphQLResolveInfo,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
+    root_selection_set: SelectionSetNode | None = None,
 ) -> tuple[list[Any], dict, set[str]]:
     """Build filtered Prefetch objects for the nested list fields in the query.
 
@@ -3126,6 +3130,7 @@ def build_filtered_prefetches(
         info: The GraphQL resolve info for the current field.
         _fmap_cache: Optional request-scoped memoization dict (see
             "_relation_field_map").
+        root_selection_set: The merged root selection, if already computed.
 
     Returns:
         result: A 3-tuple of the list of filtered Prefetch objects (one per
@@ -3135,11 +3140,9 @@ def build_filtered_prefetches(
             applies a filter -- for those, no prefetch cache may exist at all.
     """
     return_type = get_named_type(info.return_type)
-    field_nodes = info.field_nodes
-    if not field_nodes or not isinstance(return_type, GraphQLObjectType):
-        return [], {}, set()
-    field_node = field_nodes[0]
-    if not field_node.selection_set:
+    if root_selection_set is None:
+        root_selection_set = _root_selection_set(info.field_nodes)
+    if root_selection_set is None or not isinstance(return_type, GraphQLObjectType):
         return [], {}, set()
 
     # The source class is carried on ``extensions['gdx']._meta``.
@@ -3159,7 +3162,7 @@ def build_filtered_prefetches(
     _walk_filtered_prefetches(
         return_type,
         model,
-        field_node.selection_set,
+        root_selection_set,
         "",
         info,
         out,
@@ -3525,6 +3528,30 @@ def _iter_unique_promotion_fields(
             yield node
 
 
+def _root_selection_set(field_nodes: Sequence[FieldNode]) -> SelectionSetNode | None:
+    """Combine executable selections for one merged GraphQL response field.
+
+    Args:
+        field_nodes: AST nodes grouped by graphql-core under one response key.
+
+    Returns:
+        The single original selection set, a merged set in encounter order, or
+        None when no node has a selection set.
+    """
+    selection_sets = [node.selection_set for node in field_nodes if node.selection_set]
+    if not selection_sets:
+        return None
+    if len(selection_sets) == 1:
+        return selection_sets[0]
+    return SelectionSetNode(
+        selections=tuple(
+            selection
+            for selection_set in selection_sets
+            for selection in selection_set.selections
+        )
+    )
+
+
 def _apply_optimizations(
     base: QuerySet,
     model: type[Model],
@@ -3623,9 +3650,10 @@ def _apply_optimizations(
             root_type_name = getattr(_root_meta, "name", None)
 
     fields_asts = info.field_nodes
-    if fields_asts:
+    root_selection_set = _root_selection_set(fields_asts)
+    if root_selection_set is not None:
         recursive_params(
-            fields_asts[0].selection_set,
+            root_selection_set,
             info.fragments,
             relation_map,
             select_related,
@@ -3640,10 +3668,15 @@ def _apply_optimizations(
     root_annotations: dict = {}
     root_aliases: dict = {}
     root_annotated_names: set = set()
-    if graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS and fields_asts:
+    if (
+        graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS
+        and root_selection_set is not None
+    ):
         try:
             root_annotations, root_aliases, root_annotated_names = (
-                _collect_annotated_fields(info, _fmap_cache=_fmap_cache)
+                _collect_annotated_fields(
+                    info, _fmap_cache=_fmap_cache, root_selection_set=root_selection_set
+                )
             )
         except Exception as exc:  # noqa: BLE001 — degrade: skip annotation
             logging.getLogger("django_graphex.utils").warning(
@@ -3664,7 +3697,7 @@ def _apply_optimizations(
     if (
         graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS
         and select_related
-        and fields_asts
+        and root_selection_set is not None
     ):
         # Detect promotions: walk selection set, check each select relation's
         # sub-selection for AnnotatedFields on child types.
@@ -3770,16 +3803,14 @@ def _apply_optimizations(
                             lookup + LOOKUP_SEP,
                         )
 
-            # Walk the root selection set for promotion detection.
+            # Walk the merged root selection set for promotion detection.
             root_graphene_type = _gdx_graphene_type(return_type)
             if root_graphene_type is not None:
-                _detect_promotions(
-                    return_type, root_graphene_type, fields_asts[0].selection_set
-                )
+                _detect_promotions(return_type, root_graphene_type, root_selection_set)
                 # Also walk through wrapper field (results).
-                if fields_asts[0].selection_set:
+                if root_selection_set:
                     for fnode in _iter_unique_promotion_fields(
-                        fields_asts[0].selection_set,
+                        root_selection_set,
                         return_type,
                         info.schema,
                         info.fragments,
@@ -3828,9 +3859,9 @@ def _apply_optimizations(
     # different querysets), which also optimizes the deeper level.
     # build_filtered_prefetches returns (filtered_prefetches, hook_map,
     # unsafe_lookups).
-    if fields_asts:
+    if root_selection_set is not None:
         filtered_prefetches, hook_map, unsafe_lookups = build_filtered_prefetches(
-            info, _fmap_cache=_fmap_cache
+            info, _fmap_cache=_fmap_cache, root_selection_set=root_selection_set
         )
     else:
         filtered_prefetches, hook_map, unsafe_lookups = [], {}, set()
@@ -3855,7 +3886,7 @@ def _apply_optimizations(
     # Gate fires when EITHER OPTIMIZE_ONLY_FIELDS or OPTIMIZE_ANNOTATED_FIELDS
     # is on so that child annotations work even when column narrowing is off.
     # STRICTLY AFTER _merge_filtered_prefetches (REQ-B5).
-    root_return_gql = get_named_type(info.return_type) if fields_asts else None
+    root_return_gql = get_named_type(info.return_type) if root_selection_set else None
     root_return_gql = (
         root_return_gql if isinstance(root_return_gql, GraphQLObjectType) else None
     )
@@ -3865,12 +3896,12 @@ def _apply_optimizations(
             or graphql_api_settings.OPTIMIZE_ANNOTATED_FIELDS
         )
         and not custom_used
-        and fields_asts
+        and root_selection_set is not None
         and prefetch_related
     ):
         only_map = _collect_prefetch_only_sets(
             model,
-            fields_asts[0].selection_set,
+            root_selection_set,
             info.fragments,
             gql_type=root_return_gql,
             promoted_lookups=frozenset(annotated_promotions)
@@ -3956,10 +3987,14 @@ def _apply_optimizations(
                 _exc,
             )
 
-    if graphql_api_settings.OPTIMIZE_ONLY_FIELDS and not custom_used and fields_asts:
+    if (
+        graphql_api_settings.OPTIMIZE_ONLY_FIELDS
+        and not custom_used
+        and root_selection_set is not None
+    ):
         only_fields = _collect_only_fields(
             model,
-            fields_asts[0].selection_set,
+            root_selection_set,
             info.fragments,
             annotated_names=root_annotated_names,
             current_type_name=root_type_name,
