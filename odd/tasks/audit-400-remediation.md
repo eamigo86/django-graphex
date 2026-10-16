@@ -92,7 +92,7 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T13h | D, accepted18998 | M-H1 `347b2ff` HTTP400 partial array/stop; no batch transaction. RED omitted `tests/models.py`; full proof/limits in `t13h-mh1-partial-batch-closure/README.md` and pre-T13i archive. T13 open. | [x] |
 | T13i | D, accepted19287 | Fragment classifier `408e2aa`+`bbc8e9a`; PASS, patch44/44. Original input copies not individually fsynced; first independent PARTIAL not repaired retroactively. Counts/DOC002/setup: `t13i-selected-introspection-classifier-closure/README.md`, exact pre-T14b archive. T13 OPEN. | [x] |
 | T14a | D, accepted19162 | `9fec11d`: two public constructor guards survive -O with exact predicates/messages/AssertionError. PASS/limits: `t14a-lc2-compatible-view-validation-closure/README.md`, pre-T13i archive. T14 open. | [x] |
-| T14b | D, human19589; parent pending | M-O1 `316844e` (197 authored): RED21 vs combined2→GREEN2; related322/full5523/7/9, pure95.336%/combined97.552%/patch95.45%; quality/docs42/Playground59/static benchmark/finite controls PASS. Public contract unchanged. TDD user+AGENTS, guarded `.venv/bin/python -m pytest`; route D multi-file preparation; initial advisory forecast 20–40 source +40–80 test/docs. Proof `t14b-mo1-merged-root-implementation/`. | [ ] |
+| T14b | D, parent scope19589; accepted19665 | M-O1 `316844e`: RED21→GREEN2, full5523/7/9, pure95.336%/combined97.552%/patch95.45%; parent focal2/independent13 PASS. Compatible, public contract unchanged. Full TDD/quality/limits: `t14b-mo1-merged-root-implementation/README.md`. | [x] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
 | T16a | D | **Q2 accepted before core fixes:** select exactly eight canonical benchmark results despite unrelated ignored JSON; fixtures copy only those names. Missing/invalid canonical rejection, public CLI/output, assets and full-suite coverage preserved; source commit/checks below. | [x] |
@@ -176,7 +176,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-H2 | 150 | **Accepted18829 (human18659):** T13f JSON500/no async, bounded owned coroutine cleanup and native falsey middleware admission. Independent/parent PASS; no arbitrary hidden-graph or general async guarantee. `t13f-mh2-sync-async-rejection-closure/README.md`. T13 OPEN. | T13/T13f |
 | M-H3 | 151 | **Accepted18531, human18441:** 0/False preserved; null/empty cleanup, selected direct introspection and CLEAN_RESPONSE=False unchanged. `043811e`+`cbfb9fb`, current PASS with history in `t13d-mh3-clean-response-closure/README.md`; wider T13 OPEN; separate T13i fragment follow-up accepted19287 with historical proof qualifications, not part of the zero/False policy. | T13/T13d |
 | M-H4 | 152 | **Accepted18627 (human18554):** success-only response cache/T13e; functional PASS, finite safety PARTIAL. Ruff cache caveat, scope and old row: `t13e-mh4-success-cache-closure/README.md`. T13 OPEN. | T13/T13e |
-| M-O1 | 157 | T14b local candidate `316844e`: real five-row merged-node witness RED21 vs combined2, GREEN2; report's 16-vs-1 unverified. Parent acceptance pending. | T14/T14b |
+| M-O1 | 157 | **Accepted19665, not false positive:** T14b `316844e` real five-row merged-node RED21 vs combined2, GREEN2; report's 16-vs-1 unverified. Broader T14 open. | T14/T14b |
 | M-O2 | 158 | Permission-signature cache allegedly holds global RLock through prune_fn and serializes hits. | T14 |
 | M-U1 | 163 | complete/disconnect during start allegedly leaves ghost subscription. | T08 |
 | M-U2 | 164 | id_only delete allegedly drops events with scope or non-PK filters. | T08 |
@@ -241,8 +241,8 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 ## Progress and next action
 
-**Recovery:** Pre-T14b tracker `t14b-mo1-merged-root-implementation/tracker-pre-t14b.md` (SHA `3f0c593443084cf597249c2b14d9664dad1af117654fb9b2d7761577aebf07`) retains all history.
+**Recovery:** Exact preclosure history, including prior pre-T14b archive: `t14b-mo1-merged-root-closure/tracker-preclosure.md` (SHA `4a78773f79865c4887b6a601afdbb257310f0c9975bef7a5c0ff4e49bc9b09d9`).
 
-**Next:** T14b awaits acceptance. T12g accepted19564; 57 checked rows, 15 T03–T17 OPEN. No new policy or PR authority.
+**Next:** T14b accepted19665; 57 remediation units plus quality=58 checked rows. All 15 principal T03–T17 blocks, including T14, OPEN. Other claims and PR authority open. Functional rerun N/A (88 unchanged identities).
 
-**Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (pre-T14b obs15165).
+**Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
