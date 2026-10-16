@@ -21,6 +21,8 @@ All notable changes to this library are documented here. The format is based on
   Conservative static validation remains: a cheap variable cannot undo an
   earlier fallback-based rejection. `MAX_PAGE_SIZE` is still optional, though
   recommended for unbounded lists; the public cost model/API is unchanged.
+  A mutation refused before resolver execution does not invalidate a warmed
+  response cache; an earlier executed mutation in a non-atomic batch still does.
 
 - Make bounded model-backed LimitOffset and Page slices deterministic within ties by
   appending the primary key ascending after the existing ordering, unless the

@@ -1262,7 +1262,7 @@ class BaseGraphQLView(View):
         return ""
 
     def _execution_backend_class(
-        self, schema: Any, document: Any, operation_name: str | None
+        self, schema: Any, document: Any, operation_name: str | None, request: Any
     ) -> Any:
         """Select the execution backend for one validated request.
 
@@ -1270,6 +1270,7 @@ class BaseGraphQLView(View):
             schema: The schema used to validate and execute the document.
             document: The parsed document to execute.
             operation_name: The selected operation, if named.
+            request: The request carrying mutation execution state.
 
         Returns:
             The configured backend, or None for graphql-core's default.
@@ -1366,7 +1367,7 @@ class BaseGraphQLView(View):
             if _EXECUTE_SUPPORTS_HIDE_SUGGESTIONS:
                 execute_options["hide_suggestions"] = hide_suggestions
             backend_class = self._execution_backend_class(
-                schema, document, operation_name
+                schema, document, operation_name, request
             )
             if backend_class is not None:
                 execute_options[_EXECUTION_BACKEND_KEYWORD] = backend_class
@@ -1555,7 +1556,7 @@ class GraphQLView(BaseGraphQLView):
     validation_rules = DEFAULT_VALIDATION_RULES
 
     def _execution_backend_class(
-        self, schema: Any, document: Any, operation_name: str | None
+        self, schema: Any, document: Any, operation_name: str | None, request: Any
     ) -> Any:
         """Check bound request cost after native coercion but before resolution.
 
@@ -1568,12 +1569,15 @@ class GraphQLView(BaseGraphQLView):
             schema: The request's validated GraphQL schema.
             document: The validated document to execute.
             operation_name: The selected operation, if named.
+            request: The request carrying mutation execution state.
 
         Returns:
             The configured executor when cost limiting is off, otherwise a
             request-local executor class that rejects an over-budget operation.
         """
-        backend = super()._execution_backend_class(schema, document, operation_name)
+        backend = super()._execution_backend_class(
+            schema, document, operation_name, request
+        )
         if (
             not graphql_api_settings.MAX_QUERY_COST
             or _EXECUTION_BACKEND_KEYWORD != "executor_class"
@@ -1588,6 +1592,9 @@ class GraphQLView(BaseGraphQLView):
         )
 
         parent_class = backend or IncrementalExecutor
+        previously_executed = bool(
+            getattr(request, _CACHE_MUTATION_EXECUTED_FLAG, False)
+        )
 
         class CostCheckedExecutor(parent_class):
             @classmethod
@@ -1604,6 +1611,10 @@ class GraphQLView(BaseGraphQLView):
                     executor.variable_values.coerced,
                 )
                 if report.max_cost and report.total > report.max_cost:
+                    # The non-atomic path marks execution before calling the
+                    # backend. A refusal here runs no resolver; retain only
+                    # the marker of an earlier executed batch operation.
+                    setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, previously_executed)
                     return [
                         GraphQLError(
                             "Query cost {total} exceeds the maximum of {limit}.".format(

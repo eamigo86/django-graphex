@@ -2,6 +2,12 @@
 
 This section provides detailed API documentation for mutation classes in `django-graphex`.
 
+When `MAX_QUERY_COST` is configured, `GraphQLView` rejects a selected mutation
+whose GraphQL-coerced request variables exceed the budget before its resolver
+runs. Such a refusal does not invalidate the response cache. An earlier
+executed mutation in the same non-atomic batch still does; see
+[query cost limits](../usage/query-limits.md#query-cost-analysis).
+
 ## DjangoModelMutation
 
 The primary mutation class that provides automatic CRUD operations driven directly by a Django model.

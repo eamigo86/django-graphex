@@ -229,7 +229,12 @@ and the budget, then set `MAX_QUERY_COST` to start enforcing.
 
     A response-cache hit serves a stored response without executing a resolver;
     this new bound check runs when the request proceeds to GraphQL execution.
-    It does not change response-cache invalidation or hot-setting behavior.
+    A mutation rejected by this bound check has not run a resolver, so it does
+    not invalidate an already-warmed response cache. In a non-atomic batch, an
+    earlier mutation that did execute still invalidates the cache even if a
+    later operation is rejected. Resolver errors after a non-atomic write keep
+    their existing invalidation behavior. This check does not change hot-setting
+    behavior.
 
 !!! note "Per-type only (for now)"
 
