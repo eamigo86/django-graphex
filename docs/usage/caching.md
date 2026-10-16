@@ -1,7 +1,7 @@
 # Response Caching
 
-`GraphQLView` can cache full HTTP responses to avoid re-executing identical
-queries.  Caching is off by default; enable it with a single setting:
+`GraphQLView` can cache successful HTTP responses to avoid re-executing
+identical queries. Caching is off by default; enable it with a single setting:
 
 ```python
 # settings.py
@@ -281,6 +281,35 @@ Returning `True` for a request that the default rejects is an advanced opt-in.
 If a response depends on a cookie, session, locale or tenant, include every such
 input in `cache_key_prefix` or `fetch_cache_key`; otherwise two contexts can
 share a response body.
+
+---
+
+## Successful responses only
+
+The HTTP response cache stores and reuses only **HTTP 200 GraphQL data
+responses without an `errors` field**. An execution error can still produce
+HTTP 200 when another field succeeds; that partial result is returned to the
+current caller but is not cached. Validation failures and other non-200
+responses are not cached either. Repeating a failed request executes it again,
+so a transient resolver failure can recover:
+
+```json
+{"data":{"ready":"ok","fragile":null},"errors":[{"message":"temporarily unavailable"}]}
+```
+
+Once the same query returns `{"data":{"ready":"ok","fragile":"recovered"}}`
+with HTTP 200, later identical eligible requests can hit the cache. Responses
+already stored under the existing key by older versions are checked on read:
+error bodies, failure statuses, and malformed GraphQL envelopes are ignored.
+A later success replaces only that response entry; the cache is not cleared,
+and unrelated application keys are untouched. Existing successful entries,
+identity partitioning, key hooks, cookie bypass, TTL and mutation invalidation
+remain unchanged. The separate document-validation cache may still reuse its
+validation verdicts; this policy concerns only HTTP response bodies.
+
+Applications that relied on repeated errors being replayed from the cache
+should expect fresh execution instead. The HTTP error status and payload for
+each actual execution are unchanged.
 
 ---
 

@@ -1622,10 +1622,10 @@ _GLOBAL_CACHE_VERSION_IDENTITY = "global"
 class GraphQLView(BaseGraphQLView):
     """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
 
-    Extends the base view with per-request response caching (partitioned by
-    caller identity), the depth-limit and cost-limit validation rules, and an
-    optional "extensions.cost" payload. Each addition is inert until its
-    corresponding "DJANGO_GRAPHEX" setting is configured.
+    Extends the base view with per-request caching of successful GraphQL HTTP
+    responses (partitioned by caller identity), depth/cost validation rules,
+    and an optional "extensions.cost" payload. Each addition is inert until
+    its corresponding "DJANGO_GRAPHEX" setting is configured.
     """
 
     validation_rules = DEFAULT_VALIDATION_RULES
@@ -1853,11 +1853,42 @@ class GraphQLView(BaseGraphQLView):
         """
         return not bool(request.COOKIES)
 
-    #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
-    #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
-    #: with a default of ``None`` and then checking ``if not response:`` would
-    #: treat a legitimately cached empty response as a miss.
+    #: Sentinel used by ``dispatch`` to distinguish a cache miss from a stored
+    #: value before validating whether that value remains eligible for reuse.
     _CACHE_MISS = object()
+
+    @staticmethod
+    def _cacheable_response_payload(payload: Any) -> bool:
+        """Accept only a successful GraphQL HTTP response for cache reuse.
+
+        The same check applies to freshly produced responses and old entries,
+        so failures stored by earlier versions are never replayed. An invalid
+        entry is ignored; a later successful response replaces only its own key.
+
+        Args:
+            payload: The stored body, status, and content-type tuple.
+
+        Returns:
+            True for an HTTP 200 GraphQL data envelope without errors.
+        """
+        if not isinstance(payload, tuple) or len(payload) != 3:
+            return False
+        body, status_code, content_type = payload
+        if (
+            status_code != 200
+            or not isinstance(body, (bytes, str))
+            or not isinstance(content_type, str)
+        ):
+            return False
+        try:
+            envelope = json.loads(body)
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return False
+        return (
+            isinstance(envelope, dict)
+            and isinstance(envelope.get("data"), dict)
+            and "errors" not in envelope
+        )
 
     #: Template for a namespace version-counter key. ``{identity}`` receives
     #: the scope-selected version namespace: ``global`` by default, or the
@@ -2131,8 +2162,9 @@ class GraphQLView(BaseGraphQLView):
         * A request that would render GraphiQL (the view serves it and the client
           prefers HTML) bypasses the cache entirely, so an HTML page and the JSON
           answer for the same query never share a cache slot.
-        * A sentinel object detects cache misses so a legitimately cached falsy or
-          empty body is not re-executed on every request.
+        * Only HTTP 200 GraphQL data envelopes without errors are cached or
+          replayed. Old error/status entries are ignored, allowing recovery
+          without clearing unrelated cache keys.
         * A "query" that cannot be parsed during "get_operation_ast" — a syntax
           error, a non-string value, or a literal nested past the parser's
           recursion limit — falls through to "super_call", which returns the
@@ -2261,37 +2293,28 @@ class GraphQLView(BaseGraphQLView):
             cache_key_parts.append(signature)
         cache_key_parts.append(self.fetch_cache_key(request))
         cache_key = "_".join(cache_key_parts)
-        response = _cache.get(cache_key, self._CACHE_MISS)
+        cached_payload = _cache.get(cache_key, self._CACHE_MISS)
+        if cached_payload is not self._CACHE_MISS and self._cacheable_response_payload(
+            cached_payload
+        ):
+            # Rebuild without replaying the original client's CSRF cookie.
+            body, status_code, content_type = cached_payload
+            return HttpResponse(body, status=status_code, content_type=content_type)
 
-        if response is self._CACHE_MISS:
-            response = self.super_call(request, *args, **kwargs)
-            # Store only the serialisable response data — not the live
-            # HttpResponse object.  The base dispatch is decorated with
-            # @ensure_csrf_cookie, which attaches a per-client CSRF secret as
-            # Set-Cookie.  Caching the whole HttpResponse and returning it
-            # verbatim to subsequent clients in the same identity namespace
-            # would replay one client's CSRF token to others (issue #53b).
-            # By storing (body, status, content_type) and reconstructing a
-            # fresh HttpResponse on cache hits, each client that hits a cached
-            # entry receives a response with no Set-Cookie — the CSRF token is
-            # only set on cache-miss responses (which go through super_call →
-            # ensure_csrf_cookie normally).  The GraphQL endpoint is
-            # csrf_exempt so this does not affect CSRF protection of the
-            # endpoint itself.
-            cached_payload = (
-                response.content,
-                response.status_code,
-                response.get("Content-Type", "application/json"),
-            )
+        response = self.super_call(request, *args, **kwargs)
+        # Store only serialisable response data, never the live HttpResponse:
+        # @ensure_csrf_cookie may attach a per-client secret on cache misses.
+        # Previously stored failures are ignored and, on recovery, overwritten
+        # only at this response key; unrelated cache entries are untouched.
+        cached_payload = (
+            response.content,
+            response.status_code,
+            response.get("Content-Type", "application/json"),
+        )
+        if self._cacheable_response_payload(cached_payload):
             _cache.set(
                 cache_key, cached_payload, timeout=graphql_api_settings.CACHE_TIMEOUT
             )
-        else:
-            # Cache hit: reconstruct a fresh HttpResponse from the stored
-            # (body, status, content_type) tuple so no stale Set-Cookie header
-            # is replayed to this client.
-            body, status_code, content_type = response
-            response = HttpResponse(body, status=status_code, content_type=content_type)
 
         return response
 

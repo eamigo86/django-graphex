@@ -122,8 +122,12 @@ same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
 
 ### Response caching and cache identity
 
-With `CACHE_ACTIVE` on, `GraphQLView` caches eligible query responses (never
-mutations, batches, multipart, cookie-bearing queries or a GraphiQL render).
+With `CACHE_ACTIVE` on, `GraphQLView` caches eligible **HTTP 200 GraphQL data
+responses without errors** (never mutations, batches, multipart,
+cookie-bearing queries or a GraphiQL render). Partial-data execution errors
+and validation failures are returned normally but not cached; old cached
+failures are ignored so a repeated request can recover. See
+[successful responses only](caching.md#successful-responses-only).
 Every entry is
 namespaced by a **cache identity** from `cache_key_prefix`:
 

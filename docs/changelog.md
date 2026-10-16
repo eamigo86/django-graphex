@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Cache only HTTP 200 GraphQL data responses without errors when
+  `CACHE_ACTIVE=True`. Partial-data execution errors, validation failures and
+  other non-200 responses are returned normally but re-execute on the next
+  request; previously stored failed entries are ignored without clearing the
+  cache. A later success can be cached under the existing key. Clients or
+  operators relying on cached error replay should allow fresh execution;
+  successful cache hits, identity isolation, hooks, cookies and mutation
+  invalidation remain unchanged.
+
 - Preserve numeric zero and `false` in ordinary `GraphQLView` responses when
   `CLEAN_RESPONSE=True`, including nested fields and arrays. Clients that
   relied on these values being omitted will now receive them. Nulls, empty
