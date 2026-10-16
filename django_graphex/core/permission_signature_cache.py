@@ -13,13 +13,14 @@ Design (SDD "permission-scoped-schema" D3):
   grants for both its variant key and its effective resolver ACL. The signature
   is NOT keyed by user id; grants and revocations are read on each request.
 - The cache is a module-level "_SignatureSchemaCache" (an "OrderedDict" +
-  "threading.RLock"), NOT "functools.lru_cache": we need explicit "maxsize"
-  eviction, a lock-guarded double-checked lazy build, and introspection for the
+  two "threading.RLock" instances), NOT "functools.lru_cache": we need explicit
+  "maxsize" eviction, a double-checked lazy build, and introspection for the
   P4 benchmark. Closure resolvers are unpicklable, so the cache is in-process
   only — never a Django/external cache and never keyed by user id.
-- Building is lock-guarded and idempotent per signature: N concurrent
-  first-requests for one cold signature build the pruned schema exactly ONCE and
-  share the single instance.
+- The build lock serializes cold builds and clear; the entry lock protects
+  brief LRU reads and writes without being held during pruning. N concurrent
+  first-requests for one cold signature build exactly ONCE and share the
+  single instance; unrelated warm hits do not wait for a cold prune.
 - "pruned_schema_for(user, full)" fast-paths an ACTIVE superuser to the FULL
   schema WITHOUT computing a signature (they see everything, so pruning is a
   waste). Everyone else is signed and served from the LRU.
@@ -87,9 +88,10 @@ class _SignatureSchemaCache:
     """Thread-safe bounded LRU mapping (full schema, signature) -> pruned.
 
     A module-level singleton (_CACHE) backs pruned_schema_for;
-    tests instantiate their own for isolation. Reads are lock-light (a fast
-    pre-check); a cold key is built under the lock with a double-check so
-    concurrent first-requests build exactly once.
+    tests instantiate their own for isolation. The entry lock protects brief
+    LRU access. A separate reentrant build lock serializes cold builds and
+    clear, with a double-check after a miss. Lock order is build then entry;
+    no entry lock is held while pruning or acquiring the build lock.
 
     Entries are keyed by (id(full), signature) — NOT the signature alone —
     because two DIFFERENT full schemas can share a permission signature
@@ -119,7 +121,8 @@ class _SignatureSchemaCache:
         self._entries: OrderedDict[tuple[int, str], tuple[Any, GraphQLSchema]] = (
             OrderedDict()
         )
-        self._lock = threading.RLock()
+        self._build_lock = threading.RLock()
+        self._lock = threading.RLock()  # entry and LRU state only
 
     def __len__(self) -> int:
         """Return the number of cached ((full, signature) -> schema) entries.
@@ -127,7 +130,8 @@ class _SignatureSchemaCache:
         Returns:
             The count of currently cached entries.
         """
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
 
     def __contains__(self, signature: str) -> bool:
         """Return whether any cached entry currently holds *signature*.
@@ -142,12 +146,14 @@ class _SignatureSchemaCache:
         Returns:
             True if some cached entry has this signature, else False.
         """
-        return any(sig == signature for _schema_id, sig in self._entries)
+        with self._lock:
+            return any(sig == signature for _schema_id, sig in self._entries)
 
     def clear(self) -> None:
-        """Drop every cached entry (used by tests / settings reloads)."""
-        with self._lock:
-            self._entries.clear()
+        """Wait for an active build, then drop every cached entry."""
+        with self._build_lock:
+            with self._lock:
+                self._entries.clear()
 
     def pruned_schema_for(
         self,
@@ -188,16 +194,18 @@ class _SignatureSchemaCache:
             return cached
 
         prune_fn = prune if prune is not None else prune_schema
-        with self._lock:
+        with self._build_lock:
             # Double-check: another thread may have built it while we waited.
-            cached = self._live_entry(key, full)
-            if cached is not None:
-                self._entries.move_to_end(key)
-                return cached
+            with self._lock:
+                cached = self._live_entry(key, full)
+                if cached is not None:
+                    self._entries.move_to_end(key)
+                    return cached
             built = prune_fn(full, effective)
-            self._entries[key] = (_safe_ref(full), built)
-            self._entries.move_to_end(key)
-            self._evict_if_needed()
+            with self._lock:
+                self._entries[key] = (_safe_ref(full), built)
+                self._entries.move_to_end(key)
+                self._evict_if_needed()
             return built
 
     def _get(self, key: "tuple[int, str]", full: GraphQLSchema) -> GraphQLSchema | None:

@@ -872,6 +872,10 @@ a request that reaches the full schema (custom provider, flag off) is denied a
       [`PERMISSION_SCHEMA_CACHE_MAXSIZE`](settings.md#security) (default `64`,
       sized so a realistic role-driven working set of ~50 signatures fits; a
       full cache stays well under 1 MiB).
+    - **Warm hits stay available during another build.** A cached signature
+      can be reused while a different cold signature is being pruned. Cold
+      builds remain serialized, and clearing the cache waits for an active
+      build; this does not enable parallel schema construction.
     - **Revocation applies on the next request.** The signature is recomputed
       from `user.get_all_permissions()` on every request — never keyed by user
       id, never stored in an external cache — so a grant or revoke changes the

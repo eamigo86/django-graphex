@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep a cached permission-scoped schema available while an unrelated cold
+  signature is being pruned. Cold builds and cache clearing remain serialized;
+  permission keys, cache bounds and public settings are unchanged.
+
 - Plan queryset relations, annotations, filtered prefetches, and column
   projection across all field nodes merged under one root GraphQL response key.
   A relation selected only in a later root fragment no longer triggers
