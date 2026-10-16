@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Improve date-part test portability by removing exact runtime-version,
+  checkout-path, and working-directory assertions from the behavioral test.
+  A separate regression contract keeps those local proof checks external;
+  this does not change date-part filtering or expand the supported version
+  range.
+
 - Preserve completed results when a valid GraphQL batch reaches an operation-
   level HTTP 400 request error. Return an HTTP 400 array ending with that
   error, stop later operations, and leave prior successful mutations committed.

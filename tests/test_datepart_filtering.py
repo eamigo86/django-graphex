@@ -6,18 +6,14 @@ import json
 import sys
 import types
 from datetime import date, datetime, time, timezone
-from importlib.metadata import version
-from pathlib import Path
 from typing import Any
 
-import graphql
 import pytest
 from django.db import connection, models
 from django.test import Client, override_settings
 from django.urls import path
 from graphql import GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLString
 
-import django_graphex
 from django_graphex.core import ObjectType
 from django_graphex.fields import (
     DjangoFilterListField,
@@ -36,7 +32,6 @@ from django_graphex.views import GraphQLView
 
 from ._schema_isolation import isolated_pair
 
-_REPO = Path(__file__).resolve().parents[1]
 _registry = Registry()
 _front_registry = Registry()
 
@@ -242,11 +237,6 @@ def test_numeric_date_parts_have_int_sdl_and_work_over_http() -> None:
 
     Also preserve full-value filters and existing null and Boolean behavior.
     """
-    assert graphql.__version__ == "3.3.0"
-    assert version("graphql-core") == "3.3.0"
-    assert "core330-overlay" in str(Path(graphql.__file__).resolve())
-    assert Path(django_graphex.__file__).resolve().is_relative_to(_REPO)
-    assert Path.cwd().resolve() == _REPO
 
     filter_type = _schema.graphql_schema.query_type.fields["rows"].args["filter"].type
     date_lookups = filter_type.fields["calendarDay"].type.fields

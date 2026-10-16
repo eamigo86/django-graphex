@@ -16,6 +16,11 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+Date-part behavior tests exercise the supported GraphQL-core 3.3 range without
+pinning an exact patch or local checkout path. Contributors running those tests
+should verify their active runtime in an external test runner; a passing local
+overlay run does not by itself prove behavior under every supported install.
+
 Batch clients should accept an HTTP 400 **array** when a valid batch reaches
 an operation-level HTTP 400 request error: completed entries remain in order,
 the final entry identifies the error, and later operations do not run. Earlier

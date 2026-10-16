@@ -165,6 +165,10 @@ def iter_ids(limit: int) -> Iterator[int]:
   checkout or overlay path for that run; shipped tests must remain usable
   with any supported GraphQL-core 3.3 installation. Keep behavioral assertions
   in the tests.
+- Date-part behavior tests verify SDL, HTTP responses, filters, and database
+  results without requiring a specific GraphQL-core 3.3 patch, checkout path,
+  or working directory. Verify the active runtime in an external runner before
+  the test call rather than asserting its identity inside the test.
 
 ### Resolver fixture ownership
 
