@@ -93,7 +93,7 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T13i | D, accepted19287 | Fragment classifier `408e2aa`+`bbc8e9a`; PASS, patch44/44. Initial fsync/PARTIAL gaps retained in `t13i-selected-introspection-classifier-closure/README.md` and pre-T14c archive; T13 OPEN. | [x] |
 | T14a | D, accepted19162 | `9fec11d`: two public constructor guards survive -O with exact predicates/messages/AssertionError. PASS/limits: `t14a-lc2-compatible-view-validation-closure/README.md`, pre-T13i archive. T14 open. | [x] |
 | T14b | D, scope19589; accepted19665 | M-O1 `316844e`: RED21→GREEN2, full5523/7/9, pure95.336%/combined97.552%/patch95.45%; independent PASS. Compatible; full proof/limits in `t14b-mo1-merged-root-implementation/README.md` and pre-T14c archive. | [x] |
-| T14c | D, parent scope19702 | M-O2 warm-hit two-lock split only: B hot returns while A prune is blocked; cold builds, clear, identity, LRU, weakrefs, errors/reentrancy preserved. Strict user+AGENTS TDD with `.venv/bin/python -m pytest`; focal/related/full, >95% branch/combined/nonempty patch, Ruff/mypy/strict docs/Playground/static benchmark/finite controls. Forecast 25–45 source +80–140 tests/docs, local commits; no API/SDL/default/error/scope change. | [ ] |
+| T14c | D, scope19702; parent pending | M-O2 `961c018` warm B/cold A RED1→GREEN4; related166/full5527/7/9, branch95.336%/combined97.553%/patch19/19. Cold/clear serialized; docs42/Playground59/quality/static benchmark/finite PASS. Strict user+AGENTS TDD, `.venv/bin/python -m pytest`; forecast25–45 source+80–140 tests/docs, local commits. API/SDL/default/error/scope unchanged; full criteria/limits in `t14c-mo2-warm-hit-lock-split-implementation/README.md`. | [ ] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
 | T16a | D | **Q2 accepted before core fixes:** select exactly eight canonical benchmark results despite unrelated ignored JSON; fixtures copy only those names. Missing/invalid canonical rejection, public CLI/output, assets and full-suite coverage preserved; source commit/checks below. | [x] |
@@ -244,6 +244,6 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** Exact pre-T14c tracker, all prior qualifications and archive links: `t14c-mo2-warm-hit-lock-split-implementation/tracker-preclosure.md` (SHA `9606dfb31a0bfe68abbe9251afd758a971964dadc4e99f78774ab8bd0f8964c5`).
 
-**Next:** T14c pending; 58 checked/15 principal OPEN. M-T1 unverified/future; no PR authority.
+**Next:** T14c candidate pending parent acceptance; 58 checked/15 principal OPEN. M-T1 unverified/future; no PR authority.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
