@@ -16,6 +16,14 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+Batch clients should accept an HTTP 400 **array** when a valid batch reaches
+an operation-level HTTP 400 request error: completed entries remain in order,
+the final entry identifies the error, and later operations do not run. Earlier
+successful mutations remain committed because `ATOMIC_MUTATIONS` is
+per-operation, not batch-wide. Previously the same failure returned only a
+request-level error object, hiding completed results. Malformed batch bodies
+still return a request-level object. See [Batch endpoints](usage/views.md#batch-endpoints).
+
 If your deployment relies on disabled schema introspection, explicitly add
 `django_graphex.security.DisableIntrospectionMiddleware` to
 `DJANGO_GRAPHEX["MIDDLEWARE"]`. The default `ALLOW_INTROSPECTION=False` does not

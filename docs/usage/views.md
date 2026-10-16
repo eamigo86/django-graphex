@@ -356,6 +356,26 @@ nested list) is rejected with **HTTP 400** and
 [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) for the per-request
 operation cap.
 
+For a valid batch, an operation that raises an HTTP 400 request error stops
+the batch. The response is an **HTTP 400 array** containing every completed
+operation result followed by that operation's error; later operations are not
+run. Each entry retains its `id` and `status`. For example, if the second
+entry has no query:
+
+```json
+[
+  {"data": {"add": "saved"}, "id": "first", "status": 200},
+  {"errors": [{"message": "Must provide query string."}], "id": "second", "status": 400}
+]
+```
+
+A successful mutation before the error remains committed. `ATOMIC_MUTATIONS`
+applies per mutation, **not to the entire batch**. Ordinary GraphQL validation
+errors still produce entries without stopping later operations. Malformed
+outer bodies and non-object entries are rejected before any operation runs and
+keep a request-level error object; non-batch and non-400 transport errors keep
+their existing envelopes.
+
 ## Request body size
 
 With [`MAX_REQUEST_BODY_SIZE`](settings.md#file-uploads) set, `dispatch` refuses

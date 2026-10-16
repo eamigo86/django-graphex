@@ -1159,7 +1159,9 @@ class BaseGraphQLView(View):
 
         Returns:
             The HTTP response (JSON payload, GraphiQL page, or an error
-            response).
+            response). A valid batch that reaches an operation-level HTTP 400
+            error returns an array of completed entries and that error, then
+            stops without executing later entries.
 
         Raises:
             HttpError: When the method is unsupported, the body exceeds
@@ -1214,7 +1216,20 @@ class BaseGraphQLView(View):
                             "disable the limit."
                         ),
                     )
-                responses = [self.get_response(request, entry) for entry in data]
+                responses = []
+                for entry in data:
+                    try:
+                        responses.append(self.get_response(request, entry))
+                    except HttpError as error:
+                        if error.response.status_code != 400:
+                            raise
+                        response = {
+                            "errors": [self.format_error(error, request)],
+                            "id": request.GET.get("id") or entry.get("id"),
+                            "status": 400,
+                        }
+                        responses.append((self.json_encode(request, response), 400))
+                        break
                 result = "[{}]".format(",".join(r[0] for r in responses))
                 status_code = responses and max(responses, key=lambda r: r[1])[1] or 200
             else:

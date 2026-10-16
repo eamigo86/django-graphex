@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve completed results when a valid GraphQL batch reaches an operation-
+  level HTTP 400 request error. Return an HTTP 400 array ending with that
+  error, stop later operations, and leave prior successful mutations committed.
+  Previously the error-only object hid earlier results. Malformed batch
+  bodies and non-400 transport errors keep their existing envelopes;
+  `ATOMIC_MUTATIONS` remains per operation.
+
 - Clarify that `ALLOW_INTROSPECTION=False` blocks `__schema` and `__type` only
   when `DisableIntrospectionMiddleware` is installed in GraphQL `MIDDLEWARE`.
   The default middleware chain is empty, so deployments relying on the setting
