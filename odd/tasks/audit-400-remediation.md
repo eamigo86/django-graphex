@@ -77,7 +77,7 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T12b | D, accepted17715 | `c3a063a`: invalid Float/Decimal/UUID cursor bounds become Invalid cursor; emitted/ORM/nested unchanged. PASS; v1 guard, aggregate, special-number/PG limits in `t12b-typed-cursor-errors-{implementation,independent}/README.md` and exact pre-T14a tracker. T12 open. | [x] |
 | T12c | D, accepted17780 | `9ab95cb`: explicit `page:null` equals omitted first page, root/nested/materialized; SDL/zero/negative unchanged. PASS; checks, helper-copy and harness/quality caveats: `t12c-mf4-null-page-implementation/README.md` and exact pre-T14a tracker. T12 open. | [x] |
 | T12d | D, human17873; accepted17944 | **M-F7 only:** DEFAULT_PAGE_SIZE100 on omitted global LO/Page/Cursor; explicit overrides/MAXNone unchanged. HTTP/doc RED→GREEN, final gates/Playground PASS; patches N/A (zero lines). Initial full24/independent PARTIAL and source-module/postimage gaps permanent in T12d proof. No M-F6/None-error/hot-reload change; T12 open. | [x] |
-| T12g | D, accepted19564 | M-F7 explicit-None docs only `0d4f3b7`+`da9c3c4`; full5521/7/9, branch4103/4304, combined15368/15755, patch N/A. Corrected PASS; original PARTIAL, post-GREEN safety capture, T16f root-path and patch-format failures retained in `t12g-mf7-none-pagination-docs-closure/README.md` and exact pre-T14b archive. No runtime/error policy; T12 OPEN. | [x] |
+| T12g | D, accepted19564 | M-F7 docs only `0d4f3b7`+`da9c3c4`; full5521/7/9, patch N/A; original PARTIAL/setup retained in `t12g-mf7-none-pagination-docs-closure/README.md` and pre-T14c archive. T12 OPEN. | [x] |
 | T12f | D, human18041; accepted18137 | M-F5 `f6e88d4`+`d1a6a18` model PK-ASC tie; unbounded/explicit PK unchanged. PARTIAL/patch gaps in pre-T13i archive. T12 open. | [x] |
 | T12e | D, human17983; accepted18032 | M-F6 `c75ea72` negative-Page DB count errors; initial RED copies/fsync missing and doc/mirror corrected. Full proof/limits in pre-T13i archive. T12 open. | [x] |
 | T13 | D | Confirm/fix HTTP/cache/error/introspection/limits and async-view claims, separating documented defaults from defects and optional hardening; each necessary incompatible public-default change needs its own explained user approval before implementation. | [ ] |
@@ -90,9 +90,10 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T13f | D, human18659; accepted18829 | M-H2 JSON500/no async; owned cleanup/native falsey admission. Two PARTIALs/limits: `t13f-mh2-sync-async-rejection-closure/README.md`, pre-T13i archive. T13 open. | [x] |
 | T13g | D, accepted18888 | M-S3 docs-only `11bd843`+`3a37b72`; no runtime/default/SDL/install change. Full proof/limits: `t13g-ms3-introspection-docs-closure/README.md`. T13 open. | [x] |
 | T13h | D, accepted18998 | M-H1 `347b2ff` HTTP400 partial array/stop; no batch transaction. RED omitted `tests/models.py`; full proof/limits in `t13h-mh1-partial-batch-closure/README.md` and pre-T13i archive. T13 open. | [x] |
-| T13i | D, accepted19287 | Fragment classifier `408e2aa`+`bbc8e9a`; PASS, patch44/44. Original input copies not individually fsynced; first independent PARTIAL not repaired retroactively. Counts/DOC002/setup: `t13i-selected-introspection-classifier-closure/README.md`, exact pre-T14b archive. T13 OPEN. | [x] |
+| T13i | D, accepted19287 | Fragment classifier `408e2aa`+`bbc8e9a`; PASS, patch44/44. Initial fsync/PARTIAL gaps retained in `t13i-selected-introspection-classifier-closure/README.md` and pre-T14c archive; T13 OPEN. | [x] |
 | T14a | D, accepted19162 | `9fec11d`: two public constructor guards survive -O with exact predicates/messages/AssertionError. PASS/limits: `t14a-lc2-compatible-view-validation-closure/README.md`, pre-T13i archive. T14 open. | [x] |
-| T14b | D, parent scope19589; accepted19665 | M-O1 `316844e`: RED21→GREEN2, full5523/7/9, pure95.336%/combined97.552%/patch95.45%; parent focal2/independent13 PASS. Compatible, public contract unchanged. Full TDD/quality/limits: `t14b-mo1-merged-root-implementation/README.md`. | [x] |
+| T14b | D, scope19589; accepted19665 | M-O1 `316844e`: RED21→GREEN2, full5523/7/9, pure95.336%/combined97.552%/patch95.45%; independent PASS. Compatible; full proof/limits in `t14b-mo1-merged-root-implementation/README.md` and pre-T14c archive. | [x] |
+| T14c | D, parent scope19702 | M-O2 warm-hit two-lock split only: B hot returns while A prune is blocked; cold builds, clear, identity, LRU, weakrefs, errors/reentrancy preserved. Strict user+AGENTS TDD with `.venv/bin/python -m pytest`; focal/related/full, >95% branch/combined/nonempty patch, Ruff/mypy/strict docs/Playground/static benchmark/finite controls. Forecast 25–45 source +80–140 tests/docs, local commits; no API/SDL/default/error/scope change. | [ ] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
 | T16a | D | **Q2 accepted before core fixes:** select exactly eight canonical benchmark results despite unrelated ignored JSON; fixtures copy only those names. Missing/invalid canonical rejection, public CLI/output, assets and full-suite coverage preserved; source commit/checks below. | [x] |
@@ -100,7 +101,7 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T16c | D, accepted17162 | Reverse-O2O fixture isolation `4ec40e8`; A9 behavior unchanged. RED8/2→GREEN10, full5226/7/9, independent/parent PASS. Exact history: `t10a-a9-{order-triage,fixture-isolation,final-recheck,parent-spot}/README.md`, pre-T16e tracker. | [x] |
 | T16d | D, accepted18385 | Two-suite test portability `3e3af998`; no production change. Full checks, 12 ASTs, qualifications: `t16d-test-runtime-portability-closure/README.md` and exact pre-T16e tracker. Datepart later T16e; GET-body/T16 open. | [x] |
 | T16e | D, accepted19086 | Test-only `9c431f6`: proof asserts/imports removed, business AST retained. MODELED3.3.1 ≠ installed CI; full counts/limits: `t16e-datepart-test-portability-closure/README.md`, pre-T13i archive. T16 open. | [x] |
-| T16f | D, accepted19403 | GET-body cache-key docs/test only `0606b34`; RED1→same GREEN1; independent/parent PASS, executable patch N/A, runtime unchanged. Stale recipe/setup qualifications and counts: `t16f-get-body-cache-key-docs-closure/README.md`; exact pre-T12g archive. T16 OPEN. | [x] |
+| T16f | D, accepted19403 | GET-body docs/test `0606b34`; RED1→GREEN1, parent PASS; runtime unchanged. Setup/count limits in `t16f-get-body-cache-key-docs-closure/README.md` and pre-T14c archive. T16 OPEN. | [x] |
 | T16 | D | Tooling/test coverage/metadata/refactor/dead code; no benchmark regeneration. Q2=T16a; datepart T16e accepted (MODELED, not installed CI). T16f GET-body prose accepted19403; wider T16 open. | [ ] |
 | T17 | D | Complete independent disposition of every ledger ID, verify section-9 negative claims, run full quality/coverage gates, list all final false positives with evidence and reasons, and report remaining design decisions or unavailable checks. | [ ] |
 
@@ -177,7 +178,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-H3 | 151 | **Accepted18531, human18441:** 0/False preserved; null/empty cleanup, selected direct introspection and CLEAN_RESPONSE=False unchanged. `043811e`+`cbfb9fb`, current PASS with history in `t13d-mh3-clean-response-closure/README.md`; wider T13 OPEN; separate T13i fragment follow-up accepted19287 with historical proof qualifications, not part of the zero/False policy. | T13/T13d |
 | M-H4 | 152 | **Accepted18627 (human18554):** success-only response cache/T13e; functional PASS, finite safety PARTIAL. Ruff cache caveat, scope and old row: `t13e-mh4-success-cache-closure/README.md`. T13 OPEN. | T13/T13e |
 | M-O1 | 157 | **Accepted19665, not false positive:** T14b `316844e` real five-row merged-node RED21 vs combined2, GREEN2; report's 16-vs-1 unverified. Broader T14 open. | T14/T14b |
-| M-O2 | 158 | Permission-signature cache allegedly holds global RLock through prune_fn and serializes hits. | T14 |
+| M-O2 | 158 | T14c pending: cache-wide RLock encloses prune_fn, so an unrelated warm hit waits for a cold build; report timing unverified. Narrow lock split only. | T14/T14c |
 | M-U1 | 163 | complete/disconnect during start allegedly leaves ghost subscription. | T08 |
 | M-U2 | 164 | id_only delete allegedly drops events with scope or non-PK filters. | T08 |
 | M-U3 | 165 | In-memory subscription filter string coercion allegedly fails Decimal/DateTime/Float. | T08 |
@@ -241,8 +242,8 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 ## Progress and next action
 
-**Recovery:** Exact preclosure history, including prior pre-T14b archive: `t14b-mo1-merged-root-closure/tracker-preclosure.md` (SHA `4a78773f79865c4887b6a601afdbb257310f0c9975bef7a5c0ff4e49bc9b09d9`).
+**Recovery:** Exact pre-T14c tracker, all prior qualifications and archive links: `t14c-mo2-warm-hit-lock-split-implementation/tracker-preclosure.md` (SHA `9606dfb31a0bfe68abbe9251afd758a971964dadc4e99f78774ab8bd0f8964c5`).
 
-**Next:** T14b accepted19665; 57 remediation units plus quality=58 checked rows. All 15 principal T03–T17 blocks, including T14, OPEN. Other claims and PR authority open. Functional rerun N/A (88 unchanged identities).
+**Next:** T14c pending; 58 checked/15 principal OPEN. M-T1 unverified/future; no PR authority.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
