@@ -89,7 +89,7 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T13f | D, human18659; accepted18829 | M-H2 JSON500/no async, owned cleanup/native falsey admission. Full results, two PARTIALs, parent preflight and permanent limits: `t13f-mh2-sync-async-rejection-closure/README.md`. T13 open. | [x] |
 | T13g | D, accepted18888 | M-S3 docs-only `11bd843`+`3a37b72`; no runtime/default/SDL/install change. Full proof/limits: `t13g-ms3-introspection-docs-closure/README.md`. T13 open. | [x] |
 | T13h | D, accepted18998 | M-H1 `347b2ff` HTTP400 partial array/stop; prior writes/per-op atomicity/cache intact; outer/non400/validation unchanged. PASS 5493/7/9, branch4075/4276, patch10/10. Historical RED omits `tests/models.py`; full limits: `t13h-mh1-partial-batch-closure/README.md`. T13 open. | [x] |
-| T14a | D, compatible19103 | **PENDING independent/parent:** `9fec11d` two exact AssertionError guards survive -O; optimized/AST RED→same-byte GREEN. Full5501/7/9, branch4075/4276, combined15298/15685, patch2/2; docs129/42/PG59/static5/finite PASS. Failures+limits: `t14a-lc2-compatible-view-validation-implementation/README.md`. T14 open; 19042 UNAPPROVED. | [ ] |
+| T14a | D, accepted19162 | `9fec11d`: two public constructor guards survive -O with exact predicates/messages/AssertionError; independent+parent PASS. Full5501/7/9, branch4075/4276, patch2/2. Historical limits/finite proof: `t14a-lc2-compatible-view-validation-closure/README.md`. T14 open. | [x] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
 | T16a | D | **Q2 accepted before core fixes:** select exactly eight canonical benchmark results despite unrelated ignored JSON; fixtures copy only those names. Missing/invalid canonical rejection, public CLI/output, assets and full-suite coverage preserved; source commit/checks below. | [x] |
@@ -187,7 +187,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | ID | Report line | Distinct claim / subcases | Task |
 |---|---:|---|---|
 | L-C1 | 180 | Malformed ID in get_node/retrieve/DjangoObjectField allegedly raises raw error instead of null; three entry points. | T15 |
-| L-C2 | 181 | **Confirmed bounded:** two PUBLIC constructor asserts vanish under `-O`; invalid schema later AttributeError, conflicting modes serve 200. Normal documented/test-pinned AssertionError; valid controls pass. Investigate compatible explicit `if/raise AssertionError` with same message first. Optional ImproperlyConfigured proposal19042 **UNAPPROVED**. `t14-lc2-view-config-triage/README.md`; T14 open. | T14 |
+| L-C2 | 181 | **Bounded T14a/19162 accepted:** two public constructor guards now explicit under `-O`; exact AssertionError, predicates/messages/order and healthy views retained. Other asserts, whole L-C2 and T14 remain open. Optional ImproperlyConfigured19042 **UNAPPROVED** and unnecessary. Proof: `t14a-lc2-compatible-view-validation-closure/README.md`. | T14/T14a |
 | L-C3 | 182 | GraphQLView/BaseGraphQLView status and data:null response contracts diverge. | T13 |
 | L-C4 | 183 | Multipart files allegedly bypass MAX_UPLOAD_SIZE. | T13 |
 | L-C5 | 184 | LIMIT_MINIMUMS allegedly skips three named settings. | T13 |
@@ -239,6 +239,6 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** T12c preclosure preserves T06/T07/T10 PARTIAL and T12b/c preimages/hashes. Permanent T11a RED-preimage, A12 DB-hash/htmlcov, T12b v1 guard and T12c helper-copy gaps. Full pre-T12f history archived below.
 
-**Next:** 52 accepted remediation units (50 behavior+T13g docs+T16e test portability), 53 checked rows incl quality—not closed claims; 100 IDs/order, 15 T03–T17 OPEN. T16e modeled-not-installed/history limits remain. T14a implemented but unchecked pending independent/parent; ImproperlyConfigured19042 **UNAPPROVED**. Fragment/GET-body/M-F7 separate. Exact preclosure: `t16e-datepart-test-portability-closure/README.md`.
+**Next:** 53 accepted remediation units (51 behavior (incl T14a) + T13g docs + T16e test portability), 54 checked rows incl quality—not closed claims; 100 IDs/order, 15 T03–T17 OPEN. T14a accepted only for two public guards; other asserts/L-C2/T14 open, and optional ImproperlyConfigured19042 remains UNAPPROVED/unneeded. Fragment introspection, GET-body prose, M-F7 and untriaged claims remain separate. Exact preclosure: `t14a-lc2-compatible-view-validation-closure/tracker-preclosure.md`.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
