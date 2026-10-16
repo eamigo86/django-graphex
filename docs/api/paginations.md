@@ -83,6 +83,10 @@ returns `None` on the native build path — override
 ## LimitOffsetGraphqlPagination
 
 Pagination implementation using limit and offset parameters.
+Bounded model-backed results retain the effective primary ordering and append an
+ascending primary-key tie-break when the key is not already an ordering term.
+Explicit primary-key direction is preserved; client ordering validation runs
+before the internal key is added. See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results).
 
 ```python
 class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination)
@@ -245,6 +249,10 @@ query GetPosts($limit: Int, $offset: Int, $ordering: String) {
 ---
 
 ## PageGraphqlPagination
+
+Model-backed pages use the same ascending primary-key tie-break as limit/offset
+pages, after preserving configured, queryset, or client ordering. An explicit
+primary-key term keeps its direction. See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results).
 
 Pagination implementation using page number and page size parameters.
 

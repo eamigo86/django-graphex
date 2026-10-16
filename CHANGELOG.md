@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Make bounded model-backed LimitOffset and Page slices deterministic within ties by
+  appending the primary key ascending after the existing ordering, unless the
+  key is already present. This includes nested window and materialized model
+  paths; explicit primary-key direction and client ordering validation remain.
+  Clients relying on unspecified tie order may see rows move. Offset pages can
+  still shift after concurrent inserts/deletes or random primary ordering.
+  Unbounded, unconfigured LimitOffset lists retain their original queryset and
+  `totalCount` cache behavior.
+
 - Return a generic GraphQL error when a negative page's database `COUNT` fails,
   instead of loading the full queryset to recover the page. Clients relying on
   a successful page after a count-only failure should handle `Unable to

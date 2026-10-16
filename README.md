@@ -165,6 +165,11 @@ that previously relied on an unbounded omitted-size list should paginate past
 the first 100 rows or explicitly opt out; `None` has paginator-specific legacy
 behavior and does not mean “all rows” for Page pagination.
 
+For bounded model-backed limit/offset and page-number results, ties in the effective
+ordering use the primary key ascending unless it is already an ordering term.
+This preserves an explicit descending key, but does not prevent offset shifts
+when rows change between requests. See [pagination ordering](https://eamigo86.github.io/django-graphex/usage/pagination/#stable-ordering-for-offset-and-page-results).
+
 Two keys are **not** in that dict on purpose — both ship enabled, and pinning a
 key to its own default only hides that you depend on it:
 

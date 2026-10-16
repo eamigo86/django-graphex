@@ -172,6 +172,32 @@ LimitOffsetGraphqlPagination(
     }
     ```
 
+### Stable ordering for offset and page results
+
+For bounded model-backed `LimitOffsetGraphqlPagination` and
+`PageGraphqlPagination` results, the
+server keeps your requested, configured, queryset, or model ordering and appends
+the model primary key **ascending** as the last term if it is not already there.
+With no ordering at all, the primary key becomes the ordering. An explicit
+`-pk`, `-id`, or descending custom primary-key term remains descending; it is
+not replaced or duplicated. The same rule applies to nested window pages and
+materialized model lists where those terms can be evaluated.
+
+For example, `ordering: "-createdAt"` yields SQL ordered by `created_at DESC,
+id ASC` on a model whose key is `id`. Rows tied on `created_at` therefore have
+one fixed order across offset or page-number requests against an unchanged
+dataset. Clients who previously relied on the database's unspecified order
+within ties may see those rows move; no GraphQL argument or schema changes.
+
+An unbounded LimitOffset list with no requested or configured ordering still
+uses its original queryset, including any `Meta.ordering` (for example,
+`["handle"]`). This preserves the existing `totalCount` result-cache behavior;
+there is no page boundary to stabilize in that case.
+
+This does **not** make offset pagination stable when rows are inserted or
+deleted between requests, nor does a random primary sort become stable across
+requests. Use cursor pagination or a snapshot when those guarantees matter.
+
 ### Ordering Validation (Security)
 
 !!! warning "Ordering is validated against the fields your type exposes"
@@ -600,7 +626,7 @@ Python's `list[-page_size:]` would):
 
 | `page` | Rows returned |
 |---|---|
-| `-1` | The **last** `page_size` rows, in natural (ascending `ordering`) order |
+| `-1` | The **last** `page_size` rows in the requested or configured order (PK ascending only within ties) |
 | `-2` | The `page_size`-row window immediately **before** the last page |
 | Large negative (overshoot past the start) | Clamps to the **first** `page_size` rows |
 | `0` | `GraphQLError` — page `0` is never valid, forward or backward |
@@ -911,8 +937,8 @@ the primary key). Multi-field cursors are not supported.
 === "Django QuerySet Equivalent"
 
     ```python
-    # This GraphQL query is equivalent to:
-    User.objects.order_by('last_name', 'first_name', '-date_joined')
+    # With an id primary key, the effective ordering is:
+    User.objects.order_by('last_name', 'first_name', '-date_joined', 'id')
     ```
 
 ### Combining with Filtering

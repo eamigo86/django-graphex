@@ -26,6 +26,7 @@ from .core.descriptors import (
 from .filtering.filter_field import apply_custom_filters
 from .paginations.pagination import (
     BaseDjangoGraphqlPagination,
+    _append_model_pk_ordering,
     _split_ordering,
     projected_ordering_attnames,
 )
@@ -933,7 +934,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # --- Pre-check 5: all ordering terms must be concrete attnames ----------
         child = self.type._meta.model
-        concrete_attnames = {f.attname for f in child._meta.concrete_fields}
+        model_attnames = {f.attname for f in child._meta.concrete_fields}
         # Narrow to what the child TYPE exposes. This path applies the ORDER BY
         # in SQL and hands back rows already sliced (``already_paginated``), so
         # ``paginate_queryset`` — and with it the ordering allowlist — never
@@ -954,17 +955,20 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # instance the schemas share. A caller that passes no row type gets the
         # empty allowlist and the optimization simply declines, which is the
         # documented fallback above.
-        concrete_attnames &= projected_ordering_attnames(child, child_gql_type)
+        concrete_attnames = model_attnames & projected_ordering_attnames(
+            child, child_gql_type
+        )
+        if not order and child._meta.pk.attname not in concrete_attnames:
+            # Keep the existing plain-prefetch fallback for a hidden key.
+            # That path supplies the internal tie-break after client checks.
+            return None
         # order may be a comma-separated string ("id,-title") or an iterable of
         # strings. Normalize to a list of individual terms, converting any
         # camelCase spelling to its snake_case attname (``authorId`` ->
         # ``author_id``) via the SAME canonical helper the paginators use, so
         # the window optimization does NOT decline for a camelCase term and the
         # window ORDER BY built below emits real column expressions.
-        if not order:
-            order_terms: list[str] = [child._meta.pk.attname]
-        else:
-            order_terms = _split_ordering(order)
+        order_terms: list[str] = _split_ordering(order) if order else []
         for term in order_terms:
             col = term.lstrip("-+").split(LOOKUP_SEP)[0]
             if col not in concrete_attnames:
@@ -1014,6 +1018,27 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # Re-run on hook-modified qs (AC5): a hook adding .distinct() falls back.
         if getattr(getattr(qs, "query", None), "distinct", False):
             return None
+
+        if not order:
+            # With no paginator term, the hook's queryset ordering takes
+            # precedence over Meta.ordering. These are server-owned terms,
+            # unlike the client/configured terms checked above.
+            if qs.query.order_by:
+                server_terms = list(qs.query.order_by)
+            elif qs.query.extra_order_by:
+                server_terms = list(qs.query.extra_order_by)
+            elif qs.ordered and qs.query.default_ordering:
+                server_terms = list(child._meta.ordering)
+            else:
+                server_terms = []
+            if any(not isinstance(term, str) for term in server_terms):
+                return None  # ORM expressions retain the plain-prefetch path.
+            order_terms = _split_ordering(server_terms)
+            for term in order_terms:
+                if term.lstrip("-+") not in model_attnames:
+                    return None
+        # Validate original client terms before adding the server-generated PK.
+        order_terms = _append_model_pk_ordering(child, order_terms)
 
         # Snapshot the queryset the window page is computed from, BEFORE the
         # window expressions: it is exactly the row set the empty-page count

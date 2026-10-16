@@ -114,13 +114,14 @@ NATIVE_CURSOR_PAGE_INFO: Any = GraphQLObjectType(
 def _sort_key(value: Any) -> tuple[bool, Any]:
     """Build a sort key tolerant of "None" values.
 
-    Sorts "None" first and avoids "None < x" comparison errors.
+    Places NULL values last in ascending order and first in descending order
+    when the caller reverses the sort. It avoids incompatible comparisons.
 
     Args:
         value: The value to derive a sort key from.
 
     Returns:
-        A tuple ordering "None" values before other values.
+        A tuple with NULL values last in ascending order and NULL values first in descending order.
     """
     return (value is None, value if value is not None else 0)
 
@@ -342,12 +343,11 @@ def _resolve_ordering(
 def _pk_tiebreak_ordering(
     items: Any, order: Any, allowed: set[str] | None
 ) -> tuple[Any, set[str] | None]:
-    """Substitute the paginator's own pk ordering when none was resolved.
+    """Use model ordering, then PK, when no paginator ordering was resolved.
 
-    G4 ordering parity: the DB-side window path always emits ORDER BY pk as a
-    deterministic tiebreak, so the prefetch-cache path has to agree or the same
-    query answers differently depending on how the nested list happened to
-    resolve.
+    The DB-side window path appends PK as a deterministic tiebreak, so the
+    prefetch-cache path must agree or the same nested query can answer
+    differently depending on which path served it.
 
     The substituted term is SERVER-generated, so the allowlist is dropped with
     it. "_resolve_ordering" hands back the projection allowlist whenever the
@@ -368,14 +368,51 @@ def _pk_tiebreak_ordering(
 
     Returns:
         The ordering to apply and the allowlist to validate it against; the
-        allowlist is "None" whenever the pk tiebreak was substituted.
+        allowlist is "None" for server-owned Meta or PK ordering.
     """
     if order or not items:
         return order, allowed
-    pk = getattr(getattr(items[0].__class__, "_meta", None), "pk", None)
+    model = items[0].__class__
+    meta = getattr(model, "_meta", None)
+    pk = getattr(meta, "pk", None)
     if pk is None:
         return order, allowed
+    default = getattr(meta, "ordering", ())
+    if default and all(isinstance(term, str) for term in default):
+        try:
+            _validate_ordering_terms(model, list(default))
+        except GraphQLError:
+            pass  # Keep the historical PK fallback for unsupported list terms.
+        else:
+            return list(default), None
     return pk.attname, None
+
+
+def _append_model_pk_ordering(model: Any, terms: list[Any]) -> list[Any]:
+    """Append a model's ascending key unless an existing term already uses it.
+
+    Args:
+        model: The model whose primary key makes the ordering total.
+        terms: Existing ORM ordering terms, including any expressions.
+
+    Returns:
+        A new term list preserving every original term and direction.
+    """
+    pk = getattr(getattr(model, "_meta", None), "pk", None)
+    if pk is None:
+        return list(terms)
+    aliases = {"pk", pk.name, pk.attname}
+    for term in terms:
+        if isinstance(term, str):
+            name = term.lstrip("-+")
+        else:
+            expression = getattr(term, "expression", term)
+            name = getattr(expression, "name", None)
+            if name is None:
+                name = getattr(getattr(expression, "target", None), "attname", None)
+        if name in aliases:
+            return list(terms)
+    return [*terms, pk.attname]
 
 
 def projected_ordering_attnames(model: Any, compiled_type: Any) -> set[str]:
@@ -546,9 +583,9 @@ def _inmemory_order(
     """Order an in-memory sequence of model instances by an ordering string.
 
     Used when a nested list resolves from the "prefetch_related" cache (a Python
-    list) instead of a queryset. Supports a comma-separated list of direct fields
-    with an optional leading "-" for descending; unknown or related lookups are
-    ignored (treated as "None").
+    list) instead of a queryset. Supports direct fields with optional descending
+    prefixes and adds an internal ascending model-PK term after validating all
+    client terms. Unknown attributes retain their historical "None" sort key.
 
     Args:
         items: The model instances to order.
@@ -557,7 +594,8 @@ def _inmemory_order(
             attribute the instances happen to carry.
 
     Returns:
-        A new list of the items ordered by the given ordering.
+        A new list ordered by the given terms and a model-PK tie-break, when
+        model instances are available.
 
     Raises:
         GraphQLError: When "allowed" is supplied and a term names an attribute
@@ -588,6 +626,8 @@ def _inmemory_order(
                 raise GraphQLError(f"Invalid ordering field: '{bare}'.")
 
     ordered = list(items)
+    if ordered:
+        terms = _append_model_pk_ordering(ordered[0].__class__, terms)
     for term in reversed(terms):  # last key first -> stable multi-key sort
         reverse = term.startswith("-")
         field = term.lstrip("+-")
@@ -602,12 +642,10 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
     """Apply an ordering to a queryset or an in-memory list of rows.
 
     The ONE place the "ordering" pagination argument is turned into a real
-    ordering, so every paginator branch (bounded page, unbounded "return
-    everything", queryset, prefetch-cache list) honors it identically. A
-    queryset is validated against the allowed attnames BEFORE "order_by" so an
-    invalid term raises the clean "Invalid ordering field" error instead of
-    Django's "FieldError", whose message enumerates every column of the model
-    (CWE-209); an in-memory list is sorted by _inmemory_order.
+    ordering. A queryset is validated against allowed attnames BEFORE adding
+    the internal PK secondary term, so hidden client columns stay rejected.
+    Existing queryset or model ordering is retained when no argument is given;
+    model-backed querysets then gain ascending PK only if absent already.
 
     Args:
         qs: The queryset or list of model instances to order.
@@ -617,19 +655,30 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
             concrete column.
 
     Returns:
-        The ordered queryset or a new ordered list; *qs* unchanged when
-        *ordering* is falsy.
+        The ordered queryset or a new ordered list. Unsupported non-queryset
+        objects keep their legacy behavior when ordering is absent.
 
     Raises:
         GraphQLError: When a term is invalid, relation-spanning, or projected
             away by the type.
     """
-    if not ordering:
-        return qs
     if not isinstance(qs, QuerySet):
-        return _inmemory_order(qs, ordering, allowed)
-    _validate_ordering_terms(qs.model, ordering, allowed)
-    return qs.order_by(*_split_ordering(ordering))
+        return _inmemory_order(qs, ordering, allowed) if ordering else qs
+    if ordering:
+        _validate_ordering_terms(qs.model, ordering, allowed)
+        qs = qs.order_by(*_split_ordering(ordering))
+    if qs.query.order_by:
+        terms = list(qs.query.order_by)
+    elif qs.query.extra_order_by:
+        terms = list(qs.query.extra_order_by)
+    elif qs.ordered and qs.query.default_ordering:
+        terms = list(qs.model._meta.ordering)
+    else:
+        terms = []
+    total_terms = _append_model_pk_ordering(qs.model, terms)
+    if total_terms == terms:
+        return qs
+    return qs.order_by(*total_terms)
 
 
 # *********************************************** #
@@ -1025,6 +1074,10 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         # Unbounded only when neither a default nor a max is configured: the
         # page is the WHOLE set, but it still has to come back ordered.
         if limit is None:
+            if not order:
+                # Preserve the original queryset cache for totalCount when no
+                # actual page boundary or requested ordering exists.
+                return qs
             return _apply_ordering(qs, order, allowed)
 
         offset = kwargs.get(self.offset_query_param, 0) or 0
