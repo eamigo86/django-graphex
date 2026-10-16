@@ -42,6 +42,12 @@ that source rather than an independently installed wheel.
    request-only SQL controls in your regression suite, alongside synchronous
    queryset and mutation transaction tests. The 3.3 migration does not
    promise general async-resolver support from the synchronous HTTP view.
+   The built-in HTTP views now reject an awaitable execution result with HTTP
+   500 and a GraphQL JSON message directing you to synchronous resolvers and
+   middleware. Previously, this unsupported configuration could surface as an
+   HTML 500 with a coroutine attribute error. Replace async HTTP resolvers,
+   middleware and custom executor results; this change does not run or await
+   them, and does not affect the subscription transports.
 
 See [Views](usage/views.md), [Subscriptions](usage/subscriptions.md), and
 [Query limits](usage/query-limits.md) for the supported interfaces. The

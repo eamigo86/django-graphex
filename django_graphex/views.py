@@ -52,7 +52,7 @@ from graphql import (
 )
 from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
-from graphql.pyutils import is_iterable
+from graphql.pyutils import is_awaitable, is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
@@ -66,6 +66,10 @@ from .utils import clean_dict
 from .validation import DepthLimitValidationRule
 
 _error_logger = logging.getLogger("django_graphex.internal_errors")
+_UNSUPPORTED_ASYNC_MESSAGE = (
+    "Async execution is not supported by this HTTP view. "
+    "Use synchronous resolvers and middleware."
+)
 
 
 def _internal_error_cause(error: Any) -> BaseException | None:
@@ -283,6 +287,79 @@ class HttpError(Exception):
         self.response = response
         self.message = message = message or response.content.decode()
         super().__init__(message, *args, **kwargs)
+
+
+class _UnsupportedAsyncExecution(HttpError):
+    """Identify only the synchronous HTTP view's deliberate async refusal."""
+
+
+def _execute_synchronously(schema: Any, document: Any, options: dict[str, Any]) -> Any:
+    """Execute without retaining unstarted coroutines from this request.
+
+    graphql-core records awaitable values through the supplied predicate as it
+    constructs nested wrappers. Closing only its top-level return would leave
+    the resolver and inner wrappers unawaited, so retain and close the owned
+    coroutines in reverse order without running any of their bodies.
+
+    Args:
+        schema: Schema used for the already-validated operation.
+        document: Parsed GraphQL operation.
+        options: Execution arguments for graphql-core.
+
+    Returns:
+        A completed synchronous execution result.
+
+    Raises:
+        _UnsupportedAsyncExecution: When execution needs an awaitable value.
+    """
+    owned: dict[int, Any] = {}
+
+    def track_awaitable(value: Any) -> bool:
+        """Track only unstarted coroutines observed by this execution.
+
+        Args:
+            value: A graphql-core execution value.
+
+        Returns:
+            Whether the value is awaitable under graphql-core's own predicate.
+        """
+        awaitable = is_awaitable(value)
+        if awaitable and inspect.iscoroutine(value):
+            if inspect.getcoroutinestate(value) == inspect.CORO_CREATED:
+                owned[id(value)] = value
+        return awaitable
+
+    options["is_awaitable"] = track_awaitable
+    try:
+        result = execute(schema, document, **options)
+    except Exception:
+        for coroutine in reversed(tuple(owned.values())):
+            if inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+                coroutine.close()
+        if owned:
+            raise _UnsupportedAsyncExecution(
+                HttpResponse(status=500),
+                message=_UNSUPPORTED_ASYNC_MESSAGE,
+            ) from None
+        raise
+
+    if inspect.iscoroutine(result) and result.cr_frame is not None:
+        # graphql-core's outer execute() wrapper captures the coroutine
+        # returned by Executor.execute_operation as a local named result;
+        # that inner wrapper is not passed through is_awaitable again.
+        inner = result.cr_frame.f_locals.get("result")
+        if inspect.iscoroutine(inner):
+            track_awaitable(inner)
+
+    if track_awaitable(result) or owned:
+        for coroutine in reversed(tuple(owned.values())):
+            if inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+                coroutine.close()
+        raise _UnsupportedAsyncExecution(
+            HttpResponse(status=500),
+            message=_UNSUPPORTED_ASYNC_MESSAGE,
+        )
+    return result
 
 
 def get_accepted_content_types(request: Any) -> list[str]:
@@ -1419,7 +1496,7 @@ class BaseGraphQLView(View):
                 or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
             ):
                 with transaction.atomic():
-                    result = execute(schema, document, **execute_options)
+                    result = _execute_synchronously(schema, document, execute_options)
                     rolled_back = getattr(
                         request, MUTATION_ERRORS_FLAG, False
                     ) is True or bool(result.errors)
@@ -1435,7 +1512,9 @@ class BaseGraphQLView(View):
             # its transaction exits without a rollback above.
             if is_mutation:
                 setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
-            return execute(schema, document, **execute_options)
+            return _execute_synchronously(schema, document, execute_options)
+        except _UnsupportedAsyncExecution:
+            raise
         except Exception as e:
             return ExecutionResult(errors=[e])
 

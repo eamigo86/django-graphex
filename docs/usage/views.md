@@ -50,6 +50,25 @@ classification; this does not add general async-resolver support to the
 synchronous HTTP view. Custom executor classes must accept the native 3.3
 predicate argument when used with this view.
 
+All three built-in HTTP views execute synchronously. If a resolver, middleware,
+or execution backend supplies an awaitable, the view refuses it with HTTP 500
+and a GraphQL JSON error rather than running it in an event loop:
+
+```json
+{
+  "errors": [{
+    "message": "Async execution is not supported by this HTTP view. Use synchronous resolvers and middleware."
+  }]
+}
+```
+
+New unstarted coroutines owned by that execution are closed without running
+their bodies. Change the endpoint's resolvers and middleware to synchronous
+implementations; changing a setting or awaiting the response is not a fix.
+This refusal does not add async HTTP support or change the asynchronous SSE and
+WebSocket subscription transports. A request that needs async execution is a
+server integration error, not an ordinary client validation error.
+
 ### Production execution errors
 
 With Django `DEBUG=False`, the default formatter on all three HTTP views

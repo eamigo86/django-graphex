@@ -161,6 +161,11 @@ When response caching is enabled, only HTTP 200 GraphQL data responses without
 errors are stored or reused; a failed request is executed again rather than
 replaying an old cached error. See the [caching guide](docs/usage/caching.md).
 
+The built-in HTTP views are synchronous. Async resolvers or middleware are not
+executed there: an awaitable execution returns HTTP 500 with a controlled
+GraphQL JSON error asking for synchronous resolvers and middleware. See the
+[view contract](docs/usage/views.md#custom-execution-backend).
+
 The library default is `DEFAULT_PAGE_SIZE: 100` and `MAX_PAGE_SIZE: None`.
 Omit `DEFAULT_PAGE_SIZE` to inherit 100 for LimitOffset, Page, and Cursor
 paginators; the explicit `20` above is an application override. A default is

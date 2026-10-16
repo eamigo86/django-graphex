@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Reject unsupported async resolver, middleware, and executor results on the
+  synchronous built-in HTTP views with a controlled HTTP 500 GraphQL JSON
+  error. Newly created, unstarted coroutines owned by execution are closed
+  without running them. Previously this configuration could produce an HTML
+  500 and unawaited-coroutine warnings. Use synchronous resolvers and
+  middleware for HTTP; this does not add async HTTP support or change SSE and
+  WebSocket subscriptions.
+
 - Cache only HTTP 200 GraphQL data responses without errors when
   `CACHE_ACTIVE=True`. Partial-data execution errors, validation failures and
   other non-200 responses are returned normally but re-execute on the next
