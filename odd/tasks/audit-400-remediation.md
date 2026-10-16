@@ -98,7 +98,8 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T16c | D, accepted17162 | Reverse-O2O fixture isolation `4ec40e8`; A9 behavior unchanged. RED8/2→GREEN10, full5226/7/9, independent/parent PASS. Exact history: `t10a-a9-{order-triage,fixture-isolation,final-recheck,parent-spot}/README.md`, pre-T16e tracker. | [x] |
 | T16d | D, accepted18385 | Two-suite test portability `3e3af998`; no production change. Full checks, 12 ASTs, qualifications: `t16d-test-runtime-portability-closure/README.md` and exact pre-T16e tracker. Datepart later T16e; GET-body/T16 open. | [x] |
 | T16e | D, accepted19086 | Test-only `9c431f6`: proof asserts/imports removed, business AST retained. MODELED3.3.1 ≠ installed CI; full counts/limits: `t16e-datepart-test-portability-closure/README.md`, pre-T13i archive. T16 open. | [x] |
-| T16 | D | Tooling/test coverage/metadata/refactor/dead code; no benchmark regeneration. Q2=T16a; datepart inline-proof portability=T16e accepted, not installed-CI proof. GET-empty-body prose false (`views.py:1691`; nonempty works). Wider T16 open. | [ ] |
+| T16f | D, pending19349 | Fix false GET-empty-body cache-key prose only. Executable docs RED→GREEN; same GET params/different raw body and determinism controls; executable AST unchanged. Native3.3 focal/related/full >95%, patch N/A; strict docs/quality, Playground/static bench/finite safety. No cache/HTTP policy; independent pending. | [ ] |
+| T16 | D | Tooling/test coverage/metadata/refactor/dead code; no benchmark regeneration. Q2=T16a; datepart T16e accepted (MODELED, not installed CI). T16f GET-body prose pending; wider T16 open. | [ ] |
 | T17 | D | Complete independent disposition of every ledger ID, verify section-9 negative claims, run full quality/coverage gates, list all final false positives with evidence and reasons, and report remaining design decisions or unavailable checks. | [ ] |
 
 ## Claim traceability ledger
@@ -238,8 +239,8 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 ## Progress and next action
 
-**Recovery:** T12c preclosure preserves T06/T07/T10 PARTIAL and T12b/c preimages/hashes. Permanent T11a RED-preimage, A12 DB-hash/htmlcov, T12b v1 guard and T12c helper-copy gaps. Full pre-T12f history archived below.
+**Recovery:** Historical qualifications remain in `t16f-get-body-cache-key-docs-implementation/tracker-pre-t16f.md` (SHA `5f85a4c8e3cb73fd01225b902c489f8f989654b6386f0cdff985307195661a03`); earlier exact archives stay linked.
 
-**Next:** T13i bounded accepted19287; 54 accepted remediation units (52 behavior incl T14a/T13i + T13g docs + T16e test portability), 55 checked rows incl quality—not closed claims; 100 IDs/order, 15 T03–T17 OPEN. Original T13i independent PARTIAL and non-fsynced historical input copies remain qualified despite current durable PASS. Existing T14a bounded; optional ImproperlyConfigured19042 UNAPPROVED/unneeded. GET-body prose, M-F7, other T13 and untriaged claims separate. Exact pre-T13i and preclosure archives in proof.
+**Next:** T16f unchecked; 54 accepted units + quality = 55 checked rows, not claims. 100 IDs/order; 15 T03–T17 OPEN. GET-body prose target; M-F7, other T13/T16 and untriaged claims separate. T13i historical fsync/PARTIAL retained; pre-T16f tracker archived.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
