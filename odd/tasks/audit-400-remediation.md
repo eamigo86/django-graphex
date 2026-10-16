@@ -98,8 +98,8 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T16c | D, accepted17162 | Reverse-O2O fixture isolation `4ec40e8`; A9 behavior unchanged. RED8/2→GREEN10, full5226/7/9, independent/parent PASS. Exact history: `t10a-a9-{order-triage,fixture-isolation,final-recheck,parent-spot}/README.md`, pre-T16e tracker. | [x] |
 | T16d | D, accepted18385 | Two-suite test portability `3e3af998`; no production change. Full checks, 12 ASTs, qualifications: `t16d-test-runtime-portability-closure/README.md` and exact pre-T16e tracker. Datepart later T16e; GET-body/T16 open. | [x] |
 | T16e | D, accepted19086 | Test-only `9c431f6`: proof asserts/imports removed, business AST retained. MODELED3.3.1 ≠ installed CI; full counts/limits: `t16e-datepart-test-portability-closure/README.md`, pre-T13i archive. T16 open. | [x] |
-| T16f | D, pending19349 | Docs-only `0606b34`: same-test RED1→GREEN1; focal8/related41/full5519/7skip/9warn, branch4103/4304, combined15368/15755; source executable AST identical, patch N/A. Strict quality/docs129+42/PG59/static5/finite PASS; initial format/docs setup failures retained in `t16f-get-body-cache-key-docs-implementation/README.md`. No runtime/cache/HTTP policy change; independent pending, T16 open. | [ ] |
-| T16 | D | Tooling/test coverage/metadata/refactor/dead code; no benchmark regeneration. Q2=T16a; datepart T16e accepted (MODELED, not installed CI). T16f GET-body prose pending; wider T16 open. | [ ] |
+| T16f | D, accepted19403 | Docs/test only `0606b34`: RED1→same GREEN1; independent focal8/related41/full5519/7skip/9warn, branch4103/4304, combined15368/15755, executable patch N/A; parent focal8. Quality/docs129+42/PG59/static5/finite PASS. Stale original parent recipe and setup failures retained. Proof: `t16f-get-body-cache-key-docs-closure/README.md`. No runtime/cache/HTTP policy change; T16 OPEN. | [x] |
+| T16 | D | Tooling/test coverage/metadata/refactor/dead code; no benchmark regeneration. Q2=T16a; datepart T16e accepted (MODELED, not installed CI). T16f GET-body prose accepted19403; wider T16 open. | [ ] |
 | T17 | D | Complete independent disposition of every ledger ID, verify section-9 negative claims, run full quality/coverage gates, list all final false positives with evidence and reasons, and report remaining design decisions or unavailable checks. | [ ] |
 
 ## Claim traceability ledger
@@ -241,6 +241,6 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** Historical qualifications remain in `t16f-get-body-cache-key-docs-implementation/tracker-pre-t16f.md` (SHA `5f85a4c8e3cb73fd01225b902c489f8f989654b6386f0cdff985307195661a03`); earlier exact archives stay linked.
 
-**Next:** T16f unchecked; 54 accepted units + quality = 55 checked rows, not claims. 100 IDs/order; 15 T03–T17 OPEN. GET-body prose target; M-F7, other T13/T16 and untriaged claims separate. T13i historical fsync/PARTIAL retained; pre-T16f tracker archived.
+**Next:** 55 accepted remediation units + quality = 56 checked rows, not claims. 100 IDs/order; 15 T03–T17 OPEN. T16f docs-only accepted19403; M-F7 explicit-None and untriaged claims remain. Historical T13i fsync/PARTIAL and T16f stale recipe remain linked.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
