@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Correct the cache-key documentation: `fetch_cache_key(request)` hashes the
+  raw body even on a GET request that carries one, alongside framed GET
+  parameters. This is not a recommendation to send GET bodies; use query
+  parameters or POST JSON. Cache-key behavior and existing entries are
+  unchanged.
+
 - Preserve `null` and empty-list schema values for selected `__schema` and
   `__type` queries whose root fields are reached through inline or named
   fragments when `CLEAN_RESPONSE=True`. Previously those fragmented

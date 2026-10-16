@@ -49,7 +49,12 @@ _graphql_v2_{scope}_{version_identity}_{version}_{identity}_{body_hash}
 | `{version_identity}` | selected counter namespace | `global` by default; the identity/bucket namespace in legacy mode |
 | `{version}` | current counter value | Makes older responses unreachable after invalidation |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
-| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of tagged, length-framed body and `query`, `variables`, `operationName` GET parameters | Distinguishes request components without ambiguous concatenation |
+| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of the tagged, length-framed raw request body and `query`, `variables`, `operationName` GET parameters | Distinguishes request components without ambiguous concatenation |
+
+The raw body contributes to the key even for an unusual GET request carrying
+one: identical GET parameters with different body bytes produce different
+keys. This describes cache-key construction, not a recommendation to send GET
+bodies. Use ordinary GET query parameters or POST JSON for GraphQL requests.
 
 The default body digest changes with this framing, so previously cached GraphQL
 responses have a cold miss and expire under the configured cache policy. The
@@ -245,9 +250,10 @@ class MyView(GraphQLView):
         return hashlib.sha256(canonical).hexdigest()
 ```
 
-An override that also customises GET requests must distinguish the query,
-variables, and operation-name boundaries itself; joining their text without
-framing can make different selected operations share a cached response.
+An override that also customises GET requests must account for any raw body
+and distinguish the query, variables, and operation-name boundaries itself;
+joining their text without framing can make different requests share a cached
+response.
 
 ### Identity prefix (`cache_key_prefix`)
 

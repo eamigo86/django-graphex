@@ -102,6 +102,34 @@ def test_get_components_and_body_have_unambiguous_boundaries() -> None:
     assert all(set(key) <= set("0123456789abcdef") for key in keys)
 
 
+def test_get_raw_body_is_documented_and_changes_default_cache_key() -> None:
+    """Keep the cache-key contract aligned with raw GET body hashing.
+
+    A nonempty GET body is unusual, but it contributes to the digest whenever
+    one is present. Repeated requests with identical bytes stay deterministic.
+    """
+    factory = RequestFactory()
+    url = "/graphql/?query=%7B%20alpha%20%7D"
+    first = factory.generic(
+        "GET", url, data=b"first", content_type="application/graphql"
+    )
+    second = factory.generic(
+        "GET", url, data=b"second", content_type="application/graphql"
+    )
+    repeat = factory.generic(
+        "GET", url, data=b"first", content_type="application/graphql"
+    )
+    assert first.GET == second.GET == repeat.GET
+    assert first.body == b"first"
+    assert second.body == b"second"
+    assert GraphQLView.fetch_cache_key(first) != GraphQLView.fetch_cache_key(second)
+    assert GraphQLView.fetch_cache_key(first) == GraphQLView.fetch_cache_key(repeat)
+
+    description = GraphQLView.fetch_cache_key.__doc__ or ""
+    assert "including GET requests" in description
+    assert "GET requests have an empty body" not in description
+
+
 def test_utf8_and_framing_like_text_cannot_cross_get_components() -> None:
     """Keep multibyte and framing-like text within its own component.
 

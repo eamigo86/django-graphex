@@ -1924,11 +1924,11 @@ class GraphQLView(BaseGraphQLView):
     def fetch_cache_key(request: HttpRequest) -> str:
         """Return a SHA-256 cache key from framed body and GET components.
 
-        The raw body and the query, variables, and operationName parameters are
-        tagged and length-framed before hashing. GET requests have an empty body;
-        framing prevents a parameter or a POST body from absorbing an adjacent
-        component and making distinct requests share a cache slot. Missing and
-        empty GET parameters still contribute the same empty value.
+        The raw body of every request, including GET requests, and the query,
+        variables, and operationName parameters are tagged and length-framed
+        before hashing. Framing prevents adjacent components from collapsing
+        into one cache slot. Missing and empty GET parameters still contribute
+        the same empty value.
 
         Subclasses may override this staticmethod to derive the body hash
         differently (e.g. normalising whitespace or extracting the operation
