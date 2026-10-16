@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Clarify the explicit-`None` pagination documentation: when no request size,
+  default, or maximum supplies a size, LimitOffset returns all rows, Page
+  returns `results: null`, and Cursor uses its final 20-row fallback. Ordinary
+  omitted constructor sizes still inherit the 100-row startup default; this
+  corrects an ambiguous API table without changing runtime or error behavior.
+
 - Correct the cache-key documentation: `fetch_cache_key(request)` hashes the
   raw body even on a GET request that carries one, alongside framed GET
   parameters. This is not a recommendation to send GET bodies; use query

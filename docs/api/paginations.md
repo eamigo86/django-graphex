@@ -676,18 +676,30 @@ clamped at the maximum:
 
 | `default` | `max` | client sends | rows returned |
 |---|---|---|---|
-| – | – | – | **all** (unbounded — no pagination configured) |
-| – | `100` | – | `100` (falls back to the max) |
-| `25` | `100` | – | `25` |
+| `None` | `100` | omitted | `100` (falls back to the max) |
+| `25` | `100` | omitted | `25` |
 | `25` | `100` | `500` | `100` (clamped) |
 
-So a list can never exceed its maximum. The shipped default is now `100` with
-**no** maximum; an omitted size returns the first 100 rows, while an explicit
-request above 100 is allowed where the paginator exposes a size argument. The
-unbounded row above requires explicit `None` for both LimitOffset default and
-maximum; Page with both unset returns `results: null`, while Cursor falls back
-to 20. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` / `max_page_size`) when a
-hard ceiling is required.
+A configured maximum always bounds the result. The shipped default is `100`
+with **no** maximum: omitting a size argument returns the first 100 rows, but
+an explicit larger request is allowed where the paginator exposes a size
+argument. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` / `max_page_size`) for
+a hard ceiling.
+
+#### When every size source is None
+
+This case requires an explicitly unset paginator default and maximum, with no
+client size argument. Omitting a constructor size instead inherits the library
+startup default of 100. Page exposes a client page-size argument only when
+`page_size_query_param` is configured.
+
+| Paginator | default | max | client sends | result |
+|---|---|---|---|---|
+| LimitOffset | `None` | `None` | omitted | all rows (respecting configured ordering) |
+| Page | `None` | `None` | omitted | `results: null` |
+| Cursor | `None` | `None` | omitted | 20 rows (final fallback) |
+
+These are existing paginator-specific outcomes, not a universal unbounded mode.
 
 Clamping is **silent**: a request above the maximum does not raise an error —
 the effective size is `min(requested, max)`, matching the convention of Django
