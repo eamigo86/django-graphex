@@ -329,6 +329,72 @@ def _execute_synchronously(schema: Any, document: Any, options: dict[str, Any]) 
                 owned[id(value)] = value
         return awaitable
 
+    def observe_middleware(entry: Any) -> Any:
+        """Observe newly created coroutines at one middleware boundary.
+
+        Args:
+            entry: A native function or object middleware entry.
+
+        Returns:
+            A request-local wrapper, or an entry native execution ignores.
+        """
+        callback = (
+            entry if inspect.isfunction(entry) else getattr(entry, "resolve", None)
+        )
+        if callback is None:
+            return entry
+
+        def observed(next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
+            """Retain new next results before middleware hides them.
+
+            Args:
+                next_: Next resolver or middleware callable.
+                root: GraphQL root value.
+                info: GraphQL field information.
+                **kwargs: GraphQL field arguments.
+
+            Returns:
+                The original middleware result.
+            """
+
+            def observed_next(*args: Any, **next_kwargs: Any) -> Any:
+                """Track a direct async next call without claiming borrowed work.
+
+                Args:
+                    *args: Positional arguments for the next callable.
+                    **next_kwargs: Keyword arguments for the next callable.
+
+                Returns:
+                    The next callable's unmodified value.
+                """
+                value = next_(*args, **next_kwargs)
+                if inspect.iscoroutinefunction(next_):
+                    track_awaitable(value)
+                return value
+
+            value = callback(observed_next, root, info, **kwargs)
+            if inspect.iscoroutine(value) and value.cr_frame is not None:
+                # A direct async middleware call creates its own coroutine. A
+                # synchronous wrapper is owned only when it captures a value
+                # already observed as newly created by this execution.
+                captured = value.cr_frame.f_locals.values()
+                if inspect.iscoroutinefunction(callback) or any(
+                    id(child) in owned and owned[id(child)] is child
+                    for child in captured
+                ):
+                    track_awaitable(value)
+            return value
+
+        return observed
+
+    middleware = options.get("middleware")
+    if type(middleware) is MiddlewareManager:
+        options["middleware"] = MiddlewareManager(
+            *(observe_middleware(entry) for entry in middleware.middlewares)
+        )
+    elif isinstance(middleware, (tuple, list)):
+        options["middleware"] = [observe_middleware(entry) for entry in middleware]
+
     options["is_awaitable"] = track_awaitable
     try:
         result = execute(schema, document, **options)

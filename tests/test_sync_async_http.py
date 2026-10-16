@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import inspect
 import json
@@ -21,6 +22,7 @@ from graphql import (
     GraphQLString,
 )
 from graphql import execution as graphql_execution
+from graphql.execution.middleware import MiddlewareManager
 
 from django_graphex.permissions import AllowAny
 from django_graphex.views import AuthenticatedGraphQLView, BaseGraphQLView, GraphQLView
@@ -161,6 +163,225 @@ def test_async_resolver_returns_json_500_and_closes_owned_coroutines(
         for value in captured:
             if inspect.getcoroutinestate(value) == inspect.CORO_CREATED:
                 value.close()
+        clear_url_caches()
+
+
+@pytest.mark.parametrize(
+    "chain_kind",
+    [
+        "list-function",
+        "list-object",
+        "list-ignored",
+        "manager-function",
+        "manager-object",
+    ],
+)
+@pytest.mark.parametrize("layers", [1, 2])
+def test_sync_middleware_closes_nested_owned_resolver_coroutines(
+    chain_kind: str, layers: int
+) -> None:
+    """Close every new coroutine hidden by synchronous middleware wrappers.
+
+    Args:
+        chain_kind: Native container and middleware entry shape.
+        layers: Number of synchronous middleware wrappers.
+    """
+    created: list[Any] = []
+    bodies: list[str] = []
+
+    async def resolver(*_args: Any) -> str:
+        """Record forbidden resolver execution.
+
+        Args:
+            *_args: GraphQL resolver arguments.
+
+        Returns:
+            A value that this synchronous view must not obtain.
+        """
+        bodies.append("resolver")
+        return "unexpected"
+
+    def middleware(next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
+        """Wrap the next coroutine without starting it.
+
+        Args:
+            next_: Next callable in the middleware chain.
+            root: GraphQL root value.
+            info: GraphQL field information.
+            **kwargs: GraphQL field arguments.
+
+        Returns:
+            A new coroutine awaiting the next callable's result.
+        """
+        inner = next_(root, info, **kwargs)
+        created.append(inner)
+
+        async def decorate() -> Any:
+            """Record forbidden middleware execution.
+
+            Returns:
+                The next callable's eventual value.
+            """
+            bodies.append("middleware")
+            return await inner
+
+        outer = decorate()
+        created.append(outer)
+        return outer
+
+    class ObjectMiddleware:
+        """Expose the same middleware callback through an object entry."""
+
+        def resolve(self, next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
+            """Delegate to the function middleware without changing its result.
+
+            Args:
+                next_: Next resolver or middleware callable.
+                root: GraphQL root value.
+                info: GraphQL field information.
+                **kwargs: GraphQL field arguments.
+
+            Returns:
+                The unmodified middleware result.
+            """
+            return middleware(next_, root, info, **kwargs)
+
+    entry = ObjectMiddleware() if chain_kind.endswith("object") else middleware
+    middleware_chain: Any = [entry] * layers
+    if chain_kind == "list-ignored":
+        middleware_chain.insert(0, object())
+    if chain_kind.startswith("manager"):
+        middleware_chain = MiddlewareManager(*middleware_chain)
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "NestedAsyncQuery",
+            {"value": GraphQLField(GraphQLString, resolve=resolver)},
+        )
+    )
+    global urlpatterns
+    urlpatterns = [
+        path(
+            "graphql/",
+            GraphQLView.as_view(
+                schema=SimpleNamespace(graphql_schema=schema),
+                middleware=middleware_chain,
+            ),
+        )
+    ]
+    try:
+        with override_settings(
+            ROOT_URLCONF=__name__,
+            DEBUG=False,
+            DEBUG_PROPAGATE_EXCEPTIONS=False,
+            DJANGO_GRAPHEX={"CACHE_ACTIVE": False},
+        ):
+            clear_url_caches()
+            response = _post("/graphql/", "{ value }")
+            assert response.status_code == 500
+            assert response.json() == {"errors": [{"message": _MESSAGE}]}
+            assert bodies == []
+            assert len(created) == 2 * layers
+            assert all(
+                inspect.getcoroutinestate(value) == inspect.CORO_CLOSED
+                for value in created
+            )
+    finally:
+        for value in created:
+            if inspect.getcoroutinestate(value) == inspect.CORO_CREATED:
+                value.close()
+        clear_url_caches()
+
+
+@pytest.mark.parametrize("prestarted", [False, True])
+def test_sync_middleware_keeps_borrowed_coroutine_open(prestarted: bool) -> None:
+    """Never close unrelated coroutine work retained by a resolver.
+
+    Args:
+        prestarted: Suspend the unrelated coroutine before the HTTP request.
+    """
+    bodies: list[str] = []
+
+    async def borrowed() -> str:
+        """Suspend without returning a GraphQL result.
+
+        Returns:
+            A value not obtained during synchronous HTTP execution.
+        """
+        bodies.append("borrowed")
+        await asyncio.sleep(0)
+        return "unused"
+
+    value = borrowed()
+    if prestarted:
+        value.send(None)
+
+    def resolver(*_args: Any) -> Any:
+        """Return pre-existing coroutine work.
+
+        Args:
+            *_args: GraphQL resolver arguments.
+
+        Returns:
+            The unrelated coroutine.
+        """
+        return value
+
+    def middleware(next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
+        """Wrap a borrowed next value without claiming ownership.
+
+        Args:
+            next_: Next callable in the middleware chain.
+            root: GraphQL root value.
+            info: GraphQL field information.
+            **kwargs: GraphQL field arguments.
+
+        Returns:
+            A new wrapper coroutine.
+        """
+        inner = next_(root, info, **kwargs)
+
+        async def decorate() -> Any:
+            """Await the borrowed value only if async execution occurs.
+
+            Returns:
+                The borrowed value's eventual result.
+            """
+            return await inner
+
+        return decorate()
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "BorrowedAsyncQuery",
+            {"value": GraphQLField(GraphQLString, resolve=resolver)},
+        )
+    )
+    global urlpatterns
+    urlpatterns = [
+        path(
+            "graphql/",
+            GraphQLView.as_view(
+                schema=SimpleNamespace(graphql_schema=schema),
+                middleware=[middleware],
+            ),
+        )
+    ]
+    try:
+        with override_settings(
+            ROOT_URLCONF=__name__,
+            DEBUG=False,
+            DEBUG_PROPAGATE_EXCEPTIONS=False,
+            DJANGO_GRAPHEX={"CACHE_ACTIVE": False},
+        ):
+            clear_url_caches()
+            response = _post("/graphql/", "{ value }")
+            assert response.status_code == 500
+            assert response.json() == {"errors": [{"message": _MESSAGE}]}
+            expected = inspect.CORO_SUSPENDED if prestarted else inspect.CORO_CREATED
+            assert inspect.getcoroutinestate(value) == expected
+            assert bodies == (["borrowed"] if prestarted else [])
+    finally:
+        value.close()
         clear_url_caches()
 
 
