@@ -863,11 +863,13 @@ class BaseGraphQLView(View):
         # graphql-core ``GraphQLSchema``). We therefore duck-type on that
         # attribute: a native ``DjangoGraphQLSchema`` exposes ``graphql_schema``
         # and must be accepted, and any schema object exposing it works too.
-        assert hasattr(self.schema, "graphql_schema"), (
-            "A Schema exposing `graphql_schema` is required to be provided to "
-            "GraphQLView."
-        )
-        assert not all((graphiql, batch)), "Use either graphiql or batch processing"
+        if not hasattr(self.schema, "graphql_schema"):
+            raise AssertionError(
+                "A Schema exposing `graphql_schema` is required to be provided to "
+                "GraphQLView."
+            )
+        if all((graphiql, batch)):
+            raise AssertionError("Use either graphiql or batch processing")
         self.validation_rules = validation_rules or self.validation_rules
 
     def get_root_value(self, request: Any) -> Any:

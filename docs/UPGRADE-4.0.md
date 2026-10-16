@@ -16,6 +16,12 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+The built-in HTTP views now reject a schema without `graphql_schema` and the
+combination `graphiql=True, batch=True` even under `python -O`. They retain
+their existing `AssertionError` type and messages; only these two constructor
+checks changed. The check occurs when a view instance is constructed, not
+necessarily when Django evaluates `as_view()`.
+
 Date-part behavior tests exercise the supported GraphQL-core 3.3 range without
 pinning an exact patch or local checkout path. Contributors running those tests
 should verify their active runtime in an external test runner; a passing local

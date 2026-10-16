@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Keep the two public HTTP view constructor checks active under optimized
+  Python (`-O`): a schema without `graphql_schema` or simultaneous GraphiQL
+  and batch modes still raise their existing `AssertionError` messages when
+  the view is constructed. Other assertions and validation policies are
+  unchanged.
+
 - Improve date-part test portability by removing exact runtime-version,
   checkout-path, and working-directory assertions from the behavioral test.
   A separate regression contract keeps those local proof checks external;

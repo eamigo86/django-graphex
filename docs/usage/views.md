@@ -26,6 +26,14 @@ automatically (no-ops until `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` are set — see
 [Query depth & cost limits](query-limits.md)) and response caching when
 `CACHE_ACTIVE` is on (see [Settings](settings.md)).
 
+All three views validate their configuration when a view instance is
+constructed. The schema must expose `graphql_schema`, and `graphiql=True`
+cannot be combined with `batch=True`. Either mistake raises the same
+`AssertionError` and message under ordinary and optimized (`python -O`)
+Python. This applies when the instance is constructed; calling `as_view()`
+alone does not promise an eager startup check. It does not imply that every
+library assertion or application configuration is validated under `-O`.
+
 ### Custom execution backend
 
 Pass `executor_class=YourBackend` to a view constructor or `as_view()` to
