@@ -80,7 +80,7 @@ Each task is an independently recoverable work unit. `T00` is tracking-only; unc
 | T12f | D, human18041; accepted18137 | **M-F5 only:** `f6e88d4`+`d1a6a18` preserve primary/explicit PK/allowlist with bounded LO/Page DB/window/list PK-ASC tie; unbounded/no-order LO/hidden-PK fallback unchanged. Independent/parent PASS, full5391/7/9, branch95.366%/combined97.577%, patches63/64+35/35+82/83. Permanent PARTIAL8/full17, helper/setup/patch33/35 gaps; author42/44=40 copies, guards parent-only, auth001/002 fail→003 PASS. No cursor/count/boundary/SDL/concurrent-offset/PG claim/PR. `t12f-mf5-pk-tiebreak-closure/README.md`; T12 open. | [x] |
 | T12e | D, human17983; accepted18032 | **M-F6 only:** `c75ea72` generic negative-Page DB count error/no fetch; lazy count unchanged. RED5/2→same GREEN7; full5354/7/9 and final gates PASS. Permanent original RED module/helper/config/runner copies/fsync missing; red01 confounded/red02 materialized, DOC002/mirror corrected. Proof/preimage; other count/None/order/cursor/HTTP unchanged; T12 open. | [x] |
 | T13 | D | Confirm/fix HTTP/cache/error/introspection/limits and async-view claims, separating documented defaults from defects and optional hardening; each necessary incompatible public-default change needs its own explained user approval before implementation. | [ ] |
-| T13a | D, human18167; pending | **BP-MS1:** `96e1f9e` native-coerced selected cost pre-resolver, incl validation-cache hits; static/unselected/errors/factory-once unchanged. RED→same GREEN; related244/full5401/7/9; branch95.373%/combined97.549%; patch22/22+104/105; quality/Playground59/docs/bench/protection PASS. Full001 3.2 bench-child import fail→lazy import/full002 PASS. Response-cache/hot-setting unchanged. `t13a-ms1-variable-cost-implementation/README.md`; independent/parent pending. | [ ] |
+| T13a | D, human18167; pending | **BP-MS1:** `96e1f9e` bound cost; static/errors/factory-once unchanged. Independent PARTIAL: false non-atomic invalidation, verifier wording gap; atomic PASS. 18191 correction `bcd6686`: RED2/4→same-byte GREEN4/4, repo6, related157, full5407/7/9, branch95.37/combined97.58, patch3/3+24/24; quality/Playground59/bench5 PASS. DOC002/full001/setup failures retained; recheck pending. `t13a-ms1-variable-cost-marker-correction/README.md`. | [ ] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
 | T16a | D | **Before core fixes:** strict-TDD compatible Q2 fix: select exactly the eight named canonical benchmark results even when unrelated ignored diagnostic JSON coexists; test fixtures copy only those names. Preserve missing/invalid canonical rejection, public CLI/output contract, benchmark assets, and fresh full-suite coverage evidence. Completed with source commit and checks below. | [x] |
@@ -129,7 +129,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | ID | Report line | Distinct claim / subcases | Task |
 |---|---:|---|---|
-| M-S1 | 114 | Literal150 rejected; variable150 accepted at cost151>120 with MAX_PAGE_SIZE=None (one memory item/no DB); triage proof. Human18167 approved bounded enforcement; writer `96e1f9e` PASS, independent pending. Static fallback/no hard cap retained. | T13/T13a |
+| M-S1 | 114 | Literal150 rejected; variable150 formerly accepted at cost151>120, no hard cap (memory item/no DB). Human18167 `96e1f9e` + marker correction `bcd6686`; independent pending. Static rule retained. Refusal does not invalidate cache; earlier executed batch work does. | T13/T13a |
 | M-S2 | 115 | Default limit settings None (page size, depth, cost, body); unbounded `in` list; unbounded Boolean breadth/depth—three separately verifiable subcases. | T11/T13 |
 | M-S3 | 116 | ALLOW_INTROSPECTION=False allegedly inert without middleware despite documentation. | T13 |
 | M-S4 | 117 | Errors allegedly expose SQL/constraint/table details with DEBUG=False. | T13 |
@@ -238,6 +238,6 @@ T11c `4c3e4bb` accepted A12 only; RED/runner, mislabeled freeze, retained-DB rea
 
 **Immutable T12f preimage:** `t12f-mf5-pk-tiebreak-implementation/tracker-preimplementation.md` (49,914B, SHA-256 `1b3312f23fc35363d8e26bf82a22b9ed28482f70329617d4337580cb2bdc56fb`, 0644): full prior chronology, 100 claim IDs/41 closures.
 
-**Next:** 42 closed; T13a writer PASS, independent/parent pending; T13/T12 and all T03–T17 open (L-C8/9). M-F7 None/error unapproved.
+**Next:** 42 closed; T13a independent recheck/parent acceptance pending; T13/T12 and T03–T17 open (L-C8/9). M-F7 None/error unapproved.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
