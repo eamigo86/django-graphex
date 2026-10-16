@@ -9,8 +9,24 @@ from unittest.mock import patch
 
 import pytest
 from django.test import RequestFactory, override_settings
-from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema, GraphQLString, parse
-from graphql.language.ast import FragmentDefinitionNode
+from graphql import (
+    GraphQLField,
+    GraphQLObjectType,
+    GraphQLSchema,
+    GraphQLString,
+    OperationType,
+    parse,
+)
+from graphql.language.ast import (
+    DocumentNode,
+    FragmentDefinitionNode,
+    FragmentSpreadNode,
+    InlineFragmentNode,
+    NamedTypeNode,
+    NameNode,
+    OperationDefinitionNode,
+    SelectionSetNode,
+)
 
 from django_graphex.views import GraphQLView
 
@@ -107,6 +123,63 @@ def test_selected_operation_ignores_unreachable_fragments() -> None:
     assert not GraphQLView._is_introspection_document(document, "Unknown")
     assert not GraphQLView._is_introspection_document(
         parse("query Empty { ...Missing }")
+    )
+
+
+def test_ambiguous_reachable_fragment_name_fails_closed() -> None:
+    """Do not choose arbitrarily between duplicate fragment definitions.
+
+    An unreachable duplicate is irrelevant, but a reachable name is ambiguous.
+    """
+    document = parse(
+        "query { ...Root } "
+        "fragment Root on Query { __schema { queryType { name } } } "
+        'fragment Root on Query { __type(name: "Query") { name } }'
+    )
+    assert not GraphQLView._is_introspection_document(document)
+
+
+def test_malformed_root_selections_fail_closed() -> None:
+    """Reject empty root wrappers and nodes that are not GraphQL selections.
+
+    Parsed GraphQL syntax disallows these forms; constructed ASTs should not
+    accidentally qualify for the cleaning exemption.
+    """
+    empty = SelectionSetNode(selections=())
+
+    def document_with_root(
+        root: Any, fragment: FragmentDefinitionNode | None = None
+    ) -> DocumentNode:
+        """Construct one selected operation with an optional fragment.
+
+        Args:
+            root: Root selection to classify.
+            fragment: Optional named fragment definition.
+
+        Returns:
+            A document containing the selected operation.
+        """
+        operation = OperationDefinitionNode(
+            operation=OperationType.QUERY,
+            selection_set=SelectionSetNode(selections=(root,)),
+        )
+        definitions = (operation,) if fragment is None else (operation, fragment)
+        return DocumentNode(definitions=definitions)
+
+    inline = InlineFragmentNode(selection_set=empty)
+    assert not GraphQLView._is_introspection_document(document_with_root(inline))
+
+    fragment = FragmentDefinitionNode(
+        name=NameNode(value="Empty"),
+        type_condition=NamedTypeNode(name=NameNode(value="Query")),
+        selection_set=empty,
+    )
+    spread = FragmentSpreadNode(name=NameNode(value="Empty"))
+    assert not GraphQLView._is_introspection_document(
+        document_with_root(spread, fragment)
+    )
+    assert not GraphQLView._is_introspection_document(
+        document_with_root(NameNode(value="__schema"))
     )
 
 
