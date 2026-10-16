@@ -21,6 +21,8 @@ def test_all_none_table_names_each_paginator_outcome() -> None:
     heading = "#### When every size source is None"
     assert heading in guide
     section = guide.split(heading, 1)[1].split("Clamping is **silent**", 1)[0]
+    assert "configured startup `DEFAULT_PAGE_SIZE`" in section
+    assert "100 in the shipped settings" in section
     rows = [line for line in section.splitlines() if line.startswith("|")]
     cells = [
         tuple(part.strip() for part in line.strip("|").split("|")) for line in rows

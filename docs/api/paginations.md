@@ -689,8 +689,9 @@ a hard ceiling.
 #### When every size source is None
 
 This case requires an explicitly unset paginator default and maximum, with no
-client size argument. Omitting a constructor size instead inherits the library
-startup default of 100. Page exposes a client page-size argument only when
+client size argument. Omitting a constructor size instead inherits the
+configured startup `DEFAULT_PAGE_SIZE` (100 in the shipped settings). Page
+exposes a client page-size argument only when
 `page_size_query_param` is configured.
 
 | Paginator | default | max | client sends | result |
