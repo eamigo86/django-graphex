@@ -469,10 +469,25 @@ GraphQLView.as_view(schema=schema, graphiql=True, graphiql_template="myapp/graph
 
 ### AST-based introspection detection (`CLEAN_RESPONSE`)
 
-When `CLEAN_RESPONSE=True` is set, `GraphQLView` passes the response data through
-`clean_dict` to remove `null` fields. Introspection responses (`__schema` / `__type`
-queries) are **exempt** — applying `clean_dict` to them would corrupt the payload
-because many introspection fields legitimately return `null`.
+When `CLEAN_RESPONSE=True` is set, `GraphQLView` passes ordinary response data
+through `clean_dict`. It recursively removes `null`, empty strings, and empty
+lists or objects (including containers emptied by cleaning), while retaining
+numeric zero and `false` in fields and arrays. Array elements that remain keep
+their original order. The default is `False`, which leaves the full payload
+unchanged. For example, an ordinary response is cleaned as follows:
+
+```json
+{"count": 0, "enabled": false, "missing": null, "blank": "", "items": [null, 0, false, {}]}
+```
+
+becomes:
+
+```json
+{"count": 0, "enabled": false, "items": [0, false]}
+```
+
+Introspection responses (`__schema` / `__type` queries) are **exempt**;
+cleaning them would corrupt fields that legitimately return `null` or `[]`.
 
 The check is AST-based: a response is treated as introspection when **all**
 top-level selections are `__schema` or `__type` fields, regardless of the

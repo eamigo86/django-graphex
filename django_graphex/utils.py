@@ -8,6 +8,8 @@ import logging
 import re
 from collections import OrderedDict
 from collections.abc import Iterator
+from decimal import Decimal
+from numbers import Number
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
@@ -275,8 +277,27 @@ def get_model_fields(model: type[Model]) -> list[tuple[str, Any]]:
     return all_fields
 
 
+def _keep_clean_value(value: Any) -> bool:
+    """Keep nonempty values and meaningful numeric or boolean zero.
+
+    Args:
+        value: A recursively cleaned response value.
+
+    Returns:
+        Whether the value should remain in its parent container.
+    """
+    return (
+        bool(value)
+        or value is False
+        or (isinstance(value, (Number, Decimal)) and value == 0)
+    )
+
+
 def clean_dict(d: Any) -> Any:
-    """Remove all empty fields in a nested dict.
+    """Remove null, empty strings and empty containers from nested data.
+
+    Numeric zero and false are retained at every nesting level. New mappings
+    and lists are returned, leaving the input unchanged.
 
     Args:
         d: The value to clean, typically a dict or list.
@@ -287,9 +308,13 @@ def clean_dict(d: Any) -> Any:
     if not isinstance(d, (dict, list)):
         return d
     if isinstance(d, list):
-        return [v for v in (clean_dict(v) for v in d) if v]
+        return [v for v in (clean_dict(v) for v in d) if _keep_clean_value(v)]
     return OrderedDict(
-        [(k, v) for k, v in ((k, clean_dict(v)) for k, v in list(d.items())) if v]
+        [
+            (k, v)
+            for k, v in ((k, clean_dict(v)) for k, v in list(d.items()))
+            if _keep_clean_value(v)
+        ]
     )
 
 

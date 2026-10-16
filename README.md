@@ -171,6 +171,11 @@ limit above the budget now receives HTTP 400 / `QUERY_TOO_COMPLEX`, even if its
 static fallback estimate passed; `MAX_PAGE_SIZE` remains the recommended hard
 ceiling for lists with omitted sizes.
 
+`CLEAN_RESPONSE` is off by default. When enabled for `GraphQLView`, it removes
+nulls, empty strings, and empty containers recursively, but retains numeric
+zero and `false`. Selected introspection operations bypass cleaning. See
+[response cleaning](https://eamigo86.github.io/django-graphex/usage/security/#ast-based-introspection-detection-clean_response).
+
 For bounded model-backed limit/offset and page-number results, ties in the effective
 ordering use the primary key ascending unless it is already an ordering term.
 This preserves an explicit descending key, but does not prevent offset shifts

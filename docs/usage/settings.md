@@ -114,7 +114,7 @@ the default database connection, not arbitrary additional database aliases.
 | `CACHE_ACTIVE` | `False` | Enable response caching in `GraphQLView`. |
 | `CACHE_TIMEOUT` | `300` | Cache TTL in seconds. |
 | `CACHE_INVALIDATION_SCOPE` | `"global"` | Mutation invalidation policy. `"global"` advances one shared GraphQL version so every identity sees shared writes; `"identity"` preserves the narrower 3.0 per-identity policy. Any other value raises `ImproperlyConfigured`. |
-| `CLEAN_RESPONSE` | `False` | Strip `null` values from the response payload. Introspection responses are exempt — see [AST-based introspection detection](security.md#ast-based-introspection-detection-clean_response). |
+| `CLEAN_RESPONSE` | `False` | For `GraphQLView`, remove `null`, empty strings, and empty containers recursively while retaining numeric zero and `false`. Selected introspection operations are exempt — see [response cleaning](security.md#ast-based-introspection-detection-clean_response). |
 
 ### Security: per-user cache isolation
 

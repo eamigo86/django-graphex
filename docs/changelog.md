@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Preserve numeric zero and `false` in ordinary `GraphQLView` responses when
+  `CLEAN_RESPONSE=True`, including nested fields and arrays. Clients that
+  relied on these values being omitted will now receive them. Nulls, empty
+  strings and empty containers are still removed recursively; the default
+  `CLEAN_RESPONSE=False` and selected introspection responses are unchanged.
+
 - Replace unexpected resolver-exception details on built-in HTTP views when
   `DEBUG=False` with safe `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`
   diagnostics and an opaque `errorId` correlated with restricted server logs.

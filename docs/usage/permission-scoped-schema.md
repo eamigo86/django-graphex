@@ -414,7 +414,8 @@ admit that row. For example, the same query can return either response:
 ```
 
 The JSON examples assume `CLEAN_RESPONSE=False` (the default). Enabling
-`CLEAN_RESPONSE` removes null-valued response keys; it does not change the
+`CLEAN_RESPONSE` removes null and empty response values but retains zero and
+false; it does not change the
 resolver's denied-target result or the permission decision.
 
 The second response requires `billing.view_account` and, when an `Account`
