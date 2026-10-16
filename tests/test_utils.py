@@ -42,7 +42,10 @@ class UtilsTest(TestCase):
         self.assertEqual(cleaned, expected)
 
     def test_clean_dict_retains_zero_and_false_without_mutating_input(self) -> None:
-        """Keep meaningful falsy scalars while pruning recursive empty values."""
+        """Keep meaningful falsy scalars while pruning recursive empty values.
+
+        The original OrderedDict and nested inputs remain unchanged.
+        """
         dirty = OrderedDict(
             (
                 ("zero", 0),
@@ -80,7 +83,10 @@ class UtilsTest(TestCase):
         self.assertEqual(dirty, original)
 
     def test_clean_dict_retains_root_scalars_and_prunes_emptied_lists(self) -> None:
-        """Leave scalar roots unchanged and remove lists emptied by recursion."""
+        """Leave scalar roots unchanged and prune emptied list elements.
+
+        Zero and false remain after adjacent empty containers disappear.
+        """
         self.assertEqual(clean_dict(0), 0)
         self.assertIs(clean_dict(False), False)
         self.assertEqual(clean_dict([{}, {"empty": []}, 0, False]), [0, False])

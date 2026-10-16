@@ -76,7 +76,10 @@ def _post(query: str, operation_name: str | None = None) -> dict[str, Any]:
 
 @override_settings(DJANGO_GRAPHEX={"CLEAN_RESPONSE": True})
 def test_clean_response_keeps_zero_false_and_nonempty_values() -> None:
-    """Retain zero and false at root, list and nested levels in array order."""
+    """Retain zero and false at root, list, and nested levels.
+
+    Retained array elements keep their original relative order.
+    """
     payload = _post("{ " + _FIELDS + " }")
     assert payload["data"] == {
         "count": 0,
@@ -90,7 +93,10 @@ def test_clean_response_keeps_zero_false_and_nonempty_values() -> None:
 
 @override_settings(DJANGO_GRAPHEX={"CLEAN_RESPONSE": False})
 def test_disabled_cleaning_leaves_the_full_payload_unchanged() -> None:
-    """Preserve null, blank and empty containers when cleaning is disabled."""
+    """Preserve the full response when cleaning is disabled.
+
+    Null, blank, and empty-container values remain in their original positions.
+    """
     payload = _post("{ " + _FIELDS + " }")
     assert payload["data"] == {
         "count": 0,
@@ -110,7 +116,10 @@ def test_disabled_cleaning_leaves_the_full_payload_unchanged() -> None:
 
 @override_settings(DJANGO_GRAPHEX={"CLEAN_RESPONSE": True})
 def test_selected_operation_controls_introspection_cleaning() -> None:
-    """Keep introspection null/list fields while cleaning the selected normal op."""
+    """Follow the selected operation when deciding whether to clean.
+
+    Introspection keeps null and empty-list fields; the normal operation is cleaned.
+    """
     query = (
         'query Intro { __type(name: "_Query") { name description interfaces { name } } } '
         "query Normal { count enabled missing }"
