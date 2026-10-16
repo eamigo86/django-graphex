@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Return a generic GraphQL error when a negative page's database `COUNT` fails,
+  instead of loading the full queryset to recover the page. Clients relying on
+  a successful page after a count-only failure should handle `Unable to
+  calculate pagination count`; database details stay out of the response.
+  Positive pages and the separate `totalCount` resolver are unchanged.
+
 - Change the library `DEFAULT_PAGE_SIZE` from `None` to `100`. Omitted sizes on
   the global LimitOffset paginator and default-constructed Page/Cursor
   paginators now return the first 100 rows; clients must paginate for later

@@ -11,6 +11,7 @@ from dataclasses import field as _dc_field
 from typing import Any
 
 from django.db import DatabaseError
+from graphql import GraphQLError
 
 from ..base_types import DjangoListObjectBase
 
@@ -171,8 +172,14 @@ def _get_count(queryset: Any) -> int:
 
     Returns:
         The number of objects in the given queryset or list.
+
+    Raises:
+        GraphQLError: If the database cannot count a queryset for negative-page
+            navigation.
     """
     try:
         return queryset.count()
-    except (AttributeError, TypeError, DatabaseError):
+    except (AttributeError, TypeError):
         return len(queryset)
+    except DatabaseError as exc:
+        raise GraphQLError("Unable to calculate pagination count") from exc

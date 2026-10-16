@@ -623,6 +623,12 @@ Python's `list[-page_size:]` would):
     a negative page cannot supply without first counting, so it falls back to
     the standard (non-window) resolution path for that request.
 
+    If that `COUNT` fails with a database error, negative-page navigation now
+    reports `Unable to calculate pagination count` in GraphQL `errors[]`.
+    It does not retry by loading every row. Clients that previously received
+    a page when only `COUNT` failed should handle this error instead. The
+    database's error text is not included in the response.
+
 !!! note "`LimitOffsetGraphqlPagination` and `CursorGraphqlPagination` have no backward mode"
 
     - `LimitOffsetGraphqlPagination` has **no** backward navigation: a negative
@@ -1074,7 +1080,8 @@ with the error in `errors[]`; valid server-emitted cursor bytes are unchanged.
 
 `totalCount` on the list wrapper is still resolved independently by
 `DjangoListObjectType` and always reflects the filtered queryset count. This
-change only affects the internal COUNT inside `paginate_queryset`.
+change only affects the internal COUNT inside `paginate_queryset`; it does
+not change how a separately selected `totalCount` handles database errors.
 
 ## Performance Considerations
 

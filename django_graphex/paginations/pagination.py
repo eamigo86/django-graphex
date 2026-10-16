@@ -1227,7 +1227,8 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
 
         Raises:
             GraphQLError: On a zero page number, a zero/negative page size, or
-                an invalid/relation-spanning ordering term (bad client input).
+                an invalid/relation-spanning ordering term (bad client input),
+                or a failed database count for a negative page.
         """
         page = kwargs.pop(self.page_query_param, 1)
         if page is None:

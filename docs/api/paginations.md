@@ -339,6 +339,10 @@ collection.
 - `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")` — `page=0`.
 - `GraphQLError` — zero or negative `pageSize` (`"Invalid page size: {value}. Page size must be a positive integer."`).
   A `pageSize` above `max_page_size` is silently clamped, not an error.
+- `GraphQLError("Unable to calculate pagination count")` — the database `COUNT`
+  needed by a negative page fails. The paginator does not load the full queryset
+  as a fallback; positive pages and separately selected `totalCount` retain
+  their existing behavior.
 
 ### Example Usage
 
