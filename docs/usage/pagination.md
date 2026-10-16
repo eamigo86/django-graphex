@@ -189,6 +189,13 @@ one fixed order across offset or page-number requests against an unchanged
 dataset. Clients who previously relied on the database's unspecified order
 within ties may see those rows move; no GraphQL argument or schema changes.
 
+Server queryset ordering keeps Django's effective direction and precedence.
+For example, `order_by("title").reverse()` yields `title DESC, id ASC`, while
+`order_by("-title").extra(order_by=["views"])` yields `views ASC, id ASC`:
+the legacy extra ordering overrides the earlier title term. A nested list uses
+the same effective order; unsupported SQL alias or expression terms take the
+existing plain-prefetch path rather than being reinterpreted by the window path.
+
 An unbounded LimitOffset list with no requested or configured ordering still
 uses its original queryset, including any `Meta.ordering` (for example,
 `["handle"]`). This preserves the existing `totalCount` result-cache behavior;

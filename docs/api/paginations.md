@@ -85,6 +85,7 @@ returns `None` on the native build path — override
 Pagination implementation using limit and offset parameters.
 Bounded model-backed results retain the effective primary ordering and append an
 ascending primary-key tie-break when the key is not already an ordering term.
+Effective server queryset reversal and legacy extra-order precedence are retained.
 Explicit primary-key direction is preserved; client ordering validation runs
 before the internal key is added. See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results).
 

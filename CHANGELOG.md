@@ -9,7 +9,9 @@
   Clients relying on unspecified tie order may see rows move. Offset pages can
   still shift after concurrent inserts/deletes or random primary ordering.
   Unbounded, unconfigured LimitOffset lists retain their original queryset and
-  `totalCount` cache behavior.
+  `totalCount` cache behavior. Existing server queryset reversal and legacy
+  `extra(order_by=...)` precedence remain effective ahead of the new key,
+  including nested pages.
 
 - Return a generic GraphQL error when a negative page's database `COUNT` fails,
   instead of loading the full queryset to recover the page. Clients relying on

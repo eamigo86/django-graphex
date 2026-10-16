@@ -15,6 +15,7 @@ from uuid import UUID
 
 from django.core.exceptions import ValidationError
 from django.db.models import QuerySet
+from django.db.models.expressions import OrderBy
 from graphql import (
     GraphQLBoolean,
     GraphQLError,
@@ -415,6 +416,49 @@ def _append_model_pk_ordering(model: Any, terms: list[Any]) -> list[Any]:
     return [*terms, pk.attname]
 
 
+def _effective_queryset_ordering(qs: QuerySet) -> tuple[list[Any], bool]:
+    """Read Django's effective server ordering without changing the queryset.
+
+    Match SQLCompiler's precedence: extra ordering, explicit ordering, then
+    model ordering when defaults remain enabled. A reversed queryset flips
+    each original direction, including ORM OrderBy expressions. The returned
+    terms are explicit directions so a later ascending PK will not be reversed.
+
+    Args:
+        qs: The server-provided model queryset.
+
+    Returns:
+        The effective terms and whether they came from extra_order_by.
+    """
+    query = qs.query
+    from_extra = bool(query.extra_order_by)
+    if from_extra:
+        terms = list(query.extra_order_by)
+    elif not query.default_ordering or query.order_by:
+        terms = list(query.order_by)
+    else:
+        meta = query.get_meta()
+        terms = list(meta.ordering) if meta and meta.ordering else []
+
+    if query.standard_ordering:
+        return terms, from_extra
+
+    effective = []
+    for term in terms:
+        if hasattr(term, "resolve_expression"):
+            expression = term if isinstance(term, OrderBy) else term.asc()
+            expression = expression.copy()
+            expression.reverse_ordering()
+            effective.append(expression)
+        elif term == "?":
+            effective.append(term)
+        elif term.startswith("-"):
+            effective.append(term[1:])
+        else:
+            effective.append("-" + term)
+    return effective, from_extra
+
+
 def projected_ordering_attnames(model: Any, compiled_type: Any) -> set[str]:
     """Return the concrete attnames the COMPILED type publishes.
 
@@ -667,18 +711,20 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
     if ordering:
         _validate_ordering_terms(qs.model, ordering, allowed)
         qs = qs.order_by(*_split_ordering(ordering))
-    if qs.query.order_by:
-        terms = list(qs.query.order_by)
-    elif qs.query.extra_order_by:
-        terms = list(qs.query.extra_order_by)
-    elif qs.ordered and qs.query.default_ordering:
-        terms = list(qs.model._meta.ordering)
-    else:
-        terms = []
+        # A hook's earlier reverse() must not invert the requested terms.
+        qs.query.standard_ordering = True
+    terms, from_extra = _effective_queryset_ordering(qs)
     total_terms = _append_model_pk_ordering(qs.model, terms)
     if total_terms == terms:
         return qs
-    return qs.order_by(*total_terms)
+    if from_extra:
+        # order_by() would clear extra_order_by and reject its SQL aliases.
+        ordered = qs.all()
+        ordered.query.extra_order_by = total_terms
+    else:
+        ordered = qs.order_by(*total_terms)
+    ordered.query.standard_ordering = True
+    return ordered
 
 
 # *********************************************** #

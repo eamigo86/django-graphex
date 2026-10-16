@@ -27,6 +27,7 @@ from .filtering.filter_field import apply_custom_filters
 from .paginations.pagination import (
     BaseDjangoGraphqlPagination,
     _append_model_pk_ordering,
+    _effective_queryset_ordering,
     _split_ordering,
     projected_ordering_attnames,
 )
@@ -1023,17 +1024,12 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             # With no paginator term, the hook's queryset ordering takes
             # precedence over Meta.ordering. These are server-owned terms,
             # unlike the client/configured terms checked above.
-            if qs.query.order_by:
-                server_terms = list(qs.query.order_by)
-            elif qs.query.extra_order_by:
-                server_terms = list(qs.query.extra_order_by)
-            elif qs.ordered and qs.query.default_ordering:
-                server_terms = list(child._meta.ordering)
-            else:
-                server_terms = []
+            server_terms, _ = _effective_queryset_ordering(qs)
             if any(not isinstance(term, str) for term in server_terms):
                 return None  # ORM expressions retain the plain-prefetch path.
-            order_terms = _split_ordering(server_terms)
+            # These trusted terms already have Django's effective directions;
+            # client spelling normalization would reinterpret SQL aliases.
+            order_terms = server_terms
             for term in order_terms:
                 if term.lstrip("-+") not in model_attnames:
                     return None

@@ -148,7 +148,8 @@ class PkTiebreakOrderingTest(TestCase):
         original = Post.objects.extra(order_by=["-title"])
         assert original.query.extra_order_by == ["-title"]
         result = paginator.paginate_queryset(original)
-        assert result.query.order_by == ("-title", "id")
+        assert result.query.extra_order_by == ["-title", "id"]
+        assert re.search(r"ORDER BY .*title.*DESC.*id.*ASC", str(result.query))
         assert original.query.extra_order_by == ["-title"]
 
     def test_col_pk_expression_is_not_duplicated(self) -> None:
