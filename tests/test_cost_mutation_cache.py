@@ -197,7 +197,11 @@ def test_late_resolver_error_still_invalidates_after_non_atomic_write() -> None:
         side_effect=GraphQLView._bump_cache_version,
     ) as bump:
         body, request = _post(mutation_view, {"query": "mutation { fail }"})
-    assert body["errors"][0]["message"] == "late mutation failure"
+    error = body["errors"][0]
+    assert error["message"] == "An internal error occurred."
+    assert error["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
+    assert len(error["extensions"]["errorId"]) == 32
+    assert "late mutation failure" not in json.dumps(body)
     assert calls.count("fail") == 1
     assert Author.objects.count() == before + 1
     assert getattr(request, _CACHE_MUTATION_EXECUTED_FLAG) is True

@@ -50,6 +50,48 @@ classification; this does not add general async-resolver support to the
 synchronous HTTP view. Custom executor classes must accept the native 3.3
 predicate argument when used with this view.
 
+### Production execution errors
+
+With Django `DEBUG=False`, the default formatter on all three HTTP views
+replaces **unexpected resolver exceptions** with a safe category and an opaque
+`errorId`. For example, a `django.db.DatabaseError` produces:
+
+```json
+{
+  "data": {"failure": null},
+  "errors": [{
+    "message": "Unable to complete the data operation.",
+    "locations": [{"line": 1, "column": 3}],
+    "path": ["failure"],
+    "extensions": {
+      "code": "DATA_ACCESS_ERROR",
+      "errorId": "0123456789abcdef0123456789abcdef"
+    }
+  }]
+}
+```
+
+The ID is a fresh, random 32-character hex value, not a public lookup key.
+Use it to find the matching exception and traceback in the
+`django_graphex.internal_errors` server logger. Restrict access to that logger:
+its traceback can contain sensitive exception text. The library does not add
+request bodies, variables, headers, cookies, or credentials to this log record.
+If a logging handler fails, the HTTP response stays safe, but that particular
+ID may have no matching log record.
+
+Only `DatabaseError` and subclasses use `DATA_ACCESS_ERROR`; other unexpected
+exceptions use `INTERNAL_SERVER_ERROR` and `An internal error occurred.`
+The categories never include SQL, constraint names, exception text, or
+untrusted exception extensions. If a message is intentionally safe for clients,
+raise `GraphQLError` explicitly rather than a raw `ValueError`. Deliberate
+`GraphQLError`, native validation and request errors, and the generated
+mutation's existing generic/structured errors retain their contracts.
+
+GraphQL `locations`, `path`, null propagation, rollback, and each view's HTTP
+status policy are unchanged. `DEBUG=True`, the shared subscription formatter
+used by WebSocket/SSE, and subclasses that override `format_error` retain
+their previous behavior; review a custom override's own production policy.
+
 ### Custom AST builders
 
 GraphQL-core 3.3 makes parsed AST nodes immutable and requires their fields at

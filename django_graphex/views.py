@@ -19,8 +19,10 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import logging
 import os
 import re
+import secrets
 import sys
 import threading
 import weakref
@@ -29,9 +31,10 @@ from functools import wraps
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from django.conf import settings as django_settings
 from django.core.cache import caches
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.http import HttpResponse, HttpResponseNotAllowed
 from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render
@@ -61,6 +64,39 @@ from .security import format_graphql_error, introspection_disabled
 from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule
+
+_error_logger = logging.getLogger("django_graphex.internal_errors")
+
+
+def _internal_error_cause(error: Any) -> BaseException | None:
+    """Find an unexpected cause behind GraphQL wrappers, if one exists.
+
+    A deliberately raised GraphQLError (including one wrapped by execution)
+    remains public. A non-GraphQL original error is internal even when an
+    outer GraphQLError supplies a seemingly safe message or extensions.
+
+    Args:
+        error: The error passed to the HTTP formatter.
+
+    Returns:
+        The unexpected cause, or None for an intentionally public error.
+    """
+    if isinstance(error, HttpError):
+        return None
+    if not isinstance(error, GraphQLError):
+        return error if isinstance(error, BaseException) else None
+
+    current: Any = error
+    seen: set[int] = set()
+    while isinstance(current, GraphQLError):
+        if id(current) in seen:
+            return error
+        seen.add(id(current))
+        current = current.original_error
+    if current is None:
+        return None
+    return current if isinstance(current, BaseException) else error
+
 
 _EXECUTION_BACKEND_KEYWORD = (
     "executor_class"
@@ -1477,12 +1513,15 @@ class BaseGraphQLView(View):
             operation_name = None
         return query, variables, operation_name, id
 
-    def format_error(self, error: Any, request: Any = None) -> dict:
+    def format_error(self, error: Any, request: Any = None) -> dict[str, Any]:
         """Format an error for the response "errors" list.
 
         Delegates to "security.format_graphql_error", the single formatter the
         HTTP view and both subscription transports share, so the "Did you
-        mean ...?" schema oracle is closed on every surface at once.
+        mean ...?" schema oracle is closed on every surface at once. In
+        production HTTP only, unexpected execution exceptions get an allowlisted
+        message and code plus an opaque ID correlated with an internal traceback.
+        Deliberate GraphQLError, validation, and HTTP request errors stay public.
 
         The chain comes from "get_middleware(request)" — the same hook
         execution asks — so a subclass that resolves its middleware per request
@@ -1497,7 +1536,43 @@ class BaseGraphQLView(View):
         Returns:
             The error mapping suitable for the response "errors" list.
         """
-        return format_graphql_error(error, self.get_middleware(request))
+        formatted = format_graphql_error(error, self.get_middleware(request))
+        if django_settings.DEBUG:
+            return formatted
+
+        cause = _internal_error_cause(error)
+        if cause is None:
+            return formatted
+
+        if isinstance(cause, DatabaseError):
+            code = "DATA_ACCESS_ERROR"
+            message = "Unable to complete the data operation."
+        else:
+            code = "INTERNAL_SERVER_ERROR"
+            message = "An internal error occurred."
+        error_id = secrets.token_hex(16)
+        try:
+            _error_logger.error(
+                "GraphQL HTTP internal error %s (%s)",
+                error_id,
+                code,
+                exc_info=(
+                    type(cause),
+                    cause,
+                    cause.__traceback__ or error.__traceback__,
+                ),
+            )
+        except Exception:
+            # A failing application logger must not change GraphQL execution,
+            # rollback, or the safe response. The ID is then uncorrelated.
+            pass
+
+        safe: dict[str, Any] = {"message": message}
+        for key in ("locations", "path"):
+            if key in formatted:
+                safe[key] = formatted[key]
+        safe["extensions"] = {"code": code, "errorId": error_id}
+        return safe
 
     @staticmethod
     def get_content_type(request: Any) -> str:

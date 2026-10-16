@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Replace unexpected resolver-exception details on built-in HTTP views when
+  `DEBUG=False` with safe `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`
+  diagnostics and an opaque `errorId` correlated with restricted server logs.
+  Clients must stop relying on raw exception text or custom extensions from
+  these failures. Deliberate `GraphQLError`, validation errors, existing
+  generated-mutation errors, `DEBUG=True`, and WebSocket/SSE formatting are
+  unchanged; custom `format_error` overrides remain application-owned.
+
 - Frame the default response-cache body and GET components before SHA-256
   hashing. Two different selected GET operations can no longer share a cache
   entry through ambiguous concatenation within one identity. Existing cached

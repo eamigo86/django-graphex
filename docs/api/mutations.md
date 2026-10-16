@@ -136,6 +136,10 @@ An unclassified database `IntegrityError` is not returned in this tuple: it
 escapes the helper after its nested transaction rolls back. The generated
 GraphQL field replaces its public message with the generic top-level error;
 calling the backend directly still raises the original exception.
+Other unhandled resolver exceptions on the built-in HTTP views with
+`DEBUG=False` receive the safe category and log-correlated `errorId` described
+in [Production execution errors](../usage/views.md#production-execution-errors).
+This does not change the generated field's generic or structured errors.
 
 ### CRUD Operations
 

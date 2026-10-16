@@ -472,6 +472,13 @@ calls still raise the original exception. No general model validation,
 inspecting raw database messages must migrate to the fixed message and
 GraphQL error path.
 
+An **unhandled** database exception outside this generated-field adapter
+(including a hand-written mutation) is different: the default HTTP formatter
+with `DEBUG=False` returns `DATA_ACCESS_ERROR`, a safe category message, and
+an opaque `errorId` for restricted server-log correlation. It does not turn
+the failure into `ok: false` or change transaction behavior. See
+[Production execution errors](views.md#production-execution-errors).
+
 !!! tip "FK checks stay inside the mutation's rollback boundary"
     In true autocommit, a valid plain mutation issues a single `INSERT` or
     `UPDATE`; it does not pre-check each FK. Within an outer transaction,

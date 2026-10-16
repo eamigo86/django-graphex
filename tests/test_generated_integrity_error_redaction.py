@@ -588,10 +588,10 @@ def test_generated_delete_integrity_failure_is_redacted(
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("schema", SCHEMAS)
-def test_generated_success_and_nonintegrity_error_are_unchanged(
+def test_generated_success_and_nonintegrity_error_use_http_diagnostics(
     schema: DjangoGraphQLSchema, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Keep successful payloads and unrelated database errors intact.
+    """Keep successful payloads and safely classify unrelated database errors.
 
     Args:
         schema: One generated frontend.
@@ -627,20 +627,28 @@ def test_generated_success_and_nonintegrity_error_are_unchanged(
         monkeypatch.setattr(T10dCheck, "save", fail_save)
         failed = json.loads(_post(schema, query).content)
         assert failed["data"] == {"checkCreate": None}
-        assert failed["errors"][0]["message"] == "unrelated-database-failure"
+        error = failed["errors"][0]
+        assert error["message"] == "Unable to complete the data operation."
+        assert error["extensions"]["code"] == "DATA_ACCESS_ERROR"
+        assert len(error["extensions"]["errorId"]) == 32
+        assert "unrelated-database-failure" not in json.dumps(failed)
     finally:
         _drop_tables(created)
 
 
 @pytest.mark.django_db(transaction=True)
-def test_handwritten_mutation_error_is_not_redacted() -> None:
-    """Avoid changing ordinary hand-written GraphQL field resolvers.
+def test_handwritten_mutation_error_is_safe_in_production_http() -> None:
+    """Classify an unhandled hand-written integrity failure at the HTTP edge.
 
-    The check remains scoped to this generated-mutation contract.
+    The generated-field adapter does not own this error path.
     """
     _assert_runtime_identity()
     response = _post(SCHEMAS[0], "mutation {\n    handwrittenFailure\n}")
     payload = json.loads(response.content)
     assert response.status_code == 200
     assert payload["data"] == {"handwrittenFailure": None}
-    assert payload["errors"][0]["message"] == "private-handwritten-integrity"
+    error = payload["errors"][0]
+    assert error["message"] == "Unable to complete the data operation."
+    assert error["extensions"]["code"] == "DATA_ACCESS_ERROR"
+    assert len(error["extensions"]["errorId"]) == 32
+    assert "private-handwritten-integrity" not in json.dumps(payload)
