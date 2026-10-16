@@ -156,7 +156,12 @@ class MyView(GraphQLView):
         return f"{tenant}_{user_pk}"
 ```
 
-The `fetch_cache_key` staticmethod (which hashes the request body) remains separately overridable; the two are composed in `dispatch` so overriding either one does not break the other.
+The `fetch_cache_key` staticmethod hashes tagged, length-framed request-body
+and GET query, variables, and operation-name components into a 64-character
+SHA-256 digest. It remains separately overridable; the two hooks are composed
+in `dispatch`. The new default digest produces cold misses for existing cached
+responses, which expire normally. An override must preserve component
+boundaries if it handles GET requests itself.
 
 `GraphQLView.should_cache_query(request)` is the eligibility hook. Its default
 returns `False` for every cookie-bearing query. An override may be stricter; if

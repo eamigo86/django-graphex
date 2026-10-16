@@ -1685,15 +1685,13 @@ class GraphQLView(BaseGraphQLView):
 
     @staticmethod
     def fetch_cache_key(request: HttpRequest) -> str:
-        """Return a hashed cache key built from the request body and GET params.
+        """Return a SHA-256 cache key from framed body and GET components.
 
-        For POST requests the GraphQL payload lives in "request.body", which is
-        hashed directly. For GET requests "request.body" is always empty, so the
-        query, variables, and operationName query-string parameters are
-        incorporated into the hash instead. Without this, every distinct GET
-        query for the same identity would produce the empty-body hash and share a
-        single cache slot — causing a different query's cached response to be
-        returned.
+        The raw body and the query, variables, and operationName parameters are
+        tagged and length-framed before hashing. GET requests have an empty body;
+        framing prevents a parameter or a POST body from absorbing an adjacent
+        component and making distinct requests share a cache slot. Missing and
+        empty GET parameters still contribute the same empty value.
 
         Subclasses may override this staticmethod to derive the body hash
         differently (e.g. normalising whitespace or extracting the operation
@@ -1709,16 +1707,19 @@ class GraphQLView(BaseGraphQLView):
             key.
         """
         m = hashlib.sha256()
-        m.update(request.body)
-        # For GET requests, request.body is b'' — incorporate the GraphQL
-        # query-string parameters so different GET queries get distinct keys.
+        m.update(b"django-graphex-cache-key-v1\0")
         get_query = request.GET.get("query") or ""
         get_variables = request.GET.get("variables") or ""
         get_operation = request.GET.get("operationName") or ""
-        if get_query or get_variables or get_operation:
-            m.update(get_query.encode())
-            m.update(get_variables.encode())
-            m.update(get_operation.encode())
+        for tag, value in (
+            (b"body", request.body),
+            (b"query", get_query.encode("utf-8")),
+            (b"variables", get_variables.encode("utf-8")),
+            (b"operationName", get_operation.encode("utf-8")),
+        ):
+            m.update(tag)
+            m.update(len(value).to_bytes(8, "big"))
+            m.update(value)
 
         return m.hexdigest()
 

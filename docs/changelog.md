@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Frame the default response-cache body and GET components before SHA-256
+  hashing. Two different selected GET operations can no longer share a cache
+  entry through ambiguous concatenation within one identity. Existing cached
+  responses cold-miss and expire normally; the 64-hex digest shape and custom
+  `fetch_cache_key(request)` override contract remain unchanged.
+
 - Reject a selected GraphQL operation before resolution when its real,
   GraphQL-coerced request variables or defaults put it over `MAX_QUERY_COST`,
   including document-validation cache hits. A variable page size that previously

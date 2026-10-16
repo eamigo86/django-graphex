@@ -49,7 +49,12 @@ _graphql_v2_{scope}_{version_identity}_{version}_{identity}_{body_hash}
 | `{version_identity}` | selected counter namespace | `global` by default; the identity/bucket namespace in legacy mode |
 | `{version}` | current counter value | Makes older responses unreachable after invalidation |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
-| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body`; for GET requests (where the body is empty) the hash also incorporates the `query`, `variables`, and `operationName` query-string parameters | Distinguishes different queries / variable sets |
+| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of tagged, length-framed body and `query`, `variables`, `operationName` GET parameters | Distinguishes request components without ambiguous concatenation |
+
+The default body digest changes with this framing, so previously cached GraphQL
+responses have a cold miss and expire under the configured cache policy. The
+64-character hexadecimal digest and the override hook are unchanged. Missing
+and empty optional GET parameters still have the same value.
 
 ---
 
@@ -230,6 +235,8 @@ class MyView(GraphQLView):
     @staticmethod
     def fetch_cache_key(request):
         import hashlib, json
+        if request.method == "GET":
+            return GraphQLView.fetch_cache_key(request)
         data = json.loads(request.body or b"{}")
         canonical = json.dumps(
             {"query": data.get("query", ""), "variables": data.get("variables")},
@@ -237,6 +244,10 @@ class MyView(GraphQLView):
         ).encode()
         return hashlib.sha256(canonical).hexdigest()
 ```
+
+An override that also customises GET requests must distinguish the query,
+variables, and operation-name boundaries itself; joining their text without
+framing can make different selected operations share a cached response.
 
 ### Identity prefix (`cache_key_prefix`)
 
