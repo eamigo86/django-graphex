@@ -845,6 +845,10 @@ DJANGO_GRAPHEX = {
 enforcement is active for free. A query that nests more than 4 levels under a
 `post` field is rejected with `QUERY_TOO_DEEP`, and the global `MAX_QUERY_DEPTH`
 of 6 applies on top (most-restrictive rule wins).
+If you enable `MAX_QUERY_COST`, a selected operation's variable page size is
+checked after GraphQL coercion and before its resolvers run. The Playground's
+existing `MAX_PAGE_SIZE = 100` also caps list sizes; this setting is not newly
+required for variable-cost enforcement.
 
 ---
 

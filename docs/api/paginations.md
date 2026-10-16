@@ -662,8 +662,10 @@ DJANGO_GRAPHEX = {
 
     `MAX_PAGE_SIZE` caps how many items a list can return, and
     [query cost analysis](../usage/query-limits.md#query-cost-analysis) reuses it as
-    the per-list multiplier ceiling. Setting it makes cost estimates accurate and
-    closes the `limit: $var` bypass — recommended when `MAX_QUERY_COST` is on.
+    the per-list multiplier ceiling. With `MAX_QUERY_COST` set, a variable limit
+    is also checked against its GraphQL-coerced request value before resolution,
+    even without a maximum. Set `MAX_PAGE_SIZE` to bound omitted or unbounded
+    list sizes; it remains recommended rather than required for this check.
 
 #### The maximum is an effective ceiling
 

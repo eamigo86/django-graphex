@@ -165,6 +165,12 @@ that previously relied on an unbounded omitted-size list should paginate past
 the first 100 rows or explicitly opt out; `None` has paginator-specific legacy
 behavior and does not mean “all rows” for Page pagination.
 
+With `MAX_QUERY_COST` configured, `GraphQLView` checks the selected operation
+against GraphQL-coerced request variables before running resolvers. A variable
+limit above the budget now receives HTTP 400 / `QUERY_TOO_COMPLEX`, even if its
+static fallback estimate passed; `MAX_PAGE_SIZE` remains the recommended hard
+ceiling for lists with omitted sizes.
+
 For bounded model-backed limit/offset and page-number results, ties in the effective
 ordering use the primary key ascending unless it is already an ordering term.
 This preserves an explicit descending key, but does not prevent offset shifts

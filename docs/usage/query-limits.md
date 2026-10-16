@@ -4,7 +4,9 @@ GraphQL lets a client shape its own queries, which means a single request can as
 for far more work than you intend — by nesting deeply, or by paging wide.
 `django-graphex` ships two **validation rules** that reject such queries
 **before any resolver runs**: a depth limiter and a cost analyzer. Both are
-enabled by default in the library's `GraphQLView`.
+enabled by default in the library's `GraphQLView`. When a cost budget is set,
+the view also checks the selected operation against coerced request variables
+after document validation and before resolution.
 
 - [`DepthLimitValidationRule`](#query-depth-limiting) — reject abusively *nested*
   queries.
@@ -92,8 +94,9 @@ class MyGraphQLView(BaseGraphQLView):
 Depth limiting doesn't catch a query that is shallow but *wide*:
 `categories(limit: 100) { posts(limit: 100) { comments(limit: 100) { … } } }`
 can materialize a million objects in three levels. Cost analysis estimates the
-work a query asks for **during validation** and rejects it over a budget — and
-can optionally report the cost back to clients. It captures *width × depth × page
+work a query asks for **during validation and, for a selected operation, after
+variable coercion** and rejects it over a budget — and can optionally report the
+cost back to clients. It captures *width × depth × page
 size* in one number:
 
 ```
@@ -129,7 +132,7 @@ DJANGO_GRAPHEX = {
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected. `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
+| `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected by static validation or, for the selected operation, after request-variable coercion and before resolution. `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
 | `EXPOSE_QUERY_COST` | `False` | When `True`, responses include `extensions.cost`. |
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
 | `DEFAULT_PAGE_SIZE` | `100` | Fallback multiplier when `MAX_PAGE_SIZE` is not set; also the library's inherited page size, not a hard cap. |
@@ -199,21 +202,34 @@ and the budget, then set `MAX_QUERY_COST` to start enforcing.
 
     The multiplier for a list is its page size. If a list has no page-size
     argument in the query and `MAX_PAGE_SIZE` is `None`, the cost falls back to
-    `DEFAULT_LIST_MULTIPLIER` (a soft guess) and the rule emits a one-shot
-    `RuntimeWarning`. Set `MAX_PAGE_SIZE` so unbounded lists are costed at the
-    ceiling the server actually enforces — this also closes the `limit: $var`
-    bypass, since an unknown variable page size is costed at the cap.
+    `DEFAULT_PAGE_SIZE`, then `DEFAULT_LIST_MULTIPLIER` (a soft guess that
+    emits a one-shot `RuntimeWarning`). Set `MAX_PAGE_SIZE` so unbounded lists
+    are costed at a ceiling the server actually enforces. A bound `limit: $var`
+    is checked against its real, coerced value before a resolver runs even
+    without this cap; the cap remains useful for omitted limits.
 
-!!! warning "Variable defaults are not trusted for enforcement"
+!!! warning "Static validation uses a conservative variable fallback"
 
     A default declared in the document (`query Q($n: Int = 1)`) is written by
-    the same client that sends the real variable values, so the enforcing rule
-    ignores it: a variabled page size is always costed at the cap
-    (`MAX_PAGE_SIZE`, else `DEFAULT_PAGE_SIZE` / `DEFAULT_LIST_MULTIPLIER`).
-    The reporting path (`EXPOSE_QUERY_COST`, or `analyze_cost(...,
-    variable_values=...)`) does receive the request's real variables and uses
-    the declared default when a variable is left unbound, so a reported cost
-    can be lower than the cost the rule enforced.
+    the client, so the static validation rule still ignores it and prices an
+    unresolved variable at `MAX_PAGE_SIZE`, else `DEFAULT_PAGE_SIZE` /
+    `DEFAULT_LIST_MULTIPLIER`. After validation, `GraphQLView` also checks the
+    selected operation with GraphQL-coerced request values and defaults before
+    any resolver runs, including when document validation is cached. A low
+    request value does **not** undo a prior static rejection. A high value that
+    previously passed the fallback check may now return HTTP 400 with
+    `QUERY_TOO_COMPLEX` instead of executing. The public `analyze_cost` API
+    and cost model are unchanged.
+
+    For example, with `MAX_QUERY_COST=120`, `DEFAULT_PAGE_SIZE=100`, and no
+    `MAX_PAGE_SIZE`, a list whose nested cost is `1 + limit` passes static
+    validation for `limit: $n` at 101. Sending `{"n": 150}` now rejects the
+    selected operation at cost 151; sending `{"n": 5}` remains within budget.
+    Explicit `limit: 150` was already rejected by static validation.
+
+    A response-cache hit serves a stored response without executing a resolver;
+    this new bound check runs when the request proceeds to GraphQL execution.
+    It does not change response-cache invalidation or hot-setting behavior.
 
 !!! note "Per-type only (for now)"
 

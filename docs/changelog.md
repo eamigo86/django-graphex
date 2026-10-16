@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Reject a selected GraphQL operation before resolution when its real,
+  GraphQL-coerced request variables or defaults put it over `MAX_QUERY_COST`,
+  including document-validation cache hits. A variable page size that previously
+  passed the static fallback estimate may now return HTTP 400 / `QUERY_TOO_COMPLEX`.
+  Conservative static validation remains: a cheap variable cannot undo an
+  earlier fallback-based rejection. `MAX_PAGE_SIZE` is still optional, though
+  recommended for unbounded lists; the public cost model/API is unchanged.
+
 - Make bounded model-backed LimitOffset and Page slices deterministic within ties by
   appending the primary key ascending after the existing ordering, unless the
   key is already present. This includes nested window and materialized model

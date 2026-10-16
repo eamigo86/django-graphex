@@ -40,6 +40,7 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.generic import View
 from graphql import (
     ExecutionResult,
+    GraphQLError,
     OperationType,
     execute,
     get_operation_ast,
@@ -1260,6 +1261,21 @@ class BaseGraphQLView(View):
         """
         return ""
 
+    def _execution_backend_class(
+        self, schema: Any, document: Any, operation_name: str | None
+    ) -> Any:
+        """Select the execution backend for one validated request.
+
+        Args:
+            schema: The schema used to validate and execute the document.
+            document: The parsed document to execute.
+            operation_name: The selected operation, if named.
+
+        Returns:
+            The configured backend, or None for graphql-core's default.
+        """
+        return self.executor_class
+
     def execute_graphql_request(
         self,
         request: Any,
@@ -1349,8 +1365,11 @@ class BaseGraphQLView(View):
             }
             if _EXECUTE_SUPPORTS_HIDE_SUGGESTIONS:
                 execute_options["hide_suggestions"] = hide_suggestions
-            if self.executor_class is not None:
-                execute_options[_EXECUTION_BACKEND_KEYWORD] = self.executor_class
+            backend_class = self._execution_backend_class(
+                schema, document, operation_name
+            )
+            if backend_class is not None:
+                execute_options[_EXECUTION_BACKEND_KEYWORD] = backend_class
             if _EXECUTION_BACKEND_KEYWORD == "executor_class":
                 execute_options["is_async_iterable"] = _is_async_only_iterable
 
@@ -1534,6 +1553,69 @@ class GraphQLView(BaseGraphQLView):
     """
 
     validation_rules = DEFAULT_VALIDATION_RULES
+
+    def _execution_backend_class(
+        self, schema: Any, document: Any, operation_name: str | None
+    ) -> Any:
+        """Check bound request cost after native coercion but before resolution.
+
+        The validation rule remains the conservative, document-only first
+        check. Wrapping executor construction runs on validation-cache hits and
+        reuses its selected operation and coerced variables, so custom scalar
+        parsing and input factories still run only once.
+
+        Args:
+            schema: The request's validated GraphQL schema.
+            document: The validated document to execute.
+            operation_name: The selected operation, if named.
+
+        Returns:
+            The configured executor when cost limiting is off, otherwise a
+            request-local executor class that rejects an over-budget operation.
+        """
+        backend = super()._execution_backend_class(schema, document, operation_name)
+        if (
+            not graphql_api_settings.MAX_QUERY_COST
+            or _EXECUTION_BACKEND_KEYWORD != "executor_class"
+        ):
+            return backend
+
+        # execute() uses IncrementalExecutor by default on graphql-core 3.3.
+        # Load it only for that runtime so the module remains importable by
+        # older-runtime tooling. Preserve a caller-supplied subclass.
+        from graphql.execution.incremental.incremental_executor import (
+            IncrementalExecutor,
+        )
+
+        parent_class = backend or IncrementalExecutor
+
+        class CostCheckedExecutor(parent_class):
+            @classmethod
+            def build(cls, *args: Any, **kwargs: Any) -> Any:
+                """Return native coercion errors or refuse the selected cost."""
+                executor = super().build(*args, **kwargs)
+                if isinstance(executor, list):
+                    return executor
+
+                report = analyze_cost(
+                    schema,
+                    document,
+                    operation_name,
+                    executor.variable_values.coerced,
+                )
+                if report.max_cost and report.total > report.max_cost:
+                    return [
+                        GraphQLError(
+                            "Query cost {total} exceeds the maximum of {limit}.".format(
+                                total=report.total, limit=report.max_cost
+                            ),
+                            executor.operation,
+                            extensions={"code": "QUERY_TOO_COMPLEX"},
+                        )
+                    ]
+                return executor
+
+        return CostCheckedExecutor
 
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
