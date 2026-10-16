@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
-from pathlib import Path
 from typing import Any
 
-import graphql
 import pytest
 from django.db import IntegrityError, models
 from django.test import RequestFactory, override_settings
@@ -163,21 +160,6 @@ DELETE_QUERY = """mutation DeleteCategory($id: ID!) {
 GENERIC_ERROR = "Deletion blocked by related objects."
 
 
-def _assert_runtime_identity() -> None:
-    """Require supported graphql-core and this repository's package.
-
-    This definition is local to the generated-delete regression schema.
-    """
-    import django_graphex
-
-    assert importlib.metadata.version("graphql-core") == "3.3.0"
-    assert graphql.__file__ is not None
-    assert "/core330-overlay/" in str(Path(graphql.__file__).resolve())
-    assert "/django-graphex/django_graphex/__init__.py" in str(
-        Path(django_graphex.__file__).resolve()
-    )
-
-
 def _post(schema: DjangoGraphQLSchema, query: str, variables: dict[str, Any]) -> Any:
     """Execute a JSON request through the real GraphQL view.
 
@@ -210,7 +192,6 @@ def test_blocked_generated_delete_hides_collector_details(
         schema: One of the two generated-delete frontends.
         child_model: Dependent relation using PROTECT or RESTRICT.
     """
-    _assert_runtime_identity()
     category = Category.objects.create(title="a9-private-category")
     child_model.objects.create(category=category)
 
@@ -242,7 +223,6 @@ def test_blocked_delete_preserves_sibling_rollback(
         child_model: Dependent relation using PROTECT or RESTRICT.
         atomic: Whether to wrap the whole mutation operation atomically.
     """
-    _assert_runtime_identity()
     category = Category.objects.create(title="a9-blocked")
     child_model.objects.create(category=category)
     marker_before = Category.objects.filter(title="a9-sibling-marker").count()
@@ -281,7 +261,6 @@ def test_generated_delete_keeps_success_and_not_found_contract(
     Args:
         schema: One of the two generated-delete frontends.
     """
-    _assert_runtime_identity()
     category = Category.objects.create(title="a9-removable")
     success = json.loads(_post(schema, DELETE_QUERY, {"id": str(category.pk)}).content)
     assert success["data"]["deleteCategory"]["ok"] is True
@@ -306,7 +285,6 @@ def test_unclassified_integrity_error_uses_generic_generated_policy(
         schema: One of the two generated-delete frontends.
         monkeypatch: Scoped replacement for the model's delete method.
     """
-    _assert_runtime_identity()
     category = Category.objects.create(title="a9-unchanged")
 
     monkeypatch.setattr(Category, "delete", _fail_delete)

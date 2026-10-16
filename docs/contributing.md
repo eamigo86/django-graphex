@@ -160,6 +160,11 @@ def iter_ids(limit: int) -> Iterator[int]:
 - Capability-path tests may use strict legacy signatures to verify that a
   newer GraphQL-core engine does not receive keywords unsupported by an older
   API. They do not extend the declared runtime support range.
+- Runtime identity guards for local audits belong in
+  external verification runners, not shipped tests. They may assert a
+  checkout or overlay path for that run; shipped tests must remain usable
+  with any supported GraphQL-core 3.3 installation. Keep behavioral assertions
+  in the tests.
 
 ### Resolver fixture ownership
 

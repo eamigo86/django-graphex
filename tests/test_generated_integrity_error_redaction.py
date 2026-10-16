@@ -1,24 +1,17 @@
-"""Public GraphQL contracts for unmapped generated-mutation integrity failures.
-
-The check remains scoped to this generated-mutation contract.
-"""
+"""Public GraphQL contracts for unmapped generated-mutation integrity failures."""
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import graphql
 import pytest
 from django.db import DatabaseError, IntegrityError, connection, models, transaction
 from django.db.models.signals import post_save
 from django.test import RequestFactory, override_settings
 from graphql import GraphQLString
 
-import django_graphex
 from django_graphex.core import ObjectType, field
 from django_graphex.mutation import DjangoModelMutation
 from django_graphex.registry import Registry
@@ -280,25 +273,6 @@ SCHEMAS = (
 GENERIC_ERROR = "A database constraint prevented this operation."
 
 
-def _assert_runtime_identity() -> None:
-    """Require the checked-out package and supported GraphQL overlay.
-
-    The check remains scoped to this generated-mutation contract.
-    """
-    root = Path(__file__).resolve().parents[1]
-    overlay = Path(
-        "/Users/eamigo/.codex/visualizations/2026/09/02/"
-        "01a062ff-dccb-7123-a1e9-e7de825aafc2/graphex-resume-2026-10-02/"
-        "native330-reconstruction/core330-overlay"
-    )
-    assert graphql.__version__ == "3.3.0"
-    assert importlib.metadata.version("graphql-core") == "3.3.0"
-    assert Path(graphql.__file__).resolve().is_relative_to(overlay.resolve())
-    assert (
-        Path(django_graphex.__file__).resolve() == root / "django_graphex/__init__.py"
-    )
-
-
 def _ensure_tables() -> list[type[models.Model]]:
     """Create only the disposable test tables missing from this connection.
 
@@ -391,7 +365,6 @@ def test_generated_root_check_failure_is_redacted(
         schema: One generated frontend.
         operation: Create or update.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     try:
         row = T10dCheck.objects.create(amount=2) if operation == "update" else None
@@ -427,7 +400,6 @@ def test_nested_check_failure_rolls_back_without_leaking(
         schema: One generated frontend.
         atomic: Whether an earlier sibling also rolls back.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     events: list[str] = []
 
@@ -476,7 +448,6 @@ def test_mapped_unique_error_keeps_structured_payload(
     Args:
         schema: One generated frontend.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     try:
         T10dCheck.objects.create(amount=1, code="held")
@@ -504,7 +475,6 @@ def test_conditional_unique_violation_is_redacted() -> None:
 
     The check remains scoped to this generated-mutation contract.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     try:
         T10dConditional.objects.create(code="held", active=True)
@@ -530,7 +500,6 @@ def test_direct_backend_keeps_unclassified_integrity_exception() -> None:
 
     The check remains scoped to this generated-mutation contract.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     try:
         info = SimpleNamespace(context=SimpleNamespace(META={}, FILES={}))
@@ -554,7 +523,6 @@ def test_generated_delete_integrity_failure_is_redacted(
         schema: One generated frontend.
         monkeypatch: Scoped replacement of model deletion.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     try:
         row = T10dCheck.objects.create(amount=1)
@@ -597,7 +565,6 @@ def test_generated_success_and_nonintegrity_error_use_http_diagnostics(
         schema: One generated frontend.
         monkeypatch: Scoped model-save replacement.
     """
-    _assert_runtime_identity()
     created = _ensure_tables()
     try:
         arg_name = _input_arg(schema, "checkCreate")
@@ -642,7 +609,6 @@ def test_handwritten_mutation_error_is_safe_in_production_http() -> None:
 
     The generated-field adapter does not own this error path.
     """
-    _assert_runtime_identity()
     response = _post(SCHEMAS[0], "mutation {\n    handwrittenFailure\n}")
     payload = json.loads(response.content)
     assert response.status_code == 200
