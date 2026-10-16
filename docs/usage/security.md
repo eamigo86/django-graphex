@@ -57,17 +57,23 @@ DJANGO_GRAPHEX = {
 and `__type` (so tools can't dump your schema), while leaving `__typename`
 untouched.
 
+Install the middleware in the GraphQL execution chain to enforce the setting.
+`ALLOW_INTROSPECTION=False` is the default, but **does not block introspection
+on its own**: the default `MIDDLEWARE` setting is empty. This configuration
+blocks `__schema` and `__type` for non-superusers:
+
 ```python
 DJANGO_GRAPHEX = {
-    "ALLOW_INTROSPECTION": False,            # default: block introspection
+    "MIDDLEWARE": ["django_graphex.security.DisableIntrospectionMiddleware"],
+    "ALLOW_INTROSPECTION": False,            # default; enforced by the middleware above
     "INTROSPECTION_ALLOW_SUPERUSER": True,   # default: active superusers may introspect
 }
 ```
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `ALLOW_INTROSPECTION` | `False` | When `True`, introspection is allowed for everyone. |
-| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | When `True`, an **active** superuser (`is_active` **and** `is_superuser`) may introspect even if `ALLOW_INTROSPECTION` is `False`. |
+| `ALLOW_INTROSPECTION` | `False` | Only enforced when `DisableIntrospectionMiddleware` is installed. When `True`, that middleware permits introspection for everyone. |
+| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | With `DisableIntrospectionMiddleware` installed and `ALLOW_INTROSPECTION=False`, an **active** superuser (`is_active` **and** `is_superuser`) may introspect. |
 
 A blocked introspection query returns an error; a missing `context`/`user`
 (non-HTTP execution) is treated as non-superuser and does not crash. The bypass

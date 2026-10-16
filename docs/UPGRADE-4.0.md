@@ -16,6 +16,14 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+If your deployment relies on disabled schema introspection, explicitly add
+`django_graphex.security.DisableIntrospectionMiddleware` to
+`DJANGO_GRAPHEX["MIDDLEWARE"]`. The default `ALLOW_INTROSPECTION=False` does not
+enforce a block while the default GraphQL middleware chain is empty. See the
+[security configuration](usage/security.md#disable-introspection) for a complete
+example; this clarification does not install middleware automatically or change
+the default setting.
+
 ### Check custom integration code
 
 1. **Execution backends:** the HTTP view accepts `executor_class=` and keeps

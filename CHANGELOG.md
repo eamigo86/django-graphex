@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Clarify that `ALLOW_INTROSPECTION=False` blocks `__schema` and `__type` only
+  when `DisableIntrospectionMiddleware` is installed in GraphQL `MIDDLEWARE`.
+  The default middleware chain is empty, so deployments relying on the setting
+  alone should explicitly install the middleware. This is a documentation
+  correction; the runtime defaults and introspection behavior are unchanged.
+
 - Reject unsupported async resolver, middleware, and executor results on the
   synchronous built-in HTTP views with a controlled HTTP 500 GraphQL JSON
   error. Newly created, unstarted coroutines owned by execution are closed
