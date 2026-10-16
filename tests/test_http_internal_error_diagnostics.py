@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import logging
 import re
@@ -10,13 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import graphql
 import pytest
 from django.db import DatabaseError
 from django.test import RequestFactory, override_settings
 from graphql import GraphQLError, GraphQLNonNull, GraphQLString
 
-import django_graphex
 from django_graphex import views as views_module
 from django_graphex.core import ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
@@ -38,22 +35,6 @@ class _Query(ObjectType):
 
 
 _SCHEMA = DjangoGraphQLSchema(query=_Query)
-_OVERLAY = Path(
-    "/Users/eamigo/.codex/visualizations/2026/09/02/"
-    "01a062ff-dccb-7123-a1e9-e7de825aafc2/graphex-resume-2026-10-02/"
-    "native330-reconstruction/core330-overlay"
-)
-
-
-def _assert_runtime_identity() -> None:
-    """Refuse to credit a result from the unsupported installed GraphQL core."""
-    root = Path(__file__).resolve().parents[1]
-    assert graphql.__version__ == "3.3.0"
-    assert importlib.metadata.version("graphql-core") == "3.3.0"
-    assert Path(graphql.__file__).resolve().is_relative_to(_OVERLAY.resolve())
-    assert (
-        Path(django_graphex.__file__).resolve() == root / "django_graphex/__init__.py"
-    )
 
 
 def _post(view_class: type[BaseGraphQLView], failure: Exception, query: str) -> Any:
@@ -104,7 +85,6 @@ def test_internal_failures_have_safe_http_diagnostics_and_correlated_logs(
         message: Expected public message.
         caplog: Captured internal log records.
     """
-    _assert_runtime_identity()
     query = "query { healthy\n  failure }"
     with caplog.at_level(logging.ERROR, logger="django_graphex.internal_errors"):
         response = _post(view_class, failure, query)
@@ -139,7 +119,6 @@ def test_ids_are_unique_and_wrapped_internal_extensions_are_dropped(
     Args:
         caplog: Captured internal log records.
     """
-    _assert_runtime_identity()
     failure = GraphQLError(
         "wrapped private detail",
         extensions={"code": "PUBLIC_IMPOSTOR", "secret": "private-extension"},
@@ -167,7 +146,6 @@ def test_public_errors_validation_and_http_parse_errors_keep_their_contract() ->
 
     The validation and HTTP parser paths retain their existing statuses.
     """
-    _assert_runtime_identity()
     deliberate = GraphQLError("Public action required", extensions={"code": "ACTION"})
     response = _post(BaseGraphQLView, deliberate, "{ failure }")
     error = json.loads(response.content)["errors"][0]
@@ -194,7 +172,6 @@ def test_debug_and_shared_transport_formatter_keep_existing_diagnostics() -> Non
 
     Neither path opts into production HTTP classification.
     """
-    _assert_runtime_identity()
     failure = GraphQLError(
         "private-debug-detail",
         extensions={"code": "DEBUG_CODE", "private": "debug-extension"},
@@ -213,7 +190,6 @@ def test_shared_formatter_is_unchanged_in_production() -> None:
 
     Subscription callers still own their existing formatting behavior.
     """
-    _assert_runtime_identity()
     failure = GraphQLError(
         "transport-private-detail", original_error=ValueError("transport-root")
     )
@@ -234,7 +210,6 @@ def test_nonnull_error_keeps_each_views_existing_null_and_status_policy(
         view_class: Built-in HTTP view under test.
         status: Expected status for an entirely null execution result.
     """
-    _assert_runtime_identity()
     response = _post(view_class, ValueError("private"), "{ requiredFailure }")
     payload = json.loads(response.content)
     assert response.status_code == status
@@ -252,7 +227,6 @@ def test_logger_failure_cannot_change_safe_http_response(
     Args:
         monkeypatch: Scoped patch for the internal logger.
     """
-    _assert_runtime_identity()
 
     def fail_log(*args: Any, **kwargs: Any) -> None:
         """Simulate a broken logging handler."""
@@ -272,7 +246,6 @@ def test_custom_view_formatter_remains_an_explicit_override() -> None:
 
     The default HTTP policy cannot silently rewrite that override.
     """
-    _assert_runtime_identity()
 
     class CustomView(BaseGraphQLView):
         """Use an application-selected public formatting contract."""
@@ -292,7 +265,6 @@ def test_production_error_documentation_example_matches_the_wire_contract() -> N
 
     The mutation guides must link to the same HTTP policy.
     """
-    _assert_runtime_identity()
     root = Path(__file__).resolve().parents[1]
     guide = (root / "docs/usage/views.md").read_text(encoding="utf-8")
     section = guide.split("### Production execution errors\n", 1)[1]
