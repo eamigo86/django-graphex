@@ -20,6 +20,8 @@ from graphql import (
     GraphQLObjectType,
     GraphQLSchema,
     GraphQLString,
+    execute,
+    parse,
 )
 from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
@@ -69,6 +71,115 @@ def _owned_coroutines(before: dict[int, Any]) -> list[Any]:
             or "/graphql/execution/" in value.cr_code.co_filename
         )
     ]
+
+
+@pytest.mark.parametrize("form", ["list", "standard_manager"])
+@pytest.mark.parametrize("resolve_value", [False, 0, ""])
+def test_falsey_object_middleware_is_ignored_like_native(
+    form: str, resolve_value: Any
+) -> None:
+    """Keep native ignored-entry behavior for falsey resolve attributes.
+
+    Args:
+        form: Native middleware container used by the view.
+        resolve_value: Falsey object attribute that native execution ignores.
+    """
+
+    class DisabledMiddleware:
+        """Expose a falsey resolver attribute without a callback."""
+
+        resolve = resolve_value
+
+    entries: list[Any] = [DisabledMiddleware()]
+    middleware: Any = entries if form == "list" else MiddlewareManager(*entries)
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "IgnoredMiddlewareQuery",
+            {"value": GraphQLField(GraphQLString, resolve=lambda *_: "healthy")},
+        )
+    )
+    native = execute(schema, parse("{ value }"), middleware=middleware)
+    assert native.data == {"value": "healthy"} and not native.errors
+
+    global urlpatterns
+    urlpatterns = [
+        path(
+            "graphql/",
+            GraphQLView.as_view(
+                schema=SimpleNamespace(graphql_schema=schema), middleware=middleware
+            ),
+        )
+    ]
+    try:
+        with override_settings(
+            ROOT_URLCONF=__name__,
+            DEBUG=False,
+            DEBUG_PROPAGATE_EXCEPTIONS=False,
+            DJANGO_GRAPHEX={"CACHE_ACTIVE": False},
+        ):
+            clear_url_caches()
+            response = _post("/graphql/", "{ value }")
+            assert response.status_code == 200
+            assert response.json() == {"data": {"value": "healthy"}}
+    finally:
+        clear_url_caches()
+
+
+@pytest.mark.parametrize("form", ["list", "standard_manager"])
+def test_callable_object_middleware_remains_active(form: str) -> None:
+    """Keep a valid object callback active while ignoring falsey entries.
+
+    Args:
+        form: Native middleware container used by the view.
+    """
+
+    class ActiveMiddleware:
+        """Append a marker to a synchronous resolver value."""
+
+        def resolve(self, next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
+            """Delegate to the next synchronous resolver.
+
+            Args:
+                next_: Next resolver or middleware callable.
+                root: GraphQL root value.
+                info: GraphQL field information.
+                **kwargs: GraphQL field arguments.
+
+            Returns:
+                The resolver value with an active-middleware marker.
+            """
+            return next_(root, info, **kwargs) + "-active"
+
+    entries: list[Any] = [ActiveMiddleware()]
+    middleware: Any = entries if form == "list" else MiddlewareManager(*entries)
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "ActiveMiddlewareQuery",
+            {"value": GraphQLField(GraphQLString, resolve=lambda *_: "healthy")},
+        )
+    )
+    global urlpatterns
+    urlpatterns = [
+        path(
+            "graphql/",
+            GraphQLView.as_view(
+                schema=SimpleNamespace(graphql_schema=schema), middleware=middleware
+            ),
+        )
+    ]
+    try:
+        with override_settings(
+            ROOT_URLCONF=__name__,
+            DEBUG=False,
+            DEBUG_PROPAGATE_EXCEPTIONS=False,
+            DJANGO_GRAPHEX={"CACHE_ACTIVE": False},
+        ):
+            clear_url_caches()
+            response = _post("/graphql/", "{ value }")
+            assert response.status_code == 200
+            assert response.json() == {"data": {"value": "healthy-active"}}
+    finally:
+        clear_url_caches()
 
 
 @pytest.mark.parametrize(

@@ -341,7 +341,7 @@ def _execute_synchronously(schema: Any, document: Any, options: dict[str, Any]) 
         callback = (
             entry if inspect.isfunction(entry) else getattr(entry, "resolve", None)
         )
-        if callback is None:
+        if not callback:
             return entry
 
         def observed(next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
