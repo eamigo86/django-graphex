@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve `null` and empty-list schema values for selected `__schema` and
+  `__type` queries whose root fields are reached through inline or named
+  fragments when `CLEAN_RESPONSE=True`. Previously those fragmented
+  introspection responses could be cleaned into incomplete data. Mixed ordinary
+  roots still use normal cleaning; `CLEAN_RESPONSE=False`, defaults, and
+  introspection authorization are unchanged.
+
 - Keep the two public HTTP view constructor checks active under optimized
   Python (`-O`): a schema without `graphql_schema` or simultaneous GraphiQL
   and batch modes still raise their existing `AssertionError` messages when

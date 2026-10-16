@@ -43,6 +43,13 @@ enforce a block while the default GraphQL middleware chain is empty. See the
 example; this clarification does not install middleware automatically or change
 the default setting.
 
+When `CLEAN_RESPONSE=True`, selected introspection operations expressed with
+root inline or named fragments now preserve schema `null` and empty-list
+values, just like direct `__schema` and `__type` roots. Clients that previously
+saw those values omitted should accept the full introspection response. Mixed
+ordinary root fields are still cleaned, and the default
+`CLEAN_RESPONSE=False` is unchanged. See [response cleaning](usage/security.md#ast-based-introspection-detection-clean_response).
+
 ### Check custom integration code
 
 1. **Execution backends:** the HTTP view accepts `executor_class=` and keeps

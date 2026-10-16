@@ -2509,21 +2509,26 @@ class GraphQLView(BaseGraphQLView):
 
         Detects introspection by inspecting the AST rather than matching the raw
         query string. A document is treated as introspection when ALL of its
-        top-level selections are "__schema" or "__type" fields (the two standard
-        introspection entry-points). This correctly handles any formatting, named
-        or anonymous operations, and mixed inline fragments.
+        reachable root fields are "__schema" or "__type" (the two standard
+        introspection entry-points). Root inline and named fragments are expanded
+        iteratively; child selections inside introspection fields are not roots.
 
         Args:
             document: A parsed graphql-core "DocumentNode".
             operation_name: The operation selected by the request, if named.
 
         Returns:
-            True when every top-level selection is a meta-field ("__schema" /
-            "__type"), False otherwise.
+            True when at least one root field exists and every reachable root
+            field is "__schema" or "__type"; False for mixed or unresolved roots.
         """
         if document is None:
             return False
-        from graphql.language.ast import FieldNode
+        from graphql.language.ast import (
+            FieldNode,
+            FragmentDefinitionNode,
+            FragmentSpreadNode,
+            InlineFragmentNode,
+        )
 
         operation = get_operation_ast(document, operation_name)
         selections = getattr(
@@ -2531,11 +2536,54 @@ class GraphQLView(BaseGraphQLView):
         )
         if not selections:
             return False
-        return all(
-            isinstance(selection, FieldNode)
-            and selection.name.value in ("__schema", "__type")
-            for selection in selections
-        )
+        fragments: dict[str, FragmentDefinitionNode] = {}
+        duplicate_names: set[str] = set()
+        for definition in document.definitions:
+            if isinstance(definition, FragmentDefinitionNode):
+                name = definition.name.value
+                if name in fragments:
+                    duplicate_names.add(name)
+                else:
+                    fragments[name] = definition
+
+        active: set[str] = set()
+        expanded: set[str] = set()
+        work: list[tuple[Any, bool]] = [
+            (selection, False) for selection in reversed(selections)
+        ]
+        found_field = False
+        while work:
+            selection, leaving = work.pop()
+            if leaving:
+                active.remove(selection)
+                expanded.add(selection)
+            elif isinstance(selection, FieldNode):
+                if selection.name.value not in ("__schema", "__type"):
+                    return False
+                found_field = True
+            elif isinstance(selection, InlineFragmentNode):
+                nested = getattr(selection.selection_set, "selections", ())
+                if not nested:
+                    return False
+                work.extend((child, False) for child in reversed(nested))
+            elif isinstance(selection, FragmentSpreadNode):
+                name = selection.name.value
+                if name in active or name in duplicate_names:
+                    return False
+                if name in expanded:
+                    continue
+                fragment = fragments.get(name)
+                if fragment is None:
+                    return False
+                nested = getattr(fragment.selection_set, "selections", ())
+                if not nested:
+                    return False
+                active.add(name)
+                work.append((name, True))
+                work.extend((child, False) for child in reversed(nested))
+            else:
+                return False
+        return found_field
 
     def get_response(
         self, request: HttpRequest, data: Any, show_graphiql: bool = False
@@ -2596,8 +2644,8 @@ class GraphQLView(BaseGraphQLView):
                 response["id"] = id
                 response["status"] = status_code
 
-            # AST-based introspection detection: bypass clean_dict for queries
-            # whose top-level selections are exclusively __schema / __type.
+            # AST-based introspection detection: bypass clean_dict when every
+            # selected root field, including reachable fragments, is introspection.
             # This is whitespace- and formatter-independent, unlike the previous
             # startswith("\n  query IntrospectionQuery") string match.
             if (

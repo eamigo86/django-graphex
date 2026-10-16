@@ -495,13 +495,31 @@ becomes:
 Introspection responses (`__schema` / `__type` queries) are **exempt**;
 cleaning them would corrupt fields that legitimately return `null` or `[]`.
 
-The check is AST-based: a response is treated as introspection when **all**
-top-level selections are `__schema` or `__type` fields, regardless of the
-query's textual format. This correctly handles compact inline queries
-(`{ __schema { types { name } } }`), differently-indented or re-formatted
-clients, and `__type` queries.
-For documents containing multiple operations, the exemption follows the
-request's `operationName`; the order of operations in the document has no effect.
+The check is AST-based: a response is treated as introspection when the
+**selected operation** has at least one root field and all its reachable root
+fields are `__schema` or `__type`. Root inline fragments and named fragment
+spreads count too; aliases do not change the underlying field name:
+
+```graphql
+query TypeDetails {
+  ...TypeRoot
+}
+
+fragment TypeRoot on Query {
+  selectedType: __type(name: "Query") {
+    description
+    interfaces { name }
+  }
+}
+```
+
+With `CLEAN_RESPONSE=True`, this response keeps `description: null` and
+`interfaces: []` rather than removing them. A normal root field mixed into a
+direct, inline, or named fragment makes the response eligible for ordinary
+cleaning; `__typename` is not an introspection entry point. Missing or cyclic
+root spreads do not gain an exemption. For multi-operation documents,
+`operationName` chooses the operation; unrelated operations and fragments do
+not change its cleaning policy. `CLEAN_RESPONSE=False` remains unchanged.
 
 ## Query depth & cost limits
 
