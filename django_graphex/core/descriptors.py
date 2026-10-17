@@ -128,12 +128,24 @@ def _source_resolver(source: str, root: Any, info: Any, **args: Any) -> Any:
             except AttributeError:
                 return None
             if isinstance(descriptor, property) and descriptor.fget is not None:
-                getter_code = getattr(descriptor.fget, "__code__", None)
-                traceback = exc.__traceback__
-                while traceback is not None:
-                    if traceback.tb_frame.f_code is getter_code:
-                        raise
-                    traceback = traceback.tb_next
+                getter = descriptor.fget
+                seen_getters: set[int] = set()
+                # Inspect wrapper metadata only; never invoke the getter again.
+                # Stop at the end of the chain or on a metadata cycle.
+                while getter is not None and id(getter) not in seen_getters:
+                    seen_getters.add(id(getter))
+                    getter_code = (
+                        getter.__code__ if inspect.isfunction(getter) else None
+                    )
+                    traceback = exc.__traceback__
+                    while traceback is not None:
+                        if traceback.tb_frame.f_code is getter_code:
+                            raise
+                        traceback = traceback.tb_next
+                    if isinstance(getter, partial):
+                        getter = getter.func
+                    else:
+                        getter = inspect.getattr_static(getter, "__wrapped__", None)
             return None
     if inspect.isfunction(resolved) or inspect.ismethod(resolved):
         return resolved()

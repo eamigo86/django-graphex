@@ -117,26 +117,39 @@ position:
 
 For output fields, `source="name"` follows normal Python lookup. A missing
 attribute or mapping key and a property returning `None` remain GraphQL null
-when the field is nullable. If a Python `@property` getter itself raises
-`AttributeError`, GraphQL now reports a resolution error with that original
-exception instead of silently treating it as a missing attribute. A missing
-Django reverse one-to-one relation still resolves to null, including when read
-through a property. Required fields retain normal GraphQL null propagation;
-production HTTP responses use the existing safe error message and error ID.
+when the field is nullable. When a Python `@property` getter's own
+`AttributeError` escapes normal Python lookup, GraphQL reports a resolution
+error retaining that exception instead of silently treating it as a missing
+attribute. This also applies when the Python getter is wrapped with
+`functools.partial` or `functools.lru_cache`. Normal `__getattr__` fallback
+remains in control: a returned fallback value is used, while a final dynamic
+attribute absence remains nullable. A missing Django reverse one-to-one
+relation also resolves to null, including when read through a property.
+Required fields retain normal GraphQL null propagation; production HTTP
+responses use the existing safe error message and error ID.
 
 ```python
 from django_graphex.core import Field, ObjectType
 from graphql import GraphQLString
 
 class Query(ObjectType):
+    """Expose a property through an explicit source."""
+
     display_name = Field(GraphQLString, source="display_name")
 
 class Root:
+    """Represent an object with a failing display-name property."""
+
     @property
-    def display_name(self):
+    def display_name(self) -> str:
+        """Read the display name from an unavailable service.
+
+        Raises:
+            AttributeError: The profile service failed.
+        """
         raise AttributeError("profile service failed")
 
-# Resolving display_name records a GraphQL field error; it is not a silent null.
+# This escaping getter error becomes a GraphQL field error, not a silent null.
 ```
 
 | Parameter | Position | Meaning |

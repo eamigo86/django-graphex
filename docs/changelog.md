@@ -14,11 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
-- Report an `AttributeError` raised inside an explicit `source=` Python
-  property as a GraphQL field error rather than a silent null, retaining the
-  original exception. Missing attributes, legitimate null values, and absent
-  Django reverse one-to-one relations remain nullable; required fields and
-  production HTTP error formatting retain their existing behavior.
+- Report an explicit `source=` Python property's original `AttributeError`
+  as a GraphQL field error when it escapes normal Python lookup, including
+  getters wrapped with `functools.partial` or `functools.lru_cache`. Successful
+  dynamic fallback, final dynamic absence, missing attributes, legitimate
+  null values, and absent Django reverse one-to-one relations keep their
+  existing behavior; required fields and production HTTP formatting are
+  unchanged.
 
 - Stop schema construction when Django model field enumeration fails instead
   of publishing a concrete-fields-only type that may omit reverse relations.

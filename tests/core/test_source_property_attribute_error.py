@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from functools import lru_cache, partial
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from django.test import RequestFactory, override_settings
@@ -16,6 +17,56 @@ from django_graphex.core import Field, ObjectType
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import BaseGraphQLView
 from tests.models import Author
+
+
+@pytest.mark.parametrize("getter_shape", ["partial", "lru_cache"])
+def test_wrapped_python_property_source_preserves_original_error(
+    getter_shape: str,
+) -> None:
+    """Report a failing Python getter wrapped inside a real property.
+
+    Args:
+        getter_shape: Standard-library wrapper applied to the Python getter.
+    """
+    failure = AttributeError("wrapped Python getter failed")
+    calls: list[object] = []
+
+    def fail(root: object) -> NoReturn:
+        """Record one call and raise the original getter failure.
+
+        Args:
+            root: Object supplied by the property descriptor.
+
+        Raises:
+            AttributeError: The captured getter failure.
+        """
+        calls.append(root)
+        raise failure
+
+    getter = partial(fail) if getter_shape == "partial" else lru_cache(maxsize=1)(fail)
+
+    class Root:
+        """Expose an actual Python property and a healthy sibling."""
+
+        broken = property(getter)
+        healthy = "visible"
+
+    class Query(ObjectType):
+        """Map the wrapped getter through an aliased explicit source."""
+
+        output = Field(GraphQLString, source="broken")
+        healthy = Field(GraphQLString, source="healthy")
+
+    assert isinstance(Root.__dict__["broken"], property)
+    assert getattr(Root.__dict__["broken"].fget, "__code__", None) is None
+    schema = DjangoGraphQLSchema(query=Query).graphql_schema
+    root = Root()
+    result = graphql_sync(schema, "{ alias: output healthy }", root_value=root)
+    assert calls == [root]
+    assert result.data == {"alias": None, "healthy": "visible"}
+    assert result.errors is not None and len(result.errors) == 1
+    assert result.errors[0].path == ["alias"]
+    assert result.errors[0].original_error is failure
 
 
 def test_source_property_attribute_error_surfaces_graphql_resolution_error() -> None:
