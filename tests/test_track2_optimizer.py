@@ -20,9 +20,10 @@ from __future__ import annotations
 from unittest import mock
 
 import pytest
+from django.contrib.contenttypes.models import ContentType
 from django.db import connection
-from django.test.utils import CaptureQueriesContext
-from graphql import graphql_sync
+from django.test.utils import CaptureQueriesContext, override_settings
+from graphql import graphql_sync, parse
 
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField, DjangoObjectField
@@ -31,11 +32,13 @@ from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType, DjangoUnionType
 
+from ._schema_isolation import isolated_pair
 from .models import (
     Track2Account,
     Track2AccountProxy,
     Track2GfkComment,
     Track2Invoice,
+    Track2Order,
 )
 
 # Per-content-type GenericPrefetch narrowing requires Django 5.0+.
@@ -426,6 +429,184 @@ def _seed_gfk_rows() -> None:
     Track2GfkComment.objects.create(body="c2", target_ct=inv_ct, target_id=i1.pk)
     Track2GfkComment.objects.create(body="c3", target_ct=acct_ct, target_id=a2.pk)
     Track2GfkComment.objects.create(body="c4", target_ct=inv_ct, target_id=i2.pk)
+
+
+@requires_generic_prefetch
+@pytest.mark.django_db
+def test_gfk_union_wrapper_inline_and_named_fragments_batch_targets() -> None:
+    """Batch union-wrapper member selections without per-row customer reads."""
+    reg = Registry()
+
+    class AccountType(DjangoObjectType):
+        class Meta:
+            model = Track2Account
+            registry = reg
+
+    class InvoiceType(DjangoObjectType):
+        class Meta:
+            model = Track2Invoice
+            registry = reg
+
+    class OrderType(DjangoObjectType):
+        class Meta:
+            model = Track2Order
+            registry = reg
+
+    class CommentTargetUnion(DjangoUnionType):
+        class Meta:
+            types = (AccountType, InvoiceType, OrderType)
+            registry = reg
+
+    class CommentType(DjangoObjectType):
+        class Meta:
+            model = Track2GfkComment
+            registry = reg
+            unions = {"target": CommentTargetUnion}
+
+    class CommentListType(DjangoListObjectType):
+        class Meta:
+            model = Track2GfkComment
+            registry = reg
+            pagination = LimitOffsetGraphqlPagination(
+                default_limit=None, max_limit=None
+            )
+
+    class Query(ObjectType):
+        all_comments = DjangoListObjectField(CommentListType)
+
+    schema = DjangoGraphQLSchema(
+        query=Query,
+        types=[AccountType, InvoiceType, OrderType, CommentType],
+        registries=isolated_pair(reg),
+    ).graphql_schema
+    account = Track2Account.objects.create(balance=9, label="customer")
+    order_ct = ContentType.objects.get_for_model(Track2Order)
+    for index in range(3):
+        order = Track2Order.objects.create(
+            customer=account, total=index + 1, ref=f"order-{index}"
+        )
+        Track2GfkComment.objects.create(
+            body=f"comment-{index}", target_ct=order_ct, target_id=order.pk
+        )
+
+    member_selections = (
+        "... on AccountType { balance } "
+        "... on InvoiceType { amount } "
+        "... on OrderType { total customer { label } }"
+    )
+    direct = (
+        "{ allComments { results { body target { __typename "
+        + member_selections
+        + " } } totalCount } }"
+    )
+    inline = (
+        "{ allComments { results { body target { __typename "
+        "... on CommentTargetUnion { " + member_selections + " } } } totalCount } }"
+    )
+    named = (
+        "query { allComments { results { body target { __typename ...AllMembers } } totalCount } } "
+        "fragment AllMembers on CommentTargetUnion { " + member_selections + " }"
+    )
+    outcomes = {}
+    with override_settings(DJANGO_GRAPHEX={"OPTIMIZE_ONLY_FIELDS": True}):
+        for label, query in (("direct", direct), ("inline", inline), ("named", named)):
+            # Make ContentType's cache state identical before each measured request.
+            for model in (Track2Account, Track2Invoice, Track2Order):
+                ContentType.objects.get_for_model(model)
+            with CaptureQueriesContext(connection) as captured:
+                result = graphql_sync(schema, query)
+            assert result.errors is None, (label, result.errors)
+            sql = [entry["sql"].lower() for entry in captured.captured_queries]
+            outcomes[label] = (result.data["allComments"], sql)
+
+    expected, _ = outcomes["direct"]
+    assert expected["totalCount"] == 3
+    assert [row["target"]["customer"]["label"] for row in expected["results"]] == [
+        "customer"
+    ] * 3
+    for data, sql in outcomes.values():
+        assert data == expected
+        assert len(sql) == 2, sql
+        order_selects = [
+            statement for statement in sql if 'from "tests_track2order"' in statement
+        ]
+        assert len(order_selects) == 1, sql
+        assert 'join "tests_track2account"' in order_selects[0]
+        assert "ref" not in order_selects[0]
+        assert not [
+            statement
+            for statement in sql
+            if 'from "tests_track2account"' in statement
+            and "tests_track2order" not in statement
+        ], sql
+
+
+@requires_generic_prefetch
+def test_gfk_union_wrapper_bucket_walk_bounds_cycles_and_excludes_foreign_types() -> (
+    None
+):
+    """Visit union wrapper spreads once without routing a foreign model."""
+    from graphql.language.ast import (
+        InlineFragmentNode,
+        NamedTypeNode,
+        NameNode,
+        SelectionSetNode,
+    )
+
+    from django_graphex.utils import _collect_gfk_union_buckets
+
+    schema, _ = _build_gfk_union_schema()
+    graphql_schema = schema.graphql_schema
+    document = parse(
+        """
+        query {
+          allComments {
+            results {
+              target { ...Members ...Foreign }
+            }
+          }
+        }
+        fragment Members on CommentTargetUnion {
+          ...Members
+          ... on AccountType { balance }
+          ... on InvoiceType { amount }
+        }
+        fragment Foreign on GfkCommentType { body }
+        """
+    )
+    operation, *definitions = document.definitions
+    fragments = {definition.name.value: definition for definition in definitions}
+    root = operation.selection_set.selections[0]
+    results = root.selection_set.selections[0]
+    target = results.selection_set.selections[0]
+    plan = _collect_gfk_union_buckets(
+        Track2GfkComment._meta.get_field("target"),
+        "target",
+        "target",
+        target.selection_set,
+        fragments,
+        graphql_schema.get_type("GfkCommentType"),
+        graphql_schema,
+    )
+    assert plan is not None
+    assert set(plan.generic_buckets) == {Track2Account, Track2Invoice}
+
+    # A malformed internal wrapper has no selections; it must degrade rather
+    # than claim a member queryset. Public GraphQL validation rejects it.
+    empty_wrapper = InlineFragmentNode(
+        type_condition=NamedTypeNode(name=NameNode(value="CommentTargetUnion")),
+        selection_set=None,
+    )
+    malformed = _collect_gfk_union_buckets(
+        Track2GfkComment._meta.get_field("target"),
+        "target",
+        "target",
+        SelectionSetNode(selections=(empty_wrapper,)),
+        {},
+        graphql_schema.get_type("GfkCommentType"),
+        graphql_schema,
+    )
+    assert malformed is None
 
 
 @requires_generic_prefetch

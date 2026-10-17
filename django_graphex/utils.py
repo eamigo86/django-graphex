@@ -737,10 +737,11 @@ def _inline_fragment_applies(
     membership (via _meta.interfaces).  Union
     membership is NOT detected here — a Union member type carries no back-pointer
     to its unions (only the Union exposes _meta.types), so walking a concrete
-    member and meeting ... on <Union> will SKIP, not descend.  Django
-    multi-table-inheritance parent/child names are likewise not recognised.  All
-    of this is inert today (no polymorphic output types are exposed) and never
-    crashes; widening to unions/abstract parents is deferred to Track-2.
+    member and meeting ... on <Union> will SKIP, not descend. The dedicated
+    GFK-union bucket collector handles valid union wrappers separately; this
+    generic predicate does not infer union membership. Django multi-table-
+    inheritance parent/child names are likewise not recognised, and no
+    automatic GraphQL subtyping is inferred from Django inheritance.
 
     Reliability rule (critical): type_condition.name.value is a GraphQL TYPE
     name (e.g. AccountType), which normally does NOT equal the Django model
@@ -1952,16 +1953,19 @@ def _collect_gfk_union_buckets(
     # GenericPrefetch (and per-CT narrowing) requires Django 5.0+.
     # Floor is >=5.2, so this path is always reachable.
     buckets: dict[type[Model], PrefetchPlan] = {}
-    for node in sub_selection.selections:
+    # Visit each named fragment at most once, including cycles in a malformed
+    # internal AST. A public GraphQL request is validated before reaching here.
+    visited_names: set[str] = set()
+    pending = list(reversed(sub_selection.selections))
+    while pending:
+        node = pending.pop()
         frag = node
         if isinstance(frag, FragmentSpreadNode):
-            # A NAMED fragment on a union member carries the same
-            # ``type_condition`` and selection set as the equivalent inline
-            # fragment, so it must feed the SAME bucket.  Skipping it built the
-            # member queryset from the inline fragment's columns alone, and a
-            # selection MIXING both forms then deferred the named fragment's
-            # columns into one extra query per row.
-            frag = (fragments or {}).get(frag.name.value)
+            fragment_name = frag.name.value
+            if fragment_name in visited_names:
+                continue
+            visited_names.add(fragment_name)
+            frag = (fragments or {}).get(fragment_name)
             if frag is None:
                 continue
         elif not isinstance(frag, InlineFragmentNode):
@@ -1974,12 +1978,25 @@ def _collect_gfk_union_buckets(
         # ALWAYS True here, so this skip is structurally unreachable at a union.
         if not _inline_fragment_applies(frag):
             continue  # pragma: no cover
+        condition = getattr(getattr(frag, "type_condition", None), "name", None)
+        condition_name = getattr(condition, "value", None)
+        if condition_name is None or condition_name == sub_gql.name:
+            # A bare fragment or a fragment on the union itself only groups
+            # member selections. It has no model, so inspect its contents
+            # rather than trying to create a queryset for the wrapper.
+            selection_set = getattr(frag, "selection_set", None)
+            if selection_set is not None:
+                pending.extend(reversed(selection_set.selections))
+            continue
         target = _resolve_fragment_target(frag, sub_gql, schema)
         if target is None:
             # Unresolvable / interface / foreign type -> SKIP this bucket.  It
             # stays full-load; never mis-attribute the parent's columns.
             continue
         member_model, member_gql, member_graphene = target
+        if member_gql not in sub_gql.types:
+            # Never attribute a foreign concrete type's fields to this union.
+            continue
         member_plan = _compute_child_only(
             member_model,
             gfk_field,

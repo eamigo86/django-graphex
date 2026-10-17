@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Batch typed GenericForeignKey targets selected through valid inline or named
+  fragments on the enclosing union. Member-specific column projection and
+  nested relation joins now match direct member fragments, avoiding per-row
+  queries without changing the schema or public API.
+
 - Fix order-dependent registry tests by restoring the cached default schema
   pair after temporary test scopes, including nested and exceptional exits.
   This changes only test isolation; library behavior and public APIs are

@@ -1442,6 +1442,10 @@ building **one narrowed queryset per content type** — each `.only()`-restricte
 to exactly the columns that member's inline fragment selected (e.g. the
 `Account` queryset fetches `balance`, the `Invoice` queryset fetches `amount`).
 This batches all parents into one query per content type (no N+1).
+Direct member fragments and valid inline or named fragments on the enclosing
+union receive the same per-member narrowing. The union wrapper itself is not
+treated as a Django model; see the
+[union-wrapper query example](query-optimization.md#typed-genericforeignkey-unions-per-content-type-narrowing).
 
 - **Django < 5.0**: the optimizer **degrades** gracefully to a single bare,
   full-load `Prefetch` — it never imports `GenericPrefetch`, never narrows

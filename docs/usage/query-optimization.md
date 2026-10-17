@@ -400,6 +400,34 @@ that declares `fragment Money on AccountType { balance }` and spreads it under
 { balance }` would, and a selection that *mixes* both forms merges them into a
 single per-member queryset instead of deferring the spread's columns.
 
+You may also group member selections under a valid fragment on the union
+itself. Both inline and named union wrappers retain the same per-member
+batching and nested relation joins as direct member fragments:
+
+```graphql
+query {
+  allComments {
+    results {
+      target {
+        ... on CommentTargetUnion {
+          ... on OrderType { total customer { label } }
+        }
+        ...AllAccountTargets
+      }
+    }
+  }
+}
+
+fragment AllAccountTargets on CommentTargetUnion {
+  ... on AccountType { balance }
+}
+```
+
+The wrapper has no Django model of its own: the optimizer descends into its
+valid member selections, then builds the same per-content-type querysets it
+would build without the wrapper. This does not infer GraphQL type relationships
+from Django multi-table inheritance or make invalid fragments valid.
+
 !!! note "Inline-fragment type-condition guard"
     This routing relies on a correctness guard: the optimizer never descends
     into an inline fragment whose `type_condition` names a *different* concrete
