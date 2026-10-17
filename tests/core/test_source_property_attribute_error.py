@@ -246,6 +246,61 @@ def test_custom_attribute_lookup_and_nested_required_propagation() -> None:
     assert failed.errors[0].original_error is failure
 
 
+def test_unrelated_descriptor_and_dynamic_absence_keep_legacy_null() -> None:
+    """Do not apply the property policy to other descriptors or absent fallback."""
+
+    class Descriptor:
+        """Represent a non-property descriptor whose lookup fails."""
+
+        def __get__(self, instance: Any, owner: type[Any]) -> str:
+            """Raise an attribute absence unrelated to a Python property.
+
+            Args:
+                instance: Object being resolved.
+                owner: Class containing this descriptor.
+
+            Raises:
+                AttributeError: The descriptor does not supply a value.
+            """
+            raise AttributeError("other descriptor is absent")
+
+    class Root:
+        """Expose distinct non-property and dynamic absence paths."""
+
+        other = Descriptor()
+
+        @property
+        def deferred(self) -> str:
+            """Defer to dynamic lookup rather than surface a getter failure.
+
+            Raises:
+                AttributeError: Request the normal dynamic fallback.
+            """
+            raise AttributeError("try dynamic lookup")
+
+        def __getattr__(self, name: str) -> str:
+            """Leave the deferred dynamic attribute absent.
+
+            Args:
+                name: Attribute requested by Python lookup.
+
+            Raises:
+                AttributeError: The dynamic attribute is absent.
+            """
+            raise AttributeError(name)
+
+    class Query(ObjectType):
+        """Read both absence paths through explicit source declarations."""
+
+        other = Field(GraphQLString, source="other")
+        deferred = Field(GraphQLString, source="deferred")
+
+    schema = DjangoGraphQLSchema(query=Query).graphql_schema
+    result = graphql_sync(schema, "{ other deferred }", root_value=Root())
+    assert result.data == {"other": None, "deferred": None}
+    assert result.errors is None
+
+
 def test_explicit_resolver_precedes_source_and_method_body_error_is_unchanged() -> None:
     """Keep resolver precedence and non-property method errors unchanged."""
     method_failure = AttributeError("method failed")
