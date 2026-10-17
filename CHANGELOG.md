@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Report an `AttributeError` raised inside an explicit `source=` Python
+  property as a GraphQL field error rather than a silent null, retaining the
+  original exception. Missing attributes, legitimate null values, and absent
+  Django reverse one-to-one relations remain nullable; required fields and
+  production HTTP error formatting retain their existing behavior.
+
 - Stop schema construction when Django model field enumeration fails instead
   of publishing a concrete-fields-only type that may omit reverse relations.
   The configuration error names the model and retains the original exception

@@ -115,6 +115,30 @@ class Query(ObjectType):
 `Field` works in both positions, and the parameters that make sense differ by
 position:
 
+For output fields, `source="name"` follows normal Python lookup. A missing
+attribute or mapping key and a property returning `None` remain GraphQL null
+when the field is nullable. If a Python `@property` getter itself raises
+`AttributeError`, GraphQL now reports a resolution error with that original
+exception instead of silently treating it as a missing attribute. A missing
+Django reverse one-to-one relation still resolves to null, including when read
+through a property. Required fields retain normal GraphQL null propagation;
+production HTTP responses use the existing safe error message and error ID.
+
+```python
+from django_graphex.core import Field, ObjectType
+from graphql import GraphQLString
+
+class Query(ObjectType):
+    display_name = Field(GraphQLString, source="display_name")
+
+class Root:
+    @property
+    def display_name(self):
+        raise AttributeError("profile service failed")
+
+# Resolving display_name records a GraphQL field error; it is not a silent null.
+```
+
 | Parameter | Position | Meaning |
 |-----------|----------|---------|
 | `type` | both | The field's type — a graphql-core type, a `DjangoObjectType` reference (output), or an `InputType` reference (input). |

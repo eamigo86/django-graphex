@@ -50,6 +50,8 @@ import inspect
 from functools import partial, total_ordering
 from typing import Any, Callable, Optional
 
+from django.core.exceptions import ObjectDoesNotExist
+
 # Sentinel distinguishing an EXPLICIT ``default=None`` (a GraphQL null default)
 # from "no default supplied" on an ``InputField``. ``None`` is a legitimate
 # GraphQL default value, so it cannot double as the "unset" marker.
@@ -109,14 +111,31 @@ def _source_resolver(source: str, root: Any, info: Any, **args: Any) -> Any:
 
     Returns:
         The source value (called when it is a function / method).
-    """
-    import inspect as _inspect
 
+    Raises:
+        AttributeError: A Python property getter failed while resolving source.
+    """
     if isinstance(root, dict):
         resolved = root.get(source, None)
     else:
-        resolved = getattr(root, source, None)
-    if _inspect.isfunction(resolved) or _inspect.ismethod(resolved):
+        try:
+            resolved = getattr(root, source)
+        except AttributeError as exc:
+            if isinstance(exc, ObjectDoesNotExist):
+                return None
+            try:
+                descriptor = inspect.getattr_static(root, source)
+            except AttributeError:
+                return None
+            if isinstance(descriptor, property) and descriptor.fget is not None:
+                getter_code = getattr(descriptor.fget, "__code__", None)
+                traceback = exc.__traceback__
+                while traceback is not None:
+                    if traceback.tb_frame.f_code is getter_code:
+                        raise
+                    traceback = traceback.tb_next
+            return None
+    if inspect.isfunction(resolved) or inspect.ismethod(resolved):
         return resolved()
     return resolved
 
