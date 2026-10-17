@@ -702,8 +702,8 @@ def recompile_fields(gql_type: Any) -> None:
         gql_type: The compiled type whose field map is forced.
 
     Raises:
-        Exception: The buried "ImproperlyConfigured", when the thunk raised
-            one; otherwise graphql-core's own wrapper, untouched.
+        Exception: The buried "ImproperlyConfigured", retaining any original
+            cause; otherwise graphql-core's own wrapper, untouched.
     """
     gql_type.__dict__.pop("fields", None)
     try:
@@ -712,7 +712,7 @@ def recompile_fields(gql_type: Any) -> None:
         buried = buried_config_error(error)
         if buried is None:
             raise
-        raise buried from None
+        raise buried from buried.__cause__
 
 
 def get_shared_output_registry() -> Any:

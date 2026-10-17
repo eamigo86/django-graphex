@@ -30,6 +30,7 @@ import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import ImproperlyConfigured
 from graphql import (
     GraphQLBoolean,
     GraphQLField,
@@ -956,6 +957,9 @@ def compile_output_fields(
 
     Returns:
         Dict of "{camelCase_name: GraphQLField}".
+
+    Raises:
+        ImproperlyConfigured: Django metadata enumeration fails for the model.
     """
     fields: dict[str, GraphQLField] = {}
 
@@ -967,8 +971,11 @@ def compile_output_fields(
     # cannot return two entries under one name.
     try:
         all_fields = model._meta.get_fields()
-    except Exception:
-        all_fields = model._meta.concrete_fields
+    except Exception as exc:
+        model_label = getattr(model._meta, "label", model.__name__)
+        raise ImproperlyConfigured(
+            f"Failed to enumerate fields for model {model_label}"
+        ) from exc
 
     for field in all_fields:
         # Skip reverse relations (they are auto-created by Django for O2O/FK targets)

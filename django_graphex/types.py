@@ -216,13 +216,18 @@ def _model_derived_fields(model: type) -> list[Any]:
         model: The Django model to enumerate.
 
     Returns:
-        The derived fields, or the concrete fields when "_meta.get_fields" is
-        unavailable.
+        The derived fields, including inherited and reverse relations.
+
+    Raises:
+        ImproperlyConfigured: Django metadata enumeration fails for the model.
     """
     try:
         return list(model._meta.get_fields())
-    except Exception:  # pragma: no cover — defensive
-        return list(model._meta.concrete_fields)
+    except Exception as exc:
+        model_label = getattr(model._meta, "label", model.__name__)
+        raise ImproperlyConfigured(
+            f"Failed to enumerate fields for model {model_label}"
+        ) from exc
 
 
 def _model_field_names(model: type) -> set[str]:

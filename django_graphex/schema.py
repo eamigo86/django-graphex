@@ -388,6 +388,8 @@ class DjangoGraphQLSchema:
             A graphql.GraphQLSchema.
 
         Raises:
+            ImproperlyConfigured: A buried configuration error, retaining any
+                original metadata-enumeration cause.
             NotImplementedError: Propagated from the native root compiler for a
                 field kind whose native builder does not exist yet, OR from
                 types= forwarding for a graphene type kind with no clean
@@ -497,7 +499,7 @@ class DjangoGraphQLSchema:
             buried = buried_config_error(error)
             if buried is None:
                 raise
-            raise buried from None
+            raise buried from buried.__cause__
 
         # P0 (relation coverage): widen the label-set with the IMPLICIT read
         # permission of every generated model-backed type in the BUILT type map.

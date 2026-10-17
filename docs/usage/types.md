@@ -527,6 +527,20 @@ The implicit parent link (`placePtr`) is deliberately not exposed: the child
 already carries every inherited column, so the link would only offer a redundant
 hop back to a copy of the same row.
 
+### Metadata enumeration failures { #metadata-enumeration-failures }
+
+A model type needs Django's complete field metadata to expose inherited and
+reverse relations. If `model._meta.get_fields()` raises during type compilation,
+schema construction now stops with an `ImproperlyConfigured` error naming the
+model. Inspect the chained original exception for the underlying Django or
+custom metadata failure. This also applies when a lazy GraphQL field map is
+resolved during schema assembly.
+
+Previously, compilation continued with `concrete_fields`. That could publish an
+apparently valid schema missing reverse foreign-key or many-to-many fields.
+The new failure is intentional: fix the metadata error rather than relying on a
+partial schema. Successful model enumeration and the resulting SDL are unchanged.
+
 ## DjangoListObjectType
 
 !!! tip "Recommended for Types"

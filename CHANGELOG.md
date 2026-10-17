@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Stop schema construction when Django model field enumeration fails instead
+  of publishing a concrete-fields-only type that may omit reverse relations.
+  The configuration error names the model and retains the original exception
+  as its cause, including through eager and lazy GraphQL field compilation.
+  Existing installations that depended on the partial-schema fallback must
+  fix the underlying metadata error; healthy schema output is unchanged.
+
 - Batch typed GenericForeignKey targets selected through valid inline or named
   fragments on the enclosing union. Member-specific column projection and
   nested relation joins now match direct member fragments, avoiding per-row
