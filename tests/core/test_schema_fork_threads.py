@@ -39,8 +39,12 @@ def test_concurrent_fork_preserves_sibling_output_projections(
     """Register projected node/list types while another public fork is active.
 
     The two events force B's real class definitions between A's entry into
-    ``DjangoGraphQLSchema``'s fork context and its exit. B's subsequent public
+    DjangoGraphQLSchema's fork context and its exit. B's subsequent public
     schema must retain both only/exclude selectors on actual GraphQL types.
+
+    Args:
+        monkeypatch: Replaces the compiler hook to pause A's schema build.
+        local_b_pair: Whether B's projected types use a separate registry pair.
     """
     import django_graphex.core.registry_compiler as compiler
 
