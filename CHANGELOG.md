@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep output registrations independent of an unrelated thread's forked schema
+  build. A projected node/list type no longer degrades a later list result to
+  `[String]` under that overlap; same-thread fork isolation remains intact.
+
 - Keep a cached permission-scoped schema available while an unrelated cold
   signature is being pruned. Cold builds and cache clearing remain serialized;
   permission keys, cache bounds and public settings are unchanged.

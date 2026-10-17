@@ -54,6 +54,12 @@ Declaring another class for that model in the **same registry** now raises
 Registering the **same class** again is harmless. Distinct registries may each
 define their own public view of the model:
 
+When a separate thread builds a forked schema at the same time as these types
+are declared, that fork does not change their field projection. The declared
+`only_fields` and `exclude_fields` still govern the resulting node and list
+fields. This is isolation of the fork-build marker, **not** a guarantee that
+all registry operations or schema mutations are generally thread-safe.
+
 ```python
 from django_graphex.registry import Registry
 

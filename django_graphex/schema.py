@@ -231,15 +231,12 @@ class DjangoGraphQLSchema:
         # forked — it reuses the class-def instances verbatim (byte-identical for
         # the single/default-schema case, the NON-NEGOTIABLE guarantee).
         #
-        # Global-registry isolation: forking + the relation thunks may AUTO-CREATE
-        # ``<Model>ListType`` containers (one per pair registry). Their class-def
-        # block unconditionally appends to the process-global ``_gdx_output_registry``
-        # (the app-ready compile list) — which would accumulate duplicate-named
-        # entries across multiple forked schemas and poison a later
-        # ``compile_all_outputs()`` (the default app-ready path). Snapshot the
-        # global list length and TRUNCATE any fork-time appends on exit: the
-        # auto-created classes remain registered in their PAIR registry (forked
-        # there), but they never leak into the global app-ready compile.
+        # Global-registry isolation: forking + relation thunks may AUTO-CREATE
+        # ``<Model>ListType`` containers in this pair. Their class definitions
+        # skip global output entries while this thread's fork guard is active;
+        # unrelated threads must remain free to register their own types. Do
+        # not truncate the process-global list at fork exit: that could delete
+        # entries concurrently appended by another thread.
         #
         # A pair is FORKED only when its ``output`` / ``graphene`` members are
         # DISTINCT from the global ones. A custom ``SchemaRegistries`` that merely
@@ -256,51 +253,41 @@ class DjangoGraphQLSchema:
             is not getattr(_default_pair, "graphene", None)
         )
 
-        from django_graphex.core.base import _forking_build, _gdx_output_registry
+        from django_graphex.core.base import _forking_build
         from django_graphex.core.registry_compiler import compile_outputs_into
 
-        # The forked-build guard makes class-def auto-creation of pair-scoped types
-        # SKIP the global registry writes (no-op for the default pair). The
-        # length-snapshot + truncation is a belt-and-suspenders: any global append
-        # that still slips through (a code path that ignores the guard) is undone
-        # so the global app-ready compile stays byte-identical.
-        _global_len_before = len(_gdx_output_registry) if _is_forked else 0
+        # Pair-scoped class definitions skip global entries only in this thread.
         _fork_ctx = _forking_build() if _is_forked else _NullCtx()
         with _fork_ctx:
             if _is_forked:
                 compile_outputs_into(registries)
 
-            try:
-                protected = (
-                    collect_field_names(private_query)
-                    | collect_field_names(private_mutation)
-                    | collect_field_names(private_subscription)
-                )
+            protected = (
+                collect_field_names(private_query)
+                | collect_field_names(private_mutation)
+                | collect_field_names(private_subscription)
+            )
 
-                native_query = self._merge_root(
-                    "Query", query, private_query, registries=registries
-                )
-                native_mutation = self._merge_root(
-                    "Mutation", mutation, private_mutation, registries=registries
-                )
-                native_subscription = self._merge_root(
-                    "Subscription",
-                    subscription,
-                    private_subscription,
-                    registries=registries,
-                )
-                native_schema = self._build_native_graphql_schema(
-                    native_query,
-                    native_mutation,
-                    native_subscription,
-                    protected_fields=frozenset(protected),
-                    registries=registries,
-                    **kwargs,
-                )
-            finally:
-                # Truncate any fork-time global appends that slipped past the guard.
-                if _is_forked and len(_gdx_output_registry) > _global_len_before:
-                    del _gdx_output_registry[_global_len_before:]
+            native_query = self._merge_root(
+                "Query", query, private_query, registries=registries
+            )
+            native_mutation = self._merge_root(
+                "Mutation", mutation, private_mutation, registries=registries
+            )
+            native_subscription = self._merge_root(
+                "Subscription",
+                subscription,
+                private_subscription,
+                registries=registries,
+            )
+            native_schema = self._build_native_graphql_schema(
+                native_query,
+                native_mutation,
+                native_subscription,
+                protected_fields=frozenset(protected),
+                registries=registries,
+                **kwargs,
+            )
         # Carry the protected-field marker onto the native schema too (legacy
         # reader compatibility) — the canonical native read location is
         # schema.extensions['gdx_protected_fields'] (set at build, C14).

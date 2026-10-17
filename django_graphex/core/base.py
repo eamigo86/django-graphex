@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from inspect import cleandoc, isclass
+from threading import local
 from typing import Any
 
 # S8h (graphene-removal): core/base.py is now FULLY graphene-free at the top
@@ -833,40 +834,39 @@ def resolved_output_type(cls: Any, registries: Any) -> Any:
 # blocks unconditionally append to the process-global ``_gdx_output_registry`` and
 # (for object types) write to the global shared output registry — leaking
 # pair-scoped, often duplicate-named types into the GLOBAL app-ready compile and
-# poisoning later default-pair builds. This depth counter is raised for the WHOLE
+# poisoning later default-pair builds. This thread-local depth counter is raised for the WHOLE
 # forked-build lifetime (compile + root assembly + lazy thunk eval) so those
 # class-def blocks SKIP the global registrations: the auto-created types stay in
 # their PAIR registry (forked there), never the global namespace. The DEFAULT pair
 # never raises it, so the single/default-schema path is byte-identical.
-_forking_depth: int = 0
+_forking_state = local()
 
 
 def is_forking() -> bool:
     """Report whether a forked (non-default) schema build is in progress (B5).
 
     Returns:
-        True while the forked-build depth counter is positive, so class-def
-        auto-creation of pair-scoped types skips the global registry writes.
+        True while this thread's forked-build depth is positive, so class-def
+        auto-creation of pair-scoped types skips the global registry writes
+        without suppressing another thread's registrations.
     """
-    return _forking_depth > 0
+    return getattr(_forking_state, "depth", 0) > 0
 
 
 class _forking_build:
     """Context manager that marks a forked-schema build in progress (B5).
 
-    Raises _forking_depth for the duration so class-def auto-creation of
+    Raises this thread's depth for the duration so class-def auto-creation of
     pair-scoped types skips the GLOBAL registry writes. Re-entrant (depth-counted)
     so nested fork operations are safe.
     """
 
     def __enter__(self) -> "_forking_build":
-        global _forking_depth
-        _forking_depth += 1
+        _forking_state.depth = getattr(_forking_state, "depth", 0) + 1
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        global _forking_depth
-        _forking_depth -= 1
+        _forking_state.depth -= 1
 
 
 # Process-wide DEFAULT pair, created once. Its members ARE the existing global
