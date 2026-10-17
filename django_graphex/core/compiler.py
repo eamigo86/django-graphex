@@ -15,6 +15,7 @@ Key design contracts:
 
 from __future__ import annotations
 
+from threading import RLock
 from typing import Any, Sequence
 
 from graphql import (
@@ -38,11 +39,13 @@ from django_graphex.core.scalars import GDX_SCALAR_MAP
 # ---------------------------------------------------------------------------
 
 _TYPE_CACHE: dict[str, GraphQLNamedType] = {}
+_TYPE_CACHE_LOCK = RLock()
 
 
 def _reset_cache() -> None:
     """Clear the type cache. Called at compile_schema entry."""
-    _TYPE_CACHE.clear()
+    with _TYPE_CACHE_LOCK:
+        _TYPE_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +69,8 @@ def _resolve_ref(ref: TypeRef) -> Any:
     Looks up the named type in _TYPE_CACHE (which is seeded with scalars
     before compilation begins).
     """
-    named = _TYPE_CACHE.get(ref.name)
+    with _TYPE_CACHE_LOCK:
+        named = _TYPE_CACHE.get(ref.name)
     if named is None:
         raise ValueError(
             f"compile_schema: unknown type {ref.name!r}. "
@@ -166,27 +170,27 @@ def compile_type(spec: TypeSpec) -> GraphQLObjectType:
     Returns:
         obj_type: The compiled (and cached) GraphQL object type.
     """
-    if spec.name in _TYPE_CACHE:
-        existing = _TYPE_CACHE[spec.name]
+    with _TYPE_CACHE_LOCK:
+        existing = _TYPE_CACHE.get(spec.name)
         if isinstance(existing, GraphQLObjectType):
             return existing
 
-    # Build GdxPayload for extensions["gdx"]
-    gdx_meta = spec.gdx if spec.gdx is not None else GdxMeta()
-    payload = GdxPayload(gdx_meta)
+        # Build GdxPayload for extensions["gdx"]
+        gdx_meta = spec.gdx if spec.gdx is not None else GdxMeta()
+        payload = GdxPayload(gdx_meta)
 
-    # Construct the type with a lazy fields thunk
-    obj_type = GraphQLObjectType(
-        name=spec.name,
-        fields=_make_field_thunk(spec),
-        description=spec.description,
-        extensions={"gdx": payload},
-    )
+        # Construct the type with a lazy fields thunk
+        obj_type = GraphQLObjectType(
+            name=spec.name,
+            fields=_make_field_thunk(spec),
+            description=spec.description,
+            extensions={"gdx": payload},
+        )
 
-    # Register BEFORE recursion (memoize-before-recurse pattern)
-    _TYPE_CACHE[spec.name] = obj_type
+        # Register BEFORE recursion (memoize-before-recurse pattern)
+        _TYPE_CACHE[spec.name] = obj_type
 
-    return obj_type
+        return obj_type
 
 
 # ---------------------------------------------------------------------------
@@ -207,14 +211,14 @@ def compile_enum(spec: EnumSpec) -> GraphQLEnumType:
     Returns:
         enum_type: The compiled (and cached) GraphQL enum type.
     """
-    if spec.name in _TYPE_CACHE:
-        existing = _TYPE_CACHE[spec.name]
+    with _TYPE_CACHE_LOCK:
+        existing = _TYPE_CACHE.get(spec.name)
         if isinstance(existing, GraphQLEnumType):
             return existing
 
-    enum_type = _new_enum(spec)
-    _TYPE_CACHE[spec.name] = enum_type
-    return enum_type
+        enum_type = _new_enum(spec)
+        _TYPE_CACHE[spec.name] = enum_type
+        return enum_type
 
 
 def _new_enum(spec: EnumSpec) -> GraphQLEnumType:
@@ -279,43 +283,46 @@ def compile_schema(
         ValueError: When the query type (or a supplied mutation type) was not
             compiled or is not a "GraphQLObjectType".
     """
-    # Step 1: reset
-    _reset_cache()
+    # One reentrant transaction prevents a second build from clearing or
+    # replacing the shared cache between this build's reset and schema use.
+    with _TYPE_CACHE_LOCK:
+        # Step 1: reset
+        _reset_cache()
 
-    # Step 2: seed scalars
-    for name, scalar in GDX_SCALAR_MAP.items():
-        _TYPE_CACHE[name] = scalar
+        # Step 2: seed scalars
+        for name, scalar in GDX_SCALAR_MAP.items():
+            _TYPE_CACHE[name] = scalar
 
-    # Step 3: compile enums
-    for enum_spec in enums:
-        compile_enum(enum_spec)
+        # Step 3: compile enums
+        for enum_spec in enums:
+            compile_enum(enum_spec)
 
-    # Step 4: compile types
-    for type_spec in types:
-        compile_type(type_spec)
+        # Step 4: compile types
+        for type_spec in types:
+            compile_type(type_spec)
 
-    # Step 5: build schema
-    query_type = _TYPE_CACHE.get(query.name)
-    if not isinstance(query_type, GraphQLObjectType):
-        raise ValueError(
-            f"compile_schema: query type {query.name!r} was not compiled "
-            f"or is not a GraphQLObjectType."
-        )
-
-    mutation_type = None
-    if mutation is not None:
-        mutation_type = _TYPE_CACHE.get(mutation.name)
-        if not isinstance(mutation_type, GraphQLObjectType):
+        # Step 5: build schema
+        query_type = _TYPE_CACHE.get(query.name)
+        if not isinstance(query_type, GraphQLObjectType):
             raise ValueError(
-                f"compile_schema: mutation type {mutation.name!r} was not compiled."
+                f"compile_schema: query type {query.name!r} was not compiled "
+                f"or is not a GraphQLObjectType."
             )
 
-    schema = GraphQLSchema(
-        query=query_type,
-        mutation=mutation_type,
-    )
+        mutation_type = None
+        if mutation is not None:
+            mutation_type = _TYPE_CACHE.get(mutation.name)
+            if not isinstance(mutation_type, GraphQLObjectType):
+                raise ValueError(
+                    f"compile_schema: mutation type {mutation.name!r} was not compiled."
+                )
 
-    # Step 6: assert bridge
-    assert_gdx_bridge(schema)
+        schema = GraphQLSchema(
+            query=query_type,
+            mutation=mutation_type,
+        )
 
-    return schema
+        # Step 6: assert bridge
+        assert_gdx_bridge(schema)
+
+        return schema

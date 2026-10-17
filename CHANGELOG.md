@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Share one enum type for concurrent equivalent cache misses and retain the
+  existing incompatible-choices error when definitions race in one registry.
+  Native enum names, member order, values and serial schema output are
+  unchanged; this is not a general registry thread-safety guarantee.
+
 - Track native mutation field identity only while the field remains alive.
   This prevents a stale integer identity marker from classifying an unrelated
   raw GraphQL field internally, while retaining live fields after a later

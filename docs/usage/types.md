@@ -1638,6 +1638,11 @@ not scan every model eagerly at startup. Separate registries can independently
 use the same name, but combining both incompatible types in one GraphQL schema
 still requires distinct names.
 
+Concurrent compilation against the same registry applies that same rule
+atomically: equivalent definitions share one enum instance, while a competing
+incompatible definition raises the existing configuration error. This does not
+make other registry operations or arbitrary schema construction thread-safe.
+
 There is no per-field enum-name override. To resolve a collision, keep only
 one of the conflicting fields in that schema or rename an app, model or field
 so their generated names differ. A rename changes the GraphQL enum name and

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from functools import singledispatch
 from typing import TYPE_CHECKING, Any, Iterator
 
@@ -389,39 +390,49 @@ def build_choices_enum_type(
     if not values:
         return None
 
-    enum_type = _new_enum(
-        EnumSpec(
-            name=name,
-            values=tuple(values),
-            descriptions=descriptions or None,
-        )
-    )
     meta = field.model._meta
     origin = f"{meta.app_label}.{meta.object_name}.{field.name}"
-    cached = registry.get_type_for_enum(slot_key)
-    if isinstance(cached, GraphQLEnumType):
-        same_values = cached.values.keys() == enum_type.values.keys()
-        if same_values:
-            for member_name, old in cached.values.items():
-                new = enum_type.values[member_name]
-                if (
-                    type(old.value) is not type(new.value)
-                    or old.value != new.value
-                    or old.description != new.description
-                    or old.deprecation_reason != new.deprecation_reason
-                ):
-                    same_values = False
-                    break
-        if not same_values:
+    # Keep construction, comparison, origin stamping and registration in one
+    # per-registry transaction. Otherwise two real misses can return distinct
+    # same-named types or bypass the incompatible-definition error.
+    # Historical callers may supply a registry-shaped adapter rather than our
+    # Registry. Preserve that duck-typed serial path; only Registry instances
+    # own the native-slot concurrency guarantee.
+    with getattr(registry, "_enum_lock", nullcontext()):
+        cached = registry.get_type_for_enum(slot_key)
+        if isinstance(cached, GraphQLEnumType):
+            raw_values = dict(values)
+            same_values = cached.values.keys() == raw_values.keys()
+            if same_values:
+                for member_name, old in cached.values.items():
+                    raw_value = raw_values[member_name]
+                    if (
+                        type(old.value) is not type(raw_value)
+                        or old.value != raw_value
+                        or old.description != descriptions.get(member_name)
+                        or old.deprecation_reason is not None
+                    ):
+                        same_values = False
+                        break
+            if same_values:
+                return cached
+
+        enum_type = _new_enum(
+            EnumSpec(
+                name=name,
+                values=tuple(values),
+                descriptions=descriptions or None,
+            )
+        )
+        if isinstance(cached, GraphQLEnumType):
             first_origin = cached.extensions.get("gdx_choices_origin", "<unknown>")
             raise ImproperlyConfigured(
                 f"Choices enum {name!r} has incompatible definitions from "
                 f"{first_origin} and {origin}."
             )
-        return cached
-    enum_type.extensions["gdx_choices_origin"] = origin
-    registry.register_enum(slot_key, enum_type)
-    return enum_type
+        enum_type.extensions["gdx_choices_origin"] = origin
+        registry.register_enum(slot_key, enum_type)
+        return enum_type
 
 
 def field_is_projected(

@@ -6,6 +6,7 @@ input types, and directives in the django-graphex package.
 
 from __future__ import annotations
 
+from threading import RLock
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
@@ -38,6 +39,8 @@ class Registry:
         self._list_types: dict[type[Model], Any] = {}
         #: enum name -> enum type (its own namespace; never clashes with types).
         self._enums: dict[str, Any] = {}
+        #: Native choices validation and registration share this reentrant lock.
+        self._enum_lock = RLock()
         self._registry_directives: dict[str, Any] = {}
         #: GraphQL type name -> DjangoUnionType subclass. Parallel to ``_types``
         #: (which is (model, for_input)-keyed); a union has no single model so it
@@ -128,7 +131,8 @@ class Registry:
             key: registry key under which to store the enum.
             enum: enum type to register.
         """
-        self._enums[key] = enum
+        with self._enum_lock:
+            self._enums[key] = enum
 
     def get_type_for_enum(self, key: str) -> Any | None:
         """Return the enum type registered for the given key.
@@ -139,7 +143,8 @@ class Registry:
         Returns:
             The registered enum type, or None if absent.
         """
-        return self._enums.get(key)
+        with self._enum_lock:
+            return self._enums.get(key)
 
     def register_directive(self, name: str, directive: Any) -> None:
         """Register a directive with the given name.
