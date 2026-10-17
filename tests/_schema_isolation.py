@@ -57,9 +57,10 @@ def isolated_default_pair() -> Iterator[None]:
 
     DjangoModelType currently chooses the process-global Registry rather than
     accepting Meta.registry. Tests of that public builder need a fresh default
-    pair for their own model graph, but must restore the module singletons and
-    output entries so another test cannot inherit those registrations. The
-    registration guard itself stays active inside this scope.
+    pair for their own model graph, but must restore the module singletons,
+    cached default pair, and output entries so another test cannot inherit
+    those registrations. The registration guard itself stays active inside
+    this scope.
 
     Yields:
         Control while a temporary default Registry and native companion live.
@@ -71,14 +72,17 @@ def isolated_default_pair() -> Iterator[None]:
 
     previous_registry = registry_module.registry
     previous_output = base_module._gdx_shared_output_registry
+    previous_default = base_module._default_schema_registries
     entries = list(base_module._gdx_output_registry)
     registry_module.registry = Registry()
     base_module._gdx_shared_output_registry = NativeOutputRegistry()
+    base_module._default_schema_registries = None
     try:
         yield
     finally:
         registry_module.registry = previous_registry
         base_module._gdx_shared_output_registry = previous_output
+        base_module._default_schema_registries = previous_default
         base_module._gdx_output_registry[:] = entries
 
 

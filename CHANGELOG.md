@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix order-dependent registry tests by restoring the cached default schema
+  pair after temporary test scopes, including nested and exceptional exits.
+  This changes only test isolation; library behavior and public APIs are
+  unchanged.
+
 - Keep output registrations independent of an unrelated thread's forked schema
   build. A projected node/list type no longer degrades a later list result to
   `[String]` under that overlap; same-thread fork isolation remains intact.

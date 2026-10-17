@@ -169,6 +169,14 @@ def iter_ids(limit: int) -> Iterator[int]:
   results without requiring a specific GraphQL-core 3.3 patch, checkout path,
   or working directory. Verify the active runtime in an external runner before
   the test call rather than asserting its identity inside the test.
+- Tests that temporarily replace the default schema registries should use
+  `isolated_default_pair()` from `tests._schema_isolation`. It creates a fresh
+  default pair within the scope and restores the exact previous cached pair,
+  global Registry, output companion, and output entries on exit, including
+  nested scopes and exceptions. Do not replace those globals manually: a
+  cached pair can otherwise retain a temporary Registry and make later tests
+  depend on execution order. This is test isolation, not a claim that the
+  production Registry is generally thread-safe.
 
 ### Resolver fixture ownership
 
