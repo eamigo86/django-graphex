@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Diagnose a suppressed `RuntimeError` while closing a subscription delivery
+  source with a server-side warning and original traceback. Close remains
+  best-effort and idempotent, with no new client frame or propagation; a benign
+  already-closing generator race can also produce this warning. Normal
+  cooperative cancellation is unchanged.
+
 - Report an explicit `source=` Python property's original `AttributeError`
   as a GraphQL field error when it escapes normal Python lookup, including
   getters wrapped with `functools.partial` or `functools.lru_cache`. Successful

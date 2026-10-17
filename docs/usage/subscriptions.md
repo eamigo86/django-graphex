@@ -61,6 +61,17 @@ A cross-process channel layer (Redis) is required when the producer (the process
 running model writes) and the subscriber processes are separate; the in-memory
 layer is fine for development.
 
+### Close diagnostics
+
+Closing a subscription is best-effort. If closing its delivery source raises a
+`RuntimeError`, the server emits one warning through the
+`django_graphex.subscriptions.delivery` logger, with the original exception and
+traceback (`exc_info`). The error remains suppressed: this diagnostic does not
+add a client frame or guarantee that backend group cleanup succeeded. An
+already-closing async generator may also cause a benign warning. Keep server
+logs access-controlled because exception details are not sent to clients.
+Normal cooperative cancellation does not trigger this warning.
+
 !!! note "Custom transport migrations to GraphQL-core 3.3"
     The built-in SSE and WebSocket transports prepare an `Executor` before
     creating a 3.3 source stream. A custom transport must handle errors returned

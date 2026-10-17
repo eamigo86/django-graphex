@@ -40,10 +40,13 @@ enforces that no such type ever appears on the subscription delivery path.
 from __future__ import annotations
 
 import asyncio
+import logging
 from inspect import isawaitable
 from typing import Any, AsyncIterator, Callable
 
 __all__ = ["DeliveryIterator", "make_delivery_iterator"]
+
+logger = logging.getLogger(__name__)
 
 
 class DeliveryIterator:
@@ -109,6 +112,9 @@ class DeliveryIterator:
         Idempotent. Setting the close flag first guarantees that any pending or
         subsequent "__anext__" stops; closing the underlying source releases a
         consumer blocked in "receive()" so the stop is prompt.
+
+        A RuntimeError from source close is logged with its traceback and
+        suppressed. This can also describe a benign already-closing race.
         """
         if self._close_event.is_set():
             return
@@ -120,7 +126,11 @@ class DeliveryIterator:
             except RuntimeError:
                 # An already-closing/closed async generator can raise
                 # RuntimeError; treat close as best-effort and idempotent.
-                pass
+                logger.warning(
+                    "Subscription delivery source raised RuntimeError during close; "
+                    "close remains best-effort.",
+                    exc_info=True,
+                )
 
     @property
     def is_closed(self) -> bool:
