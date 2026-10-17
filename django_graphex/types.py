@@ -3992,7 +3992,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         }
         _cache[operation] = _gql_field
         _NATIVE_FIELD_REGISTRY[_reg_key] = _gql_field
-        _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+        _NATIVE_FIELD_IDENTITIES[id(_gql_field)] = _gql_field
         return _gql_field
 
     @staticmethod

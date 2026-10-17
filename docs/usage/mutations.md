@@ -69,6 +69,14 @@ from an ordinary Django model. Read fields belong on `DjangoObjectType` /
     schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
 
+!!! note "Native mutation field identity"
+    Generated native mutation fields are recognized by their live field objects,
+    including an earlier field when a later mutation class replaces the same
+    model-and-operation registry slot. An expired field leaves no lasting
+    integer identity marker that could match an unrelated raw GraphQL field.
+    This internal correction does not change mutation SDL or root declarations;
+    it is not a guarantee that all schema or registry objects are released.
+
 !!! tip "Deprecating a mutation field"
     Every mutation-field builder (`CreateField`, `UpdateField`, `DeleteField`,
     and `MutationFields`) accepts `deprecation_reason=`, wired straight into the

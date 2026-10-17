@@ -144,12 +144,10 @@ def _collect_root_attrs(root: type) -> dict[str, Any]:
     __dict__ but never enter _meta.fields. Walk the MRO so subclassed
     roots still surface them; the most-derived class wins on name collisions.
 
-    Membership in _NATIVE_FIELD_REGISTRY (not a blanket
-    isinstance(value, GraphQLField) scan) is the gate: a recovered attribute
-    is treated as a native mutation field ONLY when it is one of the exact
-    GraphQLField instances the mutation machinery registered. This prevents
-    an unrelated user-declared raw GraphQLField class attribute from being
-    silently mounted onto the native root.
+    A live identity-tracked field or current registry value (not a blanket
+    GraphQLField scan) is the gate: a recovered attribute is treated as native
+    ONLY when it is the exact registered GraphQLField instance. A dead field's
+    recycled integer identity cannot admit an unrelated raw field.
 
     Args:
         root: The graphene root ObjectType class.
@@ -163,19 +161,25 @@ def _collect_root_attrs(root: type) -> dict[str, Any]:
         _NATIVE_FIELD_REGISTRY,
     )
 
-    # Identity set of EVERY native mutation GraphQLField ever built; membership
-    # proves a recovered attr is a native mutation field. We union the current
-    # registry values (defensive, in case a field is registered out-of-band) with
-    # the cumulative identity set so a field is still recovered after its single
-    # ``(model, op)`` registry slot was overwritten by a sibling subclass for the
-    # same model (DjangoModelType / DjangoModelMutation last-built-wins).
-    native_field_ids = {id(f) for f in _NATIVE_FIELD_REGISTRY.values()}
-    native_field_ids |= _NATIVE_FIELD_IDENTITIES
+    # Snapshot actual live objects, including overwritten-slot fields, before
+    # checking identities. Bare integer membership could match a different field
+    # if Python reused a dead field's identifier. Current registry values remain
+    # a defensive source for fields registered out of band.
+    native_fields = {
+        id(field): field
+        for field in (
+            *_NATIVE_FIELD_REGISTRY.values(),
+            *_NATIVE_FIELD_IDENTITIES.values(),
+        )
+    }
 
     found: dict[str, Any] = {}
     for klass in reversed(root.__mro__):
         for attr_name, value in vars(klass).items():
-            if isinstance(value, GraphQLField) and id(value) in native_field_ids:
+            if (
+                isinstance(value, GraphQLField)
+                and native_fields.get(id(value)) is value
+            ):
                 found[attr_name] = value
     return found
 

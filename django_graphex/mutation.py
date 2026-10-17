@@ -6,6 +6,7 @@ import hashlib
 import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
+from weakref import WeakValueDictionary
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager
@@ -57,14 +58,10 @@ if TYPE_CHECKING:
 # DjangoModelType path too.
 _NATIVE_FIELD_REGISTRY: dict[tuple, Any] = {}
 
-# Identity set of EVERY native mutation GraphQLField ever built (by either the
-# DjangoModelMutation or DjangoModelType path). Used by the native root compiler
-# (``_collect_root_attrs``) to recognise a provably-native mutation field even
-# after its single ``_NATIVE_FIELD_REGISTRY`` slot was overwritten by a sibling
-# subclass for the same model. Membership here (NOT a blanket
-# ``isinstance(value, GraphQLField)`` scan) keeps the gate: an unrelated
-# user-declared raw GraphQLField is never silently mounted onto the native root.
-_NATIVE_FIELD_IDENTITIES: set[int] = set()
+# Keep only live native mutation fields (including fields whose model-keyed
+# registry slot was overwritten). A bare integer marker could outlive its field
+# and classify an unrelated field after Python recycled the identifier.
+_NATIVE_FIELD_IDENTITIES: WeakValueDictionary[int, GraphQLField] = WeakValueDictionary()
 
 #: The wire name of the identity field a generated UPDATE input exposes. It is
 #: the literal ``id`` whatever the model's primary-key column is called, because
@@ -856,7 +853,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             }
             cls._native_fields[_op] = _gql_field
             _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
-            _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+            _NATIVE_FIELD_IDENTITIES[id(_gql_field)] = _gql_field
 
     @classmethod
     def get_errors(cls, errors: list[Any]) -> DjangoModelMutation:
@@ -1107,7 +1104,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             deprecation_reason=deprecation_reason,
             extensions=field.extensions,
         )
-        _NATIVE_FIELD_IDENTITIES.add(id(copy))
+        _NATIVE_FIELD_IDENTITIES[id(copy)] = copy
         return copy
 
     @classmethod

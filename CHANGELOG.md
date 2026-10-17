@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Track native mutation field identity only while the field remains alive.
+  This prevents a stale integer identity marker from classifying an unrelated
+  raw GraphQL field internally, while retaining live fields after a later
+  mutation class overwrites their model-and-operation registry slot. Mutation
+  SDL and public declarations are unchanged; this does not promise general
+  schema or registry reclamation.
+
 - Diagnose a suppressed `RuntimeError` while closing a subscription delivery
   source with a server-side warning and original traceback. Close remains
   best-effort and idempotent, with no new client frame or propagation; a benign
