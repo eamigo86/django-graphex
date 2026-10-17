@@ -26,7 +26,7 @@ Verify all supplied audit claims on the supported runtime, fix demonstrated defe
 
 ## Task sequence
 
-Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates. Splits retain IDs/ledger. Full prior wording/qualifications: `t13i-selected-introspection-classifier-implementation/tracker-pre-t13i.md` (SHA `5df41527bccd61ab2b5b36ccc19605162f10ba86d7a9b45c5d99ce31fc02e809`); prior links remain valid.
+Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13i-selected-introspection-classifier-implementation/tracker-pre-t13i.md` (SHA `5df41527bccd61ab2b5b36ccc19605162f10ba86d7a9b45c5d99ce31fc02e809`).
 
 | Task | Route | Outcome and acceptance evidence | State |
 |---|---|---|---|
@@ -92,8 +92,8 @@ Tasks are recoverable; `T00` bootstraps, unchecked needs evidence, `D` delegates
 | T13h | D, accepted18998 | M-H1 `347b2ff` HTTP400 partial array/stop; no batch transaction. RED omitted `tests/models.py`; full proof/limits in `t13h-mh1-partial-batch-closure/README.md` and pre-T13i archive. T13 open. | [x] |
 | T13i | D, accepted19287 | Fragment classifier `408e2aa`+`bbc8e9a`; PASS, patch44/44. Initial fsync/PARTIAL gaps retained in `t13i-selected-introspection-classifier-closure/README.md` and pre-T14c archive; T13 OPEN. | [x] |
 | T14a | D, accepted19162 | `9fec11d`: two public constructor guards survive -O with exact predicates/messages/AssertionError. PASS/limits: `t14a-lc2-compatible-view-validation-closure/README.md`, pre-T13i archive. T14 open. | [x] |
-| T14b | D, scope19589; accepted19665 | M-O1 `316844e`: RED21→GREEN2, full5523/7/9, pure95.336%/combined97.552%/patch95.45%; independent PASS. Compatible; full proof/limits in `t14b-mo1-merged-root-implementation/README.md` and pre-T14c archive. | [x] |
-| T14c | D, scope19702; parent pending | M-O2 `961c018` warm B/cold A RED1→GREEN4; related166/full5527/7/9, branch95.336%/combined97.553%/patch19/19. Cold/clear serialized; docs42/Playground59/quality/static benchmark/finite PASS. Strict user+AGENTS TDD, `.venv/bin/python -m pytest`; forecast25–45 source+80–140 tests/docs, local commits. API/SDL/default/error/scope unchanged; full criteria/limits in `t14c-mo2-warm-hit-lock-split-implementation/README.md`. | [ ] |
+| T14b | D, parent scope19589; accepted19665 | M-O1 `316844e`: RED21→GREEN2, full5523/7/9, pure95.336%/combined97.552%/patch95.45%; independent PASS. Compatible; proof/limits in `t14b-mo1-merged-root-implementation/README.md` and preclosure archive. | [x] |
+| T14c | D, parent scope19702; accepted19762 | **M-O2 fixed, not false positive:** `961c018` BUILD/ENTRY split: warm B passes cold A; cold/clear serialized. RED1→GREEN4; related166/full5527/7/9; branch4109/4310, combined15387/15773, patch19/19; independent/parent PASS. Report 0.9s unverified. Same-full/0.2s test and post-GREEN refactor qualified; real-pruner proof/errors in implementation/independent READMEs and archive. T14 OPEN. | [x] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
 | T16a | D | **Q2 accepted before core fixes:** select exactly eight canonical benchmark results despite unrelated ignored JSON; fixtures copy only those names. Missing/invalid canonical rejection, public CLI/output, assets and full-suite coverage preserved; source commit/checks below. | [x] |
@@ -178,7 +178,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-H3 | 151 | **Accepted18531, human18441:** 0/False preserved; null/empty cleanup, selected direct introspection and CLEAN_RESPONSE=False unchanged. `043811e`+`cbfb9fb`, current PASS with history in `t13d-mh3-clean-response-closure/README.md`; wider T13 OPEN; separate T13i fragment follow-up accepted19287 with historical proof qualifications, not part of the zero/False policy. | T13/T13d |
 | M-H4 | 152 | **Accepted18627 (human18554):** success-only response cache/T13e; functional PASS, finite safety PARTIAL. Ruff cache caveat, scope and old row: `t13e-mh4-success-cache-closure/README.md`. T13 OPEN. | T13/T13e |
 | M-O1 | 157 | **Accepted19665, not false positive:** T14b `316844e` real five-row merged-node RED21 vs combined2, GREEN2; report's 16-vs-1 unverified. Broader T14 open. | T14/T14b |
-| M-O2 | 158 | T14c pending: cache-wide RLock encloses prune_fn, so an unrelated warm hit waits for a cold build; report timing unverified. Narrow lock split only. | T14/T14c |
+| M-O2 | 158 | **Accepted T14c/19762, not false positive:** global RLock blocked warm hits during cold prune; `961c018` separates locks without parallel cold builds or public behavior change. Timing 0.9s unverified; T14 open. | T14/T14c |
 | M-U1 | 163 | complete/disconnect during start allegedly leaves ghost subscription. | T08 |
 | M-U2 | 164 | id_only delete allegedly drops events with scope or non-PK filters. | T08 |
 | M-U3 | 165 | In-memory subscription filter string coercion allegedly fails Decimal/DateTime/Float. | T08 |
@@ -242,8 +242,8 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 ## Progress and next action
 
-**Recovery:** Exact pre-T14c tracker, all prior qualifications and archive links: `t14c-mo2-warm-hit-lock-split-implementation/tracker-preclosure.md` (SHA `9606dfb31a0bfe68abbe9251afd758a971964dadc4e99f78774ab8bd0f8964c5`).
+**Recovery:** Exact historical tracker: `t14c-mo2-warm-hit-lock-split-closure/tracker-preclosure.md` (SHA `90100e7248de1fad8bf4988449cd7e4868118959031aa55312ce92baf26c8519`); prior links therein.
 
-**Next:** T14c candidate pending parent acceptance; 58 checked/15 principal OPEN. M-T1 unverified/future; no PR authority.
+**Next:** 59 checked (58 remediation+quality); 15 principal blocks OPEN. M-T1 UNVERIFIED/future: concurrent schemas might disagree on field X inclusion if global `_forking_depth` overlaps; no reproduction/fix. No PR authority.
 
 **Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
