@@ -14,12 +14,20 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Apply the destination type's request-specific `get_queryset` to automatic
+  forward and reverse OneToOne output reads. A visible parent keeps its row
+  while a hidden linked destination resolves to `null`; genuine absent
+  relations and the nullable output shape are unchanged. Scoped to-one reads
+  are batched for ordinary list traversal, including when queryset optimization
+  is disabled. Explicit resolvers and M2M output reads retain separate rules.
+
 - Scope nested forward OneToOne destination-field filters to the destination
   type's request-specific `get_queryset`. A visible profile cannot match a
   hidden linked user's fields; real absent OneToOne NULL matches, unrelated
   Boolean branches, and direct source-column ID lookups keep their existing
   meanings. Reverse OneToOne filters already used the destination hook.
-  This does not change OneToOne output reads, custom filters or ordering.
+  Automatic OneToOne output reads have the separate rule above; custom filters
+  and ordering are unchanged.
 
 - Scope forward and reverse many-to-many filters to each destination type's
   request-specific `get_queryset`. A linked hidden target no longer satisfies
@@ -27,14 +35,14 @@ All notable changes to this library are documented here. The format is based on
   visible target witness, separate `and` branches may use different targets,
   and `not` complements the matching-parent set. Empty and absent-target
   predicates keep their existing meanings. This does not scope M2M output
-  reads, through models, OneToOne output reads, custom filter bodies or ordering.
+  reads, through models, custom filter bodies or ordering.
 
 - Scope public nested forward-FK filters to the destination type's
   request-specific `get_queryset`. Hidden target rows no longer make a
   visible source row match; each hop in a forward-FK chain is checked.
   Real absent-FK NULL matches, unrelated Boolean branches, and direct source
   FK-ID predicates retain their existing meanings. This does not scope
-  OneToOne output reads, custom filter bodies, or ordering. Forward OneToOne
+  custom filter bodies or ordering. Forward OneToOne
   and M2M filters have separate bounded rules.
 
 - Scope public reverse-FK filters to the child type's request-specific
@@ -50,8 +58,9 @@ All notable changes to this library are documented here. The format is based on
   and reverse-FK output reads. Hidden nullable FK targets now resolve to
   `null`; reverse-FK results, windows, and `totalCount` include only visible
   rows. Optimized scoped FK reads stay batched, while disabling optimization
-  can add per-parent scope queries. This does not scope O2O/M2M output relations,
-  custom resolvers, or other joined filters; clients previously relying on expanded
+  can add per-parent scope queries. Automatic OneToOne has the separate rule
+  above; M2M outputs, custom resolvers, and other joined filters remain outside
+  this FK rule. Clients previously relying on expanded
   hidden rows should review their destination hooks before upgrading.
 
 - Add a local, evidence-bounded disposition of the 100 original audit claims

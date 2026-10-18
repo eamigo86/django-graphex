@@ -772,7 +772,7 @@ def _to_graphql_field(
             )
             return {}
 
-        # The FK output remains nullable. A scoped prefetch stores the visible
+        # The to-one output remains nullable. A scoped prefetch stores the visible
         # destination under a dedicated attribute so an unrelated select_related
         # or caller-populated relation cache cannot substitute an unscoped row.
         def _default_resolver(
@@ -781,15 +781,9 @@ def _to_graphql_field(
             *,
             _name: str = field_name,
             _target_gql: Any = resolved_type,
-            _is_fk: bool = bool(
-                getattr(field, "many_to_one", False)
-                and not getattr(field, "one_to_one", False)
-            ),
         ) -> Any:
             if isinstance(root, dict):
                 return root.get(_name)
-            if not _is_fk:
-                return getattr(root, _name, None)
             from django_graphex.core.compat import _gdx_graphene_type
             from django_graphex.utils import (
                 apply_object_type_get_queryset,

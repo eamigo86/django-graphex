@@ -50,6 +50,19 @@ saw those values omitted should accept the full introspection response. Mixed
 ordinary root fields are still cleaned, and the default
 `CLEAN_RESPONSE=False` is unchanged. See [response cleaning](usage/security.md#ast-based-introspection-detection-clean_response).
 
+### Review automatic OneToOne output reads
+
+An automatically published forward or reverse OneToOne object field now
+applies the destination type's `get_queryset` for the current request. A
+visible parent whose linked object is hidden still appears, but that nullable
+relation resolves to `null`. A genuinely absent relation remains `null`, and
+the GraphQL field's nullability does not change. Review clients that previously
+expanded a hidden linked user or profile, and review the destination hooks
+before upgrading. Ordinary list reads batch scoped destinations; an automatic
+field on a custom-returned cached parent still checks its destination. Explicit
+relation resolvers and M2M output reads are not covered by this change. See
+[automatic output relation scope](usage/types.md#relation-scope-hatch).
+
 ### Review filters that traverse a forward FK
 
 A public nested filter such as
@@ -64,7 +77,7 @@ Direct source FK-ID filters such as `author: { exact: 7 }` keep their existing
 contract; a hidden target ID may still match the source row. An omitted filter
 and real nullable-FK matches also keep their meanings. Forward OneToOne
 and M2M filters have their own bounded rules below; custom filter bodies,
-ordering, and OneToOne output reads are not changed by this FK filter rule. See
+ordering, and OneToOne output reads are separate from this FK filter rule. See
 [forward-FK filter scope](usage/filtering.md#forward-fk-filter-scope).
 
 ### Review filters that traverse a forward OneToOne
@@ -76,8 +89,8 @@ Review clients that previously selected visible profiles through hidden
 users. A direct source-column `user: { exact: 7 }` filter and a genuinely
 absent nullable OneToOne relation retain their prior meanings. An omitted or
 empty relation filter is still a no-op. The existing reverse OneToOne filter
-path already invoked its destination hook; this change does not scope
-OneToOne output reads. See
+path already invoked its destination hook; automatic OneToOne output reads
+have the separate rule above. See
 [forward OneToOne filter scope](usage/filtering.md#forward-o2o-filter-scope).
 
 ### Review filters that traverse a reverse FK

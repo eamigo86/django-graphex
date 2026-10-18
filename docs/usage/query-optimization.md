@@ -51,6 +51,15 @@ For the fields requested in the query, the optimizer:
   `select_related` span** and **inside each `Prefetch` child queryset**
   (see [caveats](#only-column-projection)).
 
+An automatic FK or forward/reverse OneToOne field whose destination type
+overrides `get_queryset` is a deliberate exception to the join plan. The
+optimizer replaces that unscoped join with a batched, request-scoped prefetch
+and resolves the nullable field from its visible result. This also runs for
+ordinary list reads when `OPTIMIZE_QUERYSET=False`; a custom-returned parent
+without a planned prefetch is checked at the field resolver instead. A cached
+unscoped relation is never used as visibility evidence. M2M output reads and
+explicit resolver fields have separate contracts.
+
 It is transparent to the `DjangoListObjectType` wrapper (`results` / `totalCount`
 / `pageInfo`), to **fragments** and to **inline fragments**, and matches both
 `camelCase` and `snake_case` field names.
@@ -639,7 +648,8 @@ for `Meta.output_field_name` (e.g. `post` inside `{ ok post { … } }`), and
 applies `select_related` for every to-one relation (`ForeignKey`,
 `OneToOneField`) that appears in that sub-selection.
 
-This eliminates N+1 queries on mutation responses that nest related objects:
+For destination types with the default no-op row hook, this eliminates N+1
+queries on mutation responses that nest related objects:
 
 ```graphql
 mutation CreatePost($input: NewPostInput!) {
@@ -653,6 +663,10 @@ mutation CreatePost($input: NewPostInput!) {
   }
 }
 ```
+
+If a destination has a row-scope hook, its automatic to-one field still checks
+that hook. A mutation response without a batched scoped prefetch can issue an
+additional membership query for the destination.
 
 No code changes are required; the optimization is applied automatically
 whenever `DjangoModelType.perform_mutate` is called.  If the selection set

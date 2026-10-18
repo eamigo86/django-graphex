@@ -208,29 +208,32 @@ level.
     cache and the single query.
 
 !!! warning "Automatic output relation scope and its limits"
-    An automatically exposed **forward FK** applies the destination type's
-    `get_queryset` before returning a related object. A destination excluded
-    by the hook appears as `null` on the nullable GraphQL FK field; the parent
-    remains visible. An automatically exposed **reverse FK** applies the child
+    An automatically exposed **forward FK or OneToOne** applies the destination
+    type's `get_queryset` before returning a related object. A destination
+    excluded by the hook appears as `null` on the nullable GraphQL field; the
+    parent remains visible. An automatically exposed **reverse OneToOne** uses
+    the same rule: a hidden related child is `null`, just like an absent child.
+    An automatically exposed **reverse FK** applies the child
     type's hook before filtering, pagination and `totalCount`. A hidden first
     child cannot make a visible page short or inflate its count.
     This includes Django's default `*_set` accessors and a `related_name`
     that differs from `related_query_name`.
 
-    With queryset optimization enabled, scoped FKs use a batched prefetch
-    rather than one membership query per parent. The reverse-FK prefetch and
+    Ordinary list traversal batches scoped FK and OneToOne destinations with
+    a prefetch, including when queryset optimization is disabled. A direct
+    custom root returning an already-cached parent still checks its automatic
+    child field against the hook. The reverse-FK prefetch and
     window paths also scope their source querysets. Already-cached unscoped
-    relation values are not authorization evidence. With optimization disabled,
-    the resolver checks each related value against the request's hook; this is
-    correct but can cost one additional query per parent. Types with the
-    default no-op hook retain the ordinary read path.
+    relation values are not authorization evidence. A resolver path without
+    the scoped prefetch can cost one additional membership query per parent.
+    Types with the default no-op hook retain the ordinary read path.
 
     This does **not** add a global access-control policy. Nested filters
     traversing a forward FK, forward OneToOne or reverse FK apply the
     destination's hook; a hidden destination cannot satisfy that branch.
     Reverse child-ID lookups are scoped because they traverse child rows.
-    Direct source FK/OneToOne ID lookups, automatic OneToOne and M2M output
-    relations, custom resolvers, and ordering retain separate behavior. M2M
+    Direct source FK/OneToOne ID lookups, M2M output relations, custom
+    resolvers, and ordering retain separate behavior. M2M
     filters also have a bounded destination-hook rule, but M2M output reads
     remain outside this automatic output policy. See
     [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
@@ -240,14 +243,14 @@ level.
     and [relation input scope](permission-scoped-schema.md). Do not infer a
     tenant-wide guarantee from these bounded paths.
 
-    Older clients that expanded an FK or reverse FK through a destination
-    hook may now receive `null`, fewer children, a shorter page, or a smaller
-    `totalCount`. Review those hooks and any client assumptions before
+    Older clients that expanded an FK, reverse FK or OneToOne through a
+    destination hook may now receive `null`, fewer children, a shorter page,
+    or a smaller `totalCount`. Review those hooks and client assumptions before
     upgrading. The GraphQL field shapes and nullability have not changed.
 
     Explicit relation declarations remain useful when you need custom
     resolver behavior or a different wire shape. They are no longer required
-    solely to scope the two automatic FK output paths.
+    solely to scope automatic FK or OneToOne output paths.
 
     * **to-MANY** — mount it as a `DjangoFilterListField` when you want a
       plain list instead of the automatic reverse-FK container:

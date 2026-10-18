@@ -357,7 +357,8 @@ same-database subquery.
 
 This is not a global relation policy. Forward OneToOne, reverse-FK and M2M
 filters have their own bounded rules below. Custom `@filter_field` bodies,
-ordering, and direct source FK-ID lookups retain separate contracts. See
+ordering, and direct source FK-ID lookups retain separate contracts. Automatic
+OneToOne output reads have their own destination-hook rule. See
 [relation output scope](types.md#relation-scope-hatch) and
 [permission-scoped schemas](permission-scoped-schema.md).
 
@@ -387,9 +388,10 @@ that user is hidden. Each supported hop in a longer filter path is checked.
 The ORM keeps the destination hook lazy as a same-database subquery. A hook
 failure or a changed database alias rejects the request rather than retrying
 without scope. Existing reverse OneToOne filtering already invokes its
-destination hook; this change does not modify that path. It does not scope
-OneToOne **output** reads, custom filter bodies, ordering, or unrelated ORM
-joins. A relation replaced by an explicit resolver or pruned from the active
+destination hook; this filter change does not modify that path. Automatic
+OneToOne **output** reads have the separate rule in the types guide. Custom
+filter bodies, ordering, and unrelated ORM joins remain separate. A relation
+replaced by an explicit resolver or pruned from the active
 schema does not gain a filter path.
 
 ### Reverse-FK filters use a visible child witness { #reverse-fk-filter-scope }
@@ -460,8 +462,9 @@ ORM query name; an automatically published reverse output accessor may have
 a different name. Replacing that accessor with an explicit resolver or
 pruning it from the active schema does not reopen the filter path.
 
-This rule does **not** authorize M2M output reads, OneToOne output reads,
-custom filter bodies, ordering, or access control on the through model.
+This rule does **not** authorize M2M output reads, custom filter bodies,
+ordering, or access control on the through model. Automatic OneToOne output
+reads have a separate destination-hook rule.
 See [relation output scope](types.md#relation-scope-hatch) and
 [relation input scope](permission-scoped-schema.md).
 

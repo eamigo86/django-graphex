@@ -391,9 +391,9 @@ Generated mutation FK/M2M ID links have a separate **destination row-scope**
 check when the destination public type overrides `get_queryset`. Hidden and
 nonexistent IDs return the same structured invalid-pk error before the parent
 write; child write permissions do not run for a link. Automatic FK/reverse-FK
-output reads and forward-FK/forward-OneToOne/reverse-FK/M2M filters have
-separate bounded destination-scope rules. OneToOne output reads and other
-joins are not globally scoped by this ID-link check. See
+and OneToOne output reads, plus forward-FK/forward-OneToOne/reverse-FK/M2M
+filters, have separate bounded destination-scope rules. M2M output reads and
+other joins are not globally scoped by this ID-link check. See
 [mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
 
 Adopting an existing nullable reverse-FK orphan by ID is a **child write**, not

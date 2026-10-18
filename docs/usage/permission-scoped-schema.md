@@ -492,9 +492,9 @@ input, so a full-permission caller keeps the whole filter surface.
 Generated mutation FK/M2M **ID links** have a separate row-level check: when
 the destination public type overrides `get_queryset`, a hidden ID is refused
 like a nonexistent one before the parent is written. Automatic FK/reverse-FK
-output reads and forward-FK/forward-OneToOne/reverse-FK/M2M filters now have
-their own bounded scope rules, but other relation joins and OneToOne output
-reads are not globally scoped. A reverse filter
+and OneToOne output reads, plus forward-FK/forward-OneToOne/reverse-FK/M2M
+filters, now have their own bounded scope rules, but other relation joins and
+M2M output reads are not globally scoped. A reverse filter
 declared by its ORM query name remains unavailable when its published output
 accessor is removed or replaced by an explicit resolver. See
 [mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).

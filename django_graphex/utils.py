@@ -3590,7 +3590,7 @@ def _scoped_fk_prefetches(
     visited: set[tuple[int, int, str]] | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
 ) -> dict[str, Prefetch]:
-    """Plan batched scoped FK reads for selected automatic relation fields.
+    """Plan batched scoped to-one reads for selected automatic relation fields.
 
     Args:
         gql_type: GraphQL type containing the selected fields.
@@ -3604,9 +3604,9 @@ def _scoped_fk_prefetches(
         _fmap_cache: Request-local Django field map cache.
 
     Returns:
-        Prefetches keyed by ORM path, each storing a scoped FK separately.
+        Prefetches keyed by ORM path, each storing a scoped to-one target.
     """
-    from django.db.models import ForeignKey
+    from django.db.models import ForeignKey, OneToOneRel
 
     from .core.compat import _gdx_graphene_type
 
@@ -3650,8 +3650,10 @@ def _scoped_fk_prefetches(
                 next_prefix = path + LOOKUP_SEP
                 if (
                     isinstance(relation, ForeignKey)
-                    and not getattr(relation, "one_to_one", False)
                     and getattr(field_def.resolve, "_gqx_automatic_fk", False)
+                ) or (
+                    isinstance(relation, OneToOneRel)
+                    and getattr(field_def.resolve, "_gqx_automatic_reverse_o2o", False)
                 ):
                     target_type = _gdx_graphene_type(child)
                     if has_object_type_queryset_override(target_type):
@@ -4178,8 +4180,8 @@ def apply_object_type_get_queryset(
 
     The choke point for the per-request scoping hook on queryset-based reads.
     It also scopes a generated mutation's destination FK/M2M ID link before
-    persistence. Root, declared nested, and automatic FK/reverse-FK output
-    paths call it before serving rows. Automatic O2O/M2M output traversal,
+    persistence. Root, declared nested, automatic FK/reverse-FK and automatic
+    OneToOne output paths call it before serving rows. M2M output traversal,
     custom resolvers, and joined filters are separate paths; this function
     does not establish a global row-level security policy.
 

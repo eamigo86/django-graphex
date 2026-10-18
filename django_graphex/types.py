@@ -51,6 +51,7 @@ from .utils import (
     apply_object_type_get_queryset,
     get_model_fields,
     get_Object_or_None,
+    has_object_type_queryset_override,
     is_valid_django_model,
     maybe_queryset,
     not_found_error,
@@ -802,16 +803,41 @@ def _compile_reverse_o2o_fields(
 
         # Single nullable object field (graphene renders reverse O2O ALWAYS
         # nullable: required=is_required(field) and input_flag=='create' is
-        # always False for output). The resolver reads the reverse accessor;
-        # Django raises RelatedObjectDoesNotExist when the row has no related
-        # instance — return None in that case (a nullable field).
-        def _resolver(root: Any, _info: Any, *, _name: str = accessor) -> Any:
+        # always False for output). A scoped prefetch stores the visible child
+        # separately from any unscoped relation cache. Without that prefetch,
+        # the resolver checks the reverse accessor against the active hook;
+        # Django raises RelatedObjectDoesNotExist when the row has no child.
+        def _resolver(
+            root: Any,
+            _info: Any,
+            *,
+            _name: str = accessor,
+            _target_gql: Any = compiled,
+        ) -> Any:
             if isinstance(root, dict):
                 return root.get(_name)
+            from .core.compat import _gdx_graphene_type
+
+            target_type = _gdx_graphene_type(_target_gql)
+            if has_object_type_queryset_override(target_type):
+                sentinel = object()
+                prefetched = getattr(root, f"_gqx_scoped_{_name}", sentinel)
+                if prefetched is not sentinel:
+                    return prefetched
             try:
-                return getattr(root, _name, None)
+                related = getattr(root, _name, None)
             except ObjectDoesNotExist:
                 return None
+            if related is None or not has_object_type_queryset_override(target_type):
+                return related
+            alias = getattr(getattr(root, "_state", None), "db", None)
+            queryset = related.__class__._default_manager.db_manager(alias).filter(
+                pk=related.pk
+            )
+            queryset = apply_object_type_get_queryset(queryset, target_type, _info)
+            return related if queryset.exists() else None
+
+        _resolver._gqx_automatic_reverse_o2o = True  # type: ignore[attr-defined]
 
         out[to_camel_case(accessor)] = GraphQLField(
             type_=compiled,
