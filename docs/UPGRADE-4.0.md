@@ -62,8 +62,9 @@ match, review those filters and destination hooks.
 
 Direct source FK-ID filters such as `author: { exact: 7 }` keep their existing
 contract; a hidden target ID may still match the source row. An omitted filter
-and real nullable-FK matches also keep their meanings. M2M, O2O,
-custom filter bodies and ordering are not changed by this filter rule. See
+and real nullable-FK matches also keep their meanings. O2O,
+custom filter bodies and ordering are not changed by this filter rule. M2M
+filters have their own bounded rule below. See
 [forward-FK filter scope](usage/filtering.md#forward-fk-filter-scope).
 
 ### Review filters that traverse a reverse FK
@@ -77,6 +78,19 @@ lookup behavior. Review callers that previously used hidden child fields or
 IDs to select parents. An automatic reverse output accessor remains required:
 an explicitly declared or permission-pruned relation still has no filter path.
 See [reverse-FK filter scope](usage/filtering.md#reverse-fk-filter-scope).
+
+### Review filters that traverse an M2M relation
+
+Both forward and reverse M2M filter paths now apply the destination type's
+request-specific `get_queryset` before a linked target can satisfy the
+predicate. Hidden targets no longer make visible sources match. Direct and
+nested target-ID lookups are scoped as well; unlike a direct forward-FK ID,
+an M2M ID is read through the target table. An absent or hidden-only visible
+target set retains ordinary relation-NULL behavior, and separate `and`
+branches can still use different visible targets. Review filters that
+previously selected sources through hidden tags or other M2M destinations.
+This does not change M2M output reads, through-model permissions, custom
+filter bodies or ordering. See [M2M filter scope](usage/filtering.md#m2m-filter-scope).
 
 ### Check custom integration code
 

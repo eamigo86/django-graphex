@@ -14,12 +14,21 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Scope forward and reverse many-to-many filters to each destination type's
+  request-specific `get_queryset`. A linked hidden target no longer satisfies
+  a nested field or target-ID predicate. One relation object retains one
+  visible target witness, separate `and` branches may use different targets,
+  and `not` complements the matching-parent set. Empty and absent-target
+  predicates keep their existing meanings. This does not scope M2M output
+  reads, through models, O2O, custom filter bodies or ordering.
+
 - Scope public nested forward-FK filters to the destination type's
   request-specific `get_queryset`. Hidden target rows no longer make a
   visible source row match; each hop in a forward-FK chain is checked.
   Real absent-FK NULL matches, unrelated Boolean branches, and direct source
   FK-ID predicates retain their existing meanings. This does not scope
-  M2M, O2O, custom filter bodies, or ordering.
+  O2O, custom filter bodies, or ordering. M2M filters have the separate
+  bounded rule above.
 
 - Scope public reverse-FK filters to the child type's request-specific
   `get_queryset`. One visible child must satisfy each grouped predicate;
@@ -27,7 +36,8 @@ All notable changes to this library are documented here. The format is based on
   complements the matching-parent set. Direct reverse-child IDs are scoped,
   unlike direct forward source FK IDs. Default and named output accessors now
   resolve declarations using their ORM query names without reopening a
-  declared or pruned relation. M2M/O2O and custom filters remain separate.
+  declared or pruned relation. M2M has the separate bounded rule above; O2O
+  and custom filters remain separate.
 
 - Apply the destination type's `get_queryset` hook to automatic forward-FK
   and reverse-FK output reads. Hidden nullable FK targets now resolve to

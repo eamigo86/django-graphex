@@ -781,7 +781,7 @@ def _traversed_type(node_type: Any, name: str) -> Any:
         The compiled type the relation resolves to, or "None" when the type
         does not publish that relation.
     """
-    from django.db.models import ManyToOneRel
+    from django.db.models import ManyToManyRel, ManyToOneRel
 
     from django_graphex.core.compat import _gdx_graphene_type
     from django_graphex.core.output_compiler import MASKED_COLUMN_EXT
@@ -795,7 +795,7 @@ def _traversed_type(node_type: Any, name: str) -> Any:
         model = getattr(getattr(output_type, "_meta", None), "model", None)
         if model is not None:
             field = model._meta.get_field(name)
-            if isinstance(field, ManyToOneRel):
+            if isinstance(field, (ManyToOneRel, ManyToManyRel)):
                 relation = fields.get(to_camel_case(field.get_accessor_name()))
     if relation is None or (getattr(relation, "extensions", None) or {}).get(
         MASKED_COLUMN_EXT

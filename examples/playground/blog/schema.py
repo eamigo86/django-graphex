@@ -241,8 +241,9 @@ class PostType(DjangoObjectType):
     # The destination hook also scopes automatic FK and reverse-FK output reads.
     # This is not a global row policy: the Playground declares a direct author
     # FK-ID filter, not an author-field traversal. Automatic reverse-FK filter
-    # traversals also use the destination hook; M2M/O2O filters and custom
-    # resolvers remain separate. See docs/usage/filtering.md.
+    # traversals and M2M filters also use the destination hook. This example
+    # declares no M2M filter path; O2O filters and custom resolvers retain
+    # separate contracts. See docs/usage/filtering.md.
     #
     #   { posts { results { title status } } }                  scoped   (published only)
     #   { categories { name posts { title status } } }          scoped   (declared hatch,
@@ -257,8 +258,9 @@ class PostType(DjangoObjectType):
         This hook runs on all four top-level field types and on automatic
         FK/reverse-FK output reads, so anonymous callers see only published
         posts while authenticated callers see all. Forward-FK and reverse-FK
-        filters have destination-hook rules, while direct source FK-ID filters and custom
-        resolvers retain separate contracts; see docs/usage/filtering.md.
+        and M2M filters have destination-hook rules, while direct source FK-ID
+        filters and custom resolvers retain separate contracts; see
+        docs/usage/filtering.md.
 
         Args:
             queryset: The base Post queryset to scope.

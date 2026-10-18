@@ -230,9 +230,12 @@ level.
     hook too; a hidden destination cannot satisfy that filter branch. Reverse
     child-ID lookups are scoped because they traverse child rows. Direct source
     FK-ID lookups, automatic one-to-one and many-to-many output relations,
-    custom resolvers, M2M/O2O filter paths, and ordering retain separate
-    behavior. See [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
-    [reverse-FK filter scope](filtering.md#reverse-fk-filter-scope)
+    custom resolvers, O2O filter paths, and ordering retain separate
+    behavior. M2M filters now have a bounded destination-hook rule, but M2M
+    output reads remain outside this automatic output policy. See
+    [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
+    [reverse-FK filter scope](filtering.md#reverse-fk-filter-scope),
+    [M2M filter scope](filtering.md#m2m-filter-scope)
     and [relation input scope](permission-scoped-schema.md). Do not infer a
     tenant-wide guarantee from these bounded paths.
 

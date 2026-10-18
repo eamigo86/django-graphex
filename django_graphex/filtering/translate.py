@@ -251,6 +251,10 @@ def to_q(
 
         related = _relation_target(model, key)
         if related is not None and _scope is not None:
+            many_q = _scope.many_to_many_filter(model, key, value, prefix)
+            if many_q is not None:
+                result &= many_q
+                continue
             reverse_q = _scope.reverse_filter(model, key, value, prefix)
             if reverse_q is not None:
                 result &= reverse_q

@@ -355,10 +355,10 @@ they do not retry the filter without the scope. No destination rows are loaded
 into Python for this check: the ORM composes the hook's queryset as a
 same-database subquery.
 
-This is not a global relation policy. Many-to-many and one-to-one filter
-paths, custom `@filter_field` bodies, ordering, and direct source FK-ID
-lookups retain their separate contracts. Reverse-FK filters have the bounded
-rule below. See
+This is not a global relation policy. One-to-one filter paths, custom
+`@filter_field` bodies, ordering, and direct source FK-ID lookups retain
+their separate contracts. Reverse-FK and M2M filters have the bounded
+rules below. See
 [relation output scope](types.md#relation-scope-hatch) and
 [permission-scoped schemas](permission-scoped-schema.md).
 
@@ -391,8 +391,48 @@ from `related_query_name`, to the same automatically published child type.
 These query-name paths were formerly refused even when the automatic accessor
 was published. This does **not** reopen a relation replaced by a declared
 resolver such as `DjangoFilterListField`, or one removed from a permission-
-scoped schema; both still lose their filter path. M2M, O2O, custom filter
-bodies and ordering remain separate contracts.
+scoped schema; both still lose their filter path. M2M filters have the bounded
+rule below; O2O, custom filter bodies and ordering remain separate contracts.
+
+### Many-to-many filters use a visible target witness { #m2m-filter-scope }
+
+Forward and reverse M2M filters apply the destination type's
+`get_queryset(queryset, info)` to the current request. The target must be
+both linked through the M2M relation and visible under that hook to witness
+the predicate. This includes target-ID lookups, whether declared directly
+as `{"tags": ("exact", "in")}` or nested as `tags__id`. Unlike a direct
+forward-FK ID, an M2M target ID is not a source-owned column.
+
+For example, with `filter_fields = {"tags__label": ("exact",)}`, a post
+whose only tag is hidden by `TagType.get_queryset` does not match:
+
+```graphql
+{ posts(filter: { tags: { label: { exact: "internal" } } }) {
+    results { id }
+    totalCount
+} }
+```
+
+One relation object uses one visible target for all its fields; separate
+explicit `and` branches can use different visible targets. An enclosing
+`not` complements the set of matching parents, not each joined M2M row, so
+a visible nonmatching sibling cannot invert a visible match. An absent or
+hidden-only visible target set retains the ordinary relation-NULL lookup
+meaning. Empty relation objects and omitted filters are no-ops. Longer
+paths scope each supported destination hop independently.
+
+The ORM composes the visible target as a correlated SQL witness on the
+source queryset's database alias. It does not load all target IDs into
+Python or issue one authorization query per parent. Hook exceptions reject
+the request instead of retrying unscoped. Filter declarations use Django's
+ORM query name; an automatically published reverse output accessor may have
+a different name. Replacing that accessor with an explicit resolver or
+pruning it from the active schema does not reopen the filter path.
+
+This rule does **not** authorize M2M output reads, one-to-one traversal,
+custom filter bodies, ordering, or access control on the through model.
+See [relation output scope](types.md#relation-scope-hatch) and
+[relation input scope](permission-scoped-schema.md).
 
 ## Logical operators: `and` / `or` / `not`
 

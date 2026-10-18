@@ -15,6 +15,8 @@ from django.db.models import (
     Case,
     Exists,
     ForeignKey,
+    ManyToManyField,
+    ManyToManyRel,
     ManyToOneRel,
     OuterRef,
     Q,
@@ -213,6 +215,102 @@ class _ForwardFkFilterScope:
             matching |= ~Q(Exists(linked))
         return matching
 
+    def many_to_many_is_scoped(self, model: type[Model], name: str) -> bool:
+        """Identify an M2M destination hook in the active compiled schema.
+
+        Args:
+            model: Model owning the relation lookup.
+            name: Forward or reverse ORM relation name.
+
+        Returns:
+            Whether the published destination type scopes its rows.
+
+        Raises:
+            GraphQLError: If the active schema omits the destination type.
+        """
+        from django_graphex.core.compat import _gdx_graphene_type
+        from django_graphex.utils import has_object_type_queryset_override
+
+        from .native_schema import _traversed_type
+
+        field = model._meta.get_field(name)
+        if (
+            not isinstance(field, (ManyToManyField, ManyToManyRel))
+            or self.node_type is None
+        ):
+            return False
+        child_type = _traversed_type(self.node_type, name)
+        if child_type is None:
+            raise GraphQLError(
+                f"The filter relation {model._meta.label}.{name} has no "
+                "destination type in the active schema."
+            )
+        return has_object_type_queryset_override(_gdx_graphene_type(child_type))
+
+    def many_to_many_filter(
+        self, model: type[Model], name: str, value: Any, prefix: str
+    ) -> Q | None:
+        """Filter an M2M through one request-visible destination witness.
+
+        The ORM relation lookup supplies the through-table link, including
+        custom through fields and reverse accessors. Visibility and the child
+        predicate are evaluated on the same destination row before EXISTS is
+        complemented by an enclosing NOT.
+
+        Args:
+            model: Model owning the M2M relation lookup.
+            name: Forward or reverse ORM relation name.
+            value: Nested destination fields or direct destination IDs.
+            prefix: ORM path from the root source to this model.
+
+        Returns:
+            A source-row condition, or None when this relation has no hook.
+
+        Raises:
+            GraphQLError: If a destination hook changes model or database alias.
+        """
+        from django_graphex.core.compat import _gdx_graphene_type
+        from django_graphex.utils import apply_object_type_get_queryset
+
+        from .native_schema import _traversed_type
+
+        if not self.many_to_many_is_scoped(model, name):
+            return None
+        field = model._meta.get_field(name)
+        related = field.related_model
+        child_type = _traversed_type(self.node_type, name)
+        child_scope = type(self)(self.info, self.alias, child_type)
+        if _is_pk_lookups(value):
+            child_q = _leaf_q("", related._meta.pk.name, value)
+        else:
+            child_q, _ = to_q(value, related, _scope=child_scope)
+        if not child_q:
+            return Q()
+
+        output_type = _gdx_graphene_type(child_type)
+        destination = related._default_manager.db_manager(self.alias).all()
+        visible = apply_object_type_get_queryset(destination, output_type, self.info)
+        if (
+            visible.model._meta.concrete_model is not related._meta.concrete_model
+            or visible.db != self.alias
+        ):
+            raise GraphQLError(
+                f"{output_type.__name__}.get_queryset must retain the "
+                "destination model and database alias for a relation filter."
+            )
+        if not _is_pk_lookups(value) and _has_independent_many_and(value, related):
+            child_q = _independent_many_q(value, visible, scope=child_scope)
+        reverse_name = (
+            field.related_query_name()
+            if isinstance(field, ManyToManyField)
+            else field.field.name
+        )
+        linked = visible.filter(**{f"{reverse_name}__pk": OuterRef(f"{prefix}pk")})
+        matching = Q(Exists(linked.filter(child_q)))
+        if _matches_missing_child(child_q):
+            matching |= ~Q(Exists(linked))
+        return matching
+
 
 def _matches_missing_child(condition: Q) -> bool:
     """Evaluate a child condition against a missing reverse-join row.
@@ -369,7 +467,11 @@ def _independent_many_q(
             if (
                 related is not None
                 and not (
-                    scope is not None and scope.reverse_is_scoped(queryset.model, key)
+                    scope is not None
+                    and (
+                        scope.reverse_is_scoped(queryset.model, key)
+                        or scope.many_to_many_is_scoped(queryset.model, key)
+                    )
                 )
                 and not _is_pk_lookups(value)
                 and _has_independent_many_and(value, related)
