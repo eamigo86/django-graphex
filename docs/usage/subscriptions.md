@@ -674,8 +674,13 @@ HTTP error is impossible.
 
 ### Unsubscribing
 
-Both transports guarantee that a gone client is a gone subscriber — teardown
-discards every channel-layer group the operation had joined.
+Both transports tear down a gone client's source by discarding its joined
+channel-layer groups. If cancellation arrives while a group join is in flight,
+startup also attempts to discard that source's channel from the attempted
+group. A conforming channel layer ignores a discard for a membership that was
+never created, as required by the [Channels channel-layer specification](https://channels.readthedocs.io/en/stable/channel_layer_spec.html).
+Backend discard failures can still prevent cleanup; this is not
+a guarantee across backend outages or distributed races.
 
 **WebSocket** — send a `complete` frame for the operation id:
 

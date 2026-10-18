@@ -163,18 +163,37 @@ class ChannelLayerSource:
     async def start(self) -> "ChannelLayerSource":
         """Allocate a channel and "group_add" to EXACTLY the selected groups.
 
-        Idempotent: a second call is a no-op. Joining only "self._groups"
-        enforces the #1420 guard — a single-action source never touches the
-        other two groups.
+        Idempotent after success: a second call is a no-op. Joining only
+        "self._groups" enforces the #1420 guard — a single-action source never
+        touches the other two groups. If startup is cancelled or a join fails,
+        it attempts to discard every confirmed or in-flight membership before
+        propagating the original failure. The channel layer's absent-member
+        discard is a no-op; backend discard failures remain best-effort.
 
         Returns:
             "self" so "await source.start()" can be chained.
+
+        Raises:
+            BaseException: The original startup failure or cancellation after
+                best-effort group cleanup.
         """
         if self._started:
             return self
         self._channel = await self._channel_layer.new_channel()
         for group in self._groups:
-            await self._channel_layer.group_add(group, self._channel)
+            try:
+                await self._channel_layer.group_add(group, self._channel)
+            except BaseException:  # noqa: BLE001 - cancellation also needs cleanup
+                # Discarding an absent member is a no-op in Channels' group
+                # contract, covering failures before or after backend join.
+                self._joined.append(group)
+                try:
+                    await self.aclose()
+                except BaseException:  # noqa: BLE001 - preserve the startup failure
+                    # Cleanup is best-effort; never replace the original startup
+                    # exception or cooperative cancellation with a discard error.
+                    pass
+                raise
             self._joined.append(group)
         self._started = True
         return self

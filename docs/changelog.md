@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Clean up subscription group memberships when WebSocket or SSE startup is
+  cancelled after a backend join but before the join call returns. Partial
+  startup failures attempt the same source-owned cleanup while preserving the
+  original error; backend discard failures remain best-effort. Wire frames,
+  authentication, and ordinary subscription delivery are unchanged.
+
 - Release a WebSocket subscription's operation ID after source teardown and
   before sending its server `complete` frame, so an immediate same-ID subscribe
   is not mistaken for a concurrent duplicate. Late callbacks cannot remove a
