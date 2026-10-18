@@ -2834,9 +2834,17 @@ def _walk_filtered_prefetches(
                 # The hook will be re-applied below on whichever plain path is taken.
                 # is_window=False on the plain fallback (FINAL path taken).
 
-            # Plain path: build a filtered Prefetch only when a filter is applied.
-            if filter_value:
-                pf = inst.build_prefetch(lookup, filter_value, info)
+            # A destination scope also needs a dedicated prefetch when the
+            # client supplied no filter. Keeping it in to_attr prevents an
+            # unrelated unscoped relation cache from becoming an output path.
+            reverse_fk = inst._is_reverse_fk(model)
+            scoped_item = reverse_fk and has_object_type_queryset_override(
+                getattr(inst.type._meta, "baseType", None)
+            )
+            if filter_value or scoped_item:
+                pf = inst.build_prefetch(
+                    lookup, filter_value, info, scope_reverse_fk=reverse_fk
+                )
                 # Phase E (AC2): apply hook on filtered-plain Prefetch queryset.
                 if hook is not None:
                     pf = Prefetch(
@@ -2848,6 +2856,7 @@ def _walk_filtered_prefetches(
                             filter_value=filter_value,
                             is_window=False,
                         ),
+                        to_attr=pf.to_attr,
                     )
                 out.append(pf)
             else:
@@ -3569,6 +3578,109 @@ def _root_selection_set(field_nodes: Sequence[FieldNode]) -> SelectionSetNode | 
     )
 
 
+def _scoped_fk_prefetches(
+    gql_type: GraphQLObjectType | None,
+    model: type[Model],
+    selection_set: SelectionSetNode | None,
+    info: GraphQLResolveInfo,
+    *,
+    alias: str,
+    prefix: str = "",
+    found: dict[str, Prefetch] | None = None,
+    visited: set[tuple[int, int, str]] | None = None,
+    _fmap_cache: dict[tuple[int, str], Any] | None = None,
+) -> dict[str, Prefetch]:
+    """Plan batched scoped FK reads for selected automatic relation fields.
+
+    Args:
+        gql_type: GraphQL type containing the selected fields.
+        model: Django model represented at this selection level.
+        selection_set: Selected fields, including applicable fragments.
+        info: Current request's resolve information.
+        alias: Database alias of the parent queryset.
+        prefix: ORM path to the current model.
+        found: Prefetches already planned for this request.
+        visited: Selection contexts already traversed.
+        _fmap_cache: Request-local Django field map cache.
+
+    Returns:
+        Prefetches keyed by ORM path, each storing a scoped FK separately.
+    """
+    from django.db.models import ForeignKey
+
+    from .core.compat import _gdx_graphene_type
+
+    if found is None:
+        found = {}
+    if visited is None:
+        visited = set()
+    if gql_type is None or selection_set is None:
+        return found
+    key = (id(gql_type), id(selection_set), prefix)
+    if key in visited:
+        return found
+    visited.add(key)
+    relations = _relation_field_map(model, _fmap_cache)
+    for node in _iter_unique_promotion_fields(
+        selection_set,
+        gql_type,
+        info.schema,
+        info.fragments,
+        info.variable_values,
+    ):
+        field_def = gql_type.fields.get(node.name.value)
+        if field_def is None or node.selection_set is None:
+            continue
+        child = get_named_type(field_def.type)
+        if not isinstance(child, GraphQLObjectType):
+            continue
+        relation = relations.get(node.name.value)
+        if relation is None:
+            relation = relations.get(to_snake_case(node.name.value))
+        next_model = model
+        next_prefix = prefix
+        if relation is not None:
+            optimization = _relation_optimization(relation)
+            if optimization is not None:
+                _, accessor = optimization
+                next_model = relation.related_model
+                if next_model is None:
+                    continue
+                path = prefix + accessor
+                next_prefix = path + LOOKUP_SEP
+                if (
+                    isinstance(relation, ForeignKey)
+                    and not getattr(relation, "one_to_one", False)
+                    and getattr(field_def.resolve, "_gqx_automatic_fk", False)
+                ):
+                    target_type = _gdx_graphene_type(child)
+                    if has_object_type_queryset_override(target_type):
+                        queryset = next_model._default_manager.db_manager(alias).all()
+                        queryset = apply_object_type_get_queryset(
+                            queryset, target_type, info
+                        )
+                        found.setdefault(
+                            path,
+                            Prefetch(
+                                path,
+                                queryset=queryset,
+                                to_attr=f"_gqx_scoped_{accessor}",
+                            ),
+                        )
+        _scoped_fk_prefetches(
+            child,
+            next_model,
+            node.selection_set,
+            info,
+            alias=alias,
+            prefix=next_prefix,
+            found=found,
+            visited=visited,
+            _fmap_cache=_fmap_cache,
+        )
+    return found
+
+
 def _apply_optimizations(
     base: QuerySet,
     model: type[Model],
@@ -3882,6 +3994,26 @@ def _apply_optimizations(
         )
     else:
         filtered_prefetches, hook_map, unsafe_lookups = [], {}, set()
+    scoped_fks = _scoped_fk_prefetches(
+        _root_named if isinstance(_root_named, GraphQLObjectType) else None,
+        model,
+        root_selection_set,
+        info,
+        alias=base.db,
+        _fmap_cache=_fmap_cache,
+    )
+    if scoped_fks:
+        # A joined FK cache is not a scoped destination read. The scoped
+        # Prefetch stores its result separately and replaces that join path.
+        select_related = [
+            path
+            for path in select_related
+            if not any(
+                path == scoped or path.startswith(scoped + LOOKUP_SEP)
+                for scoped in scoped_fks
+            )
+        ]
+        filtered_prefetches.extend(scoped_fks.values())
     # A lookup whose selections disagree about their filter must not be cached
     # at all: the plain prefetch (and anything under it, which would populate
     # the same cache) is dropped so every selection resolves per parent.
@@ -4044,19 +4176,12 @@ def apply_object_type_get_queryset(
 ) -> QuerySet:
     """Apply a "DjangoObjectType.get_queryset" row-level scope to a queryset.
 
-    The choke point for the per-request scoping hook on the paths that build a
-    QUERYSET. It also scopes a generated mutation's destination FK/M2M ID
-    link before persistence. The read callers are "queryset_factory" (a fresh
-    manager), "DjangoObjectType.get_node" (a primary-key lookup), and the
-    related fast path in "DjangoFilterListField.list_resolver" (a parent's
-    relation accessor).
-
-    It is NOT every path that serves rows for a "DjangoObjectType". An
-    auto-expanded relation field never builds a queryset at all: the to-MANY arm
-    reads the parent's prefetch cache and the to-ONE (FK / OneToOne) arm is a
-    plain attribute read off the already-fetched parent, so neither reaches this
-    function and neither is scoped. That boundary is documented for users in
-    docs/usage/types.md, together with the "resolve_<relation>" escape hatch.
+    The choke point for the per-request scoping hook on queryset-based reads.
+    It also scopes a generated mutation's destination FK/M2M ID link before
+    persistence. Root, declared nested, and automatic FK/reverse-FK output
+    paths call it before serving rows. Automatic O2O/M2M output traversal,
+    custom resolvers, and joined filters are separate paths; this function
+    does not establish a global row-level security policy.
 
     The sentinel "_dgx_has_object_type_get_queryset" is set on
     "DjangoObjectType" and inherited by every plain subclass; it is NOT present
@@ -4090,6 +4215,26 @@ def apply_object_type_get_queryset(
             f"unscoped rows."
         )
     return hooked
+
+
+def has_object_type_queryset_override(output_type: Any) -> bool:
+    """Report whether an output type defines a non-default row scope.
+
+    Args:
+        output_type: Candidate Django object output type.
+
+    Returns:
+        Whether the type overrides the default no-op queryset hook.
+    """
+    if output_type is None or not getattr(
+        output_type, "_dgx_has_object_type_get_queryset", False
+    ):
+        return False
+    from .types import DjangoObjectType
+
+    return (
+        output_type.get_queryset.__func__ is not DjangoObjectType.get_queryset.__func__
+    )
 
 
 def queryset_factory(
@@ -4148,6 +4293,18 @@ def queryset_factory(
     # -------------------------------------------------------------------------
 
     if not graphql_api_settings.OPTIMIZE_QUERYSET:
+        root_type = get_named_type(info.return_type)
+        scoped_fks = _scoped_fk_prefetches(
+            root_type if isinstance(root_type, GraphQLObjectType) else None,
+            model,
+            _root_selection_set(info.field_nodes),
+            info,
+            alias=base.db,
+        )
+        if scoped_fks:
+            prefetches = list(scoped_fks.values())
+            base = _drop_superseded_prefetches(base, prefetches)
+            base = base.prefetch_related(*prefetches)
         return base
 
     if graphql_api_settings.OPTIMIZER_SAFE_MODE:

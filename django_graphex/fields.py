@@ -39,6 +39,7 @@ from .utils import (
     find_field,
     get_extra_filters,
     get_related_fields,
+    has_object_type_queryset_override,
     is_valid_django_model,
     maybe_queryset,
     queryset_factory,
@@ -839,8 +840,29 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         qs = filter_backend.apply(qs, filter_value)
         return apply_custom_filters(qs, self.custom_filters, info, filter_value)
 
+    def _is_reverse_fk(self, parent_model: type[Model]) -> bool:
+        """Check whether this nested accessor is a reverse foreign key.
+
+        Args:
+            parent_model: Model that owns the relation accessor.
+
+        Returns:
+            Whether the accessor is a reverse-FK relation.
+        """
+        return any(
+            relation.get_accessor_name() == self.accessor
+            and relation.one_to_many
+            and not relation.many_to_many
+            for relation in parent_model._meta.related_objects
+        )
+
     def build_prefetch(
-        self, lookup: str, filter_value: Any, info: ResolveInfo
+        self,
+        lookup: str,
+        filter_value: Any,
+        info: ResolveInfo,
+        *,
+        scope_reverse_fk: bool = False,
     ) -> Prefetch:
         """Build a "Prefetch" of the related set, filtered by "filter_value".
 
@@ -853,14 +875,23 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             lookup: the relation lookup path to prefetch.
             filter_value: the filter input value applied to the related set.
             info: the GraphQL resolve info.
+            scope_reverse_fk: Apply the destination hook for a reverse FK only.
 
         Returns:
             A Prefetch object for the filtered related set.
         """
         model = self.type._meta.model
+        item_type = getattr(self.type._meta, "baseType", None)
         qs = model._default_manager.all()
+        if scope_reverse_fk:
+            qs = apply_object_type_get_queryset(qs, item_type, info)
         qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
-        return Prefetch(lookup, queryset=qs)
+        to_attr = (
+            f"_gqx_scoped_{self.accessor}"
+            if scope_reverse_fk and has_object_type_queryset_override(item_type)
+            else None
+        )
+        return Prefetch(lookup, queryset=qs, to_attr=to_attr)
 
     def build_window_prefetch(
         self,
@@ -1006,6 +1037,10 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # --- Build the window queryset -----------------------------------------
         qs = child._default_manager.all()
+        if self._is_reverse_fk(related_field.model):
+            qs = apply_object_type_get_queryset(
+                qs, getattr(self.type._meta, "baseType", None), info
+            )
         qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
 
         # --- Phase E (AC1): apply optimize_<field> hook on filter-applied base qs
@@ -1113,17 +1148,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
     ) -> DjangoListObjectBase:
         """Resolve the nested list, preferring the parent's prefetch cache.
 
-        "output_type" is accepted for signature compatibility with the parent
-        class but is intentionally unused here: nested-relation fields resolve
-        rows from the parent's prefetch cache or relation accessor, not from a
-        fresh top-level queryset, so the item type's "get_queryset" hook is
-        not applicable.
+        The item output type scopes relation rows before counts or pagination.
+        Optimized scoped rows use a dedicated prefetch attribute so an older
+        unscoped relation cache cannot bypass the scope.
 
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
-            output_type: unused; present for signature compatibility with
-                "DjangoListObjectField.list_resolver".
+            output_type: Item type whose queryset hook scopes related rows.
             root: the parent instance owning the related set.
             info: the GraphQL resolve info.
             **kwargs: query arguments, including the "filter" value.
@@ -1136,6 +1168,10 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             return DjangoListObjectBase(
                 count=0, results=[], results_field_name=results_field_name
             )
+
+        scope_reverse_fk = self._is_reverse_fk(root._meta.model)
+        if not scope_reverse_fk:
+            output_type = None
 
         # --- C3: check for window-sliced prefetch first -------------------------
         # build_window_prefetch stores results via to_attr="_gqx_win_<accessor>"
@@ -1175,6 +1211,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                     # optimize_<field> hook -- otherwise the overshoot page
                     # reports a different (and unscoped) total than page one.
                     manager_qs = getattr(root, self.accessor).all()
+                    manager_qs = apply_object_type_get_queryset(
+                        manager_qs, output_type, info
+                    )
                     filtered_qs = self.apply_filters(
                         manager_qs, filter_backend, filter_value, info
                     )
@@ -1200,10 +1239,21 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                 already_paginated=True,
             )
 
+        scoped_attr = f"_gqx_scoped_{self.accessor}"
+        scoped_results = getattr(root, scoped_attr, None)
+        if scoped_results is not None:
+            return DjangoListObjectBase(
+                count=len(scoped_results),
+                results=scoped_results,
+                results_field_name=results_field_name,
+            )
+
         # If the optimizer prefetched this relation (filtered or full), use the
         # cache as-is and paginate/order it in memory -> no extra query.
         cache = getattr(root, "_prefetched_objects_cache", None) or {}
-        if self.accessor in cache:
+        if self.accessor in cache and not has_object_type_queryset_override(
+            output_type
+        ):
             results = list(cache[self.accessor])
             return DjangoListObjectBase(
                 count=len(results),
@@ -1212,11 +1262,12 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             )
 
         related_manager = getattr(root, self.accessor)
+        scoped_queryset = apply_object_type_get_queryset(
+            related_manager.all(), output_type, info
+        )
 
         if filter_value:
-            qs = self.apply_filters(
-                related_manager.all(), filter_backend, filter_value, info
-            )
+            qs = self.apply_filters(scoped_queryset, filter_backend, filter_value, info)
             # LAZY totalCount: defer the COUNT to first .count access (only when
             # totalCount is selected). count() clones qs, safe post-iteration.
             return DjangoListObjectBase(
@@ -1226,7 +1277,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             )
 
         # Unfiltered and not prefetched: materialize the relation.
-        results = list(related_manager.all())
+        results = list(scoped_queryset)
         return DjangoListObjectBase(
             count=len(results),
             results=results,
@@ -1234,37 +1285,28 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         )
 
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
-        """Bind (manager, filter_backend, output_type=None) to the nested resolver.
+        """Bind the manager, filter backend, and item type to the nested resolver.
 
         Overrides the parent "DjangoListObjectField.wrap_resolve" because
-        nested-relation fields obtain their rows from the parent's prefetch
-        cache or relation accessor -- not from a fresh top-level queryset -- so
-        the item type's "get_queryset" hook must NOT be applied here.
-        "output_type" is bound as None; "list_resolver" accepts it for
-        signature compatibility but ignores it.
+        Nested-relation fields obtain rows from the parent's scoped prefetch
+        or relation accessor. The item type is bound for destination scoping
+        on reverse-FK paths; other relation kinds keep their existing behavior.
 
-        Wiring "get_queryset" on nested relations would require rebuilding
-        the prefetch queryset inside the resolver, which conflicts with the
-        window-pagination and prefetch optimizations. The documented hatch for
-        per-relation row scoping is to DECLARE the relation on the parent type
-        as a "DjangoFilterListField", which replaces this auto-expanded
-        container and does apply the hook. A bare "resolve_<rel>" method is not
-        the hatch: this method binds "self.resolver or self.list_resolver" and
-        never consults the parent class.
+        A bare "resolve_<rel>" method remains inert because the generated field
+        owns its resolver; explicit declarations retain their own behavior.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the manager, filter backend, and a None
-            output type placeholder.
+            A partial that binds the manager, filter backend, and item type.
         """
         resolver = self.resolver or self.list_resolver
         return partial(
             resolver,
             self.type._meta.model._default_manager,
             self.filter_backend,
-            None,  # output_type: nested path does not apply get_queryset hook
+            getattr(self.type._meta, "baseType", None),
         )
 
 

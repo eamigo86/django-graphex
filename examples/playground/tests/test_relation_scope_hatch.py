@@ -1,13 +1,12 @@
-"""The relation-scope hatch, both arms, and the two axes each arm costs.
+"""Automatic relation scopes and the explicit relation-scope hatch.
 
-"PostType.get_queryset" hides DRAFT posts from anonymous callers — but it is a
-FIELD-level scope, so an AUTO-EXPANDED relation reads the parent's prefetch
-cache and never calls it. "blog/schema.py" mounts the documented escape hatch
-for both directions and leaves the unmounted shape standing beside it, so the
-boundary is visible rather than merely written down:
+"PostType.get_queryset" hides DRAFT posts from anonymous callers. Automatic
+reverse-FK reads and the declared list field both apply that scope. The
+declaration remains useful for changing the wire shape; the explicit user
+resolver demonstrates a custom visibility rule not supplied by UserType:
 
-- to-MANY: "CategoryType.posts = DjangoFilterListField(PostType)" runs the hook;
-  the auto-expanded "AuthorType.posts" container does not, and shows drafts.
+- to-MANY: both "CategoryType.posts = DjangoFilterListField(PostType)" and the
+  auto-expanded "AuthorType.posts" container hide drafts.
 - to-ONE: "AuthorType.user = Field(UserType)" plus "resolve_user" hides the
   linked user from anonymous callers.
 
@@ -101,15 +100,10 @@ def test_the_to_many_hatch_scopes_the_relation_for_an_anonymous_caller(
     assert statuses == ["PUBLISHED"], body
 
 
-def test_the_auto_expanded_relation_beside_it_is_not_scoped(
+def test_the_auto_expanded_reverse_fk_is_scoped(
     client: Client, one_of_each: Any
 ) -> None:
-    """Assert the unmounted shape still shows drafts, which is why the hatch exists.
-
-    This is the documented boundary, not a bug: rebuilding the prefetch
-    queryset inside the resolver would cost window pagination and the ".only()"
-    plan. Pinning it means the day the library closes it, this test says so
-    instead of the README quietly becoming wrong.
+    """Assert the automatic reverse-FK container hides drafts too.
 
     Args:
         client: The Django test client issuing the unauthenticated POST.
@@ -123,7 +117,7 @@ def test_the_auto_expanded_relation_beside_it_is_not_scoped(
         for author in body["data"]["authors"]["results"]
         for post in author["posts"]["results"]
     }
-    assert statuses == {"PUBLISHED", "DRAFT"}, body
+    assert statuses == {"PUBLISHED"}, body
 
 
 def test_the_to_one_hatch_hides_the_linked_user_from_an_anonymous_caller(

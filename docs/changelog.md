@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Apply the destination type's `get_queryset` hook to automatic forward-FK
+  and reverse-FK output reads. Hidden nullable FK targets now resolve to
+  `null`; reverse-FK results, windows, and `totalCount` include only visible
+  rows. Optimized scoped FK reads stay batched, while disabling optimization
+  can add per-parent scope queries. This does not scope O2O/M2M relations,
+  custom resolvers, or joined filters; clients previously relying on expanded
+  hidden rows should review their destination hooks before upgrading.
+
 - Add a local, evidence-bounded disposition of the 100 original audit claims
   in [the 4.0.0 audit report](audit-4.0.0.md). It separates scoped fixes,
   current contracts, recommendations, limited negative checks, and pending

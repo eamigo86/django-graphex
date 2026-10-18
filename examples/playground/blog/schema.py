@@ -238,34 +238,24 @@ class PostType(DjangoObjectType):
     # Try it: anonymous request → only PUBLISHED posts returned.
     #         authenticated request (log in via /admin) → all posts visible.
     #
-    # READ THE BOUNDARY BEFORE YOU COPY THIS — it is a FIELD-level scope, not a
-    # model-level one, and it is documented as such in
-    # docs/usage/types.md#relation-scope-hatch ("Remaining boundary: auto-expanded
-    # relation fields"). An AUTO-EXPANDED relation does not call it, in either
-    # direction, and the seed data below makes that visible rather than hiding it:
+    # The destination hook also scopes automatic FK and reverse-FK output reads.
+    # This is not a global row policy: joined filters and custom resolvers remain
+    # distinct paths. See docs/usage/types.md#relation-scope-hatch.
     #
     #   { posts { results { title status } } }                  scoped   (published only)
     #   { categories { name posts { title status } } }          scoped   (declared hatch,
     #                                                                     see CategoryType)
-    #   { authors { results { posts { results { status } } } } } NOT scoped — drafts
-    #                                                            come back through the
-    #                                                            auto-expanded relation
+    #   { authors { results { posts { results { status } } } } } scoped   (published only)
     #
-    # The third one is the documented behaviour, not a bug: rebuilding the prefetch
-    # queryset inside the resolver would break window pagination and the .only()
-    # plan. If you need the rows hidden through the relation too, declare the field
-    # — CategoryType.posts above is that same query with the hatch mounted.
+    # CategoryType.posts remains declared to demonstrate a plain-list wire shape.
     @classmethod
     def get_queryset(cls, queryset: QuerySet, info: GraphQLResolveInfo) -> QuerySet:
         """Scope every top-level Post query by the requester's auth state.
 
-        This hook runs on all four top-level field types (single, list,
-        paginated, list-object) before the query optimizer, so anonymous
-        callers see only published posts while authenticated callers see all.
-
-        It is a FIELD-level scope: an auto-expanded relation does not call it.
-        See the comment above and the relation-scope hatch in
-        "docs/usage/types.md".
+        This hook runs on all four top-level field types and on automatic
+        FK/reverse-FK output reads, so anonymous callers see only published
+        posts while authenticated callers see all. Joined filters and custom
+        resolvers are separate paths; see docs/usage/types.md.
 
         Args:
             queryset: The base Post queryset to scope.
@@ -294,20 +284,14 @@ class CategoryType(DjangoObjectType):
     """
 
     # ---- Relation-scope hatch, to-MANY arm ---------------------------------- #
-    # An AUTO-EXPANDED reverse relation reads out of the parent's prefetch cache
-    # and therefore never calls the child type's `get_queryset`. Left alone,
-    # `categories { posts { results { status } } }` hands an ANONYMOUS caller the
-    # DRAFT posts that `PostType.get_queryset` exists to hide — the leak
-    # docs/usage/types.md calls out under "Remaining boundary".
-    #
-    # Declaring the relation as a DjangoFilterListField replaces the auto-expanded
-    # container with a field that carries a resolver of its own, and that resolver
-    # runs the hook. Two costs, both deliberate:
+    # Automatic reverse-FK reads now apply PostType.get_queryset too. Declaring
+    # this relation as a DjangoFilterListField retains a separate wire shape
+    # and makes the filter-axis contract explicit. Two costs remain:
     #
     #   1. The WIRE SHAPE changes from the container (`posts { results { … } }`)
     #      to a plain list (`posts { … }`). Compare it against
-    #      `authors { results { posts { results { … } } } }`, which is still the
-    #      auto-expanded container and still shows drafts to anonymous callers.
+    #      `authors { results { posts { results { … } } } }`, which is the
+    #      auto-expanded container and also hides drafts from anonymous callers.
     #   2. `posts__…` leaves the filter axis. The entry below is REFUSED and
     #      STOPS THE SCHEMA BUILDING — it is not dropped in silence:
     #
@@ -378,11 +362,9 @@ class AuthorType(DjangoObjectType):
     # Explicit nested list (instead of the auto-generated one) so we can attach a
     # per-field optimize hook below. Reuses PostListType's pagination + filtering.
     #
-    # NOTE this is still the AUTO-EXPANDED shape, only mounted by hand: it reads
-    # from the prefetch cache, so PostType.get_queryset does NOT run here and an
-    # anonymous caller sees drafts through it. That is the documented boundary —
-    # CategoryType.posts is the same relation with the hatch mounted. See
-    # docs/usage/types.md#relation-scope-hatch.
+    # NOTE this retains the auto-expanded container shape while attaching an
+    # optimize hook. PostType.get_queryset still scopes its reverse-FK rows;
+    # CategoryType.posts demonstrates the separate plain-list shape.
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
 
     # ---- Relation-scope hatch, to-ONE arm ----------------------------------- #

@@ -601,6 +601,17 @@ The resolver returns a `QuerySet`, so the optimizer picks it up and adds
 GraphQL selection. If the resolver returned a plain list, the optimizer would
 leave it untouched (no queryset to decorate).
 
+For an automatic forward FK whose destination type overrides
+`get_queryset`, the optimizer uses a **scoped prefetch** in place of that FK's
+`select_related` join. This lets one destination query serve all selected
+parents while excluding hidden targets. Reverse-FK list prefetches and
+window-pagination queries apply the child type's scope before counting or
+slicing. A default, unchanged hook keeps the ordinary join/prefetch plan.
+With `OPTIMIZE_QUERYSET=False`, output still honors these scopes, but each
+uncached related value may require its own database check. This is a
+correctness guarantee, not a promise that disabling optimization preserves
+batching.
+
 !!! note "A manual prefetch of the same relation is replaced"
     A base queryset — from a resolver, from `Meta.queryset`, or from a type's
     `get_queryset` hook — may already carry `prefetch_related("posts")` for a

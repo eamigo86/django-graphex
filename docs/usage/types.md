@@ -207,41 +207,48 @@ level.
     issues one query per parent instead.  Types that declare no scope keep the
     cache and the single query.
 
-!!! warning "Remaining boundary: auto-expanded relation fields"
-    The hook is a **field-level** scope, not a model-level one.  Relation fields
-    that django-graphex **auto-expands** on a parent type do not call the child
-    type's `get_queryset`, in **both** directions:
+!!! warning "Automatic output relation scope and its limits"
+    An automatically exposed **forward FK** applies the destination type's
+    `get_queryset` before returning a related object. A destination excluded
+    by the hook appears as `null` on the nullable GraphQL FK field; the parent
+    remains visible. An automatically exposed **reverse FK** applies the child
+    type's hook before filtering, pagination and `totalCount`. A hidden first
+    child cannot make a visible page short or inflate its count.
+    This includes Django's default `*_set` accessors and a `related_name`
+    that differs from `related_query_name`.
 
-    * **to-MANY** — a reverse FK or M2M exposed as
-      `allAuthors { results { posts { results { title } } } }` (resolved by
-      `DjangoNestedListObjectField`) reads out of the parent's prefetch cache.
-    * **to-ONE** — a forward `ForeignKey` or `OneToOneField` exposed as
-      `allPosts { results { author { name } } }` is a plain attribute read off
-      the already-fetched parent (`select_related`).
+    With queryset optimization enabled, scoped FKs use a batched prefetch
+    rather than one membership query per parent. The reverse-FK prefetch and
+    window paths also scope their source querysets. Already-cached unscoped
+    relation values are not authorization evidence. With optimization disabled,
+    the resolver checks each related value against the request's hook; this is
+    correct but can cost one additional query per parent. Types with the
+    default no-op hook retain the ordinary read path.
 
-    So `{ allAuthors { results { name } } }` correctly hides a row the scope
-    excludes, while `{ allPosts { results { author { name } } } }` still serves
-    that same row through the relation.  **Do not rely on `get_queryset` alone
-    to hide rows that are reachable through a relation.**
+    This does **not** add a global access-control policy. Automatic
+    one-to-one and many-to-many output relations, custom resolvers, and joins
+    used by filters or ordering have separate behavior. In particular, an ORM
+    filter joining through a hidden destination can still match its parent;
+    see [relation input scope](permission-scoped-schema.md). Do not infer a
+    tenant-wide or row-level guarantee from the two automatic output paths.
 
-    This is intentional, and the cost is the reason: the to-MANY arm would have
-    to rebuild the prefetch queryset inside the resolver, which conflicts with
-    the window-pagination and prefetch optimizations, and the to-ONE arm would
-    have to re-fetch the target per parent row, replacing one `select_related`
-    join with one query per row.
+    Older clients that expanded an FK or reverse FK through a destination
+    hook may now receive `null`, fewer children, a shorter page, or a smaller
+    `totalCount`. Review those hooks and any client assumptions before
+    upgrading. The GraphQL field shapes and nullability have not changed.
 
-    If you need per-relation row scoping, **declare the relation field
-    explicitly** on the parent type.  A declared field of the same name replaces
-    the auto-expanded one, and only then is a resolver wired at all.
+    Explicit relation declarations remain useful when you need custom
+    resolver behavior or a different wire shape. They are no longer required
+    solely to scope the two automatic FK output paths.
 
-    * **to-MANY** — mount it as a `DjangoFilterListField`, which applies the
-      hook on its own (see the cost note above):
+    * **to-MANY** — mount it as a `DjangoFilterListField` when you want a
+      plain list instead of the automatic reverse-FK container:
 
         ```python
         from django_graphex.fields import DjangoFilterListField
 
         class AuthorType(DjangoObjectType):
-            # Replaces the auto-expanded PostListType container; the hook runs.
+            # Replaces the PostListType container with a plain list.
             posts = DjangoFilterListField(PostType)
 
             class Meta:
@@ -253,20 +260,20 @@ level.
         existing clients selecting `results` need updating. It also withdraws
         `posts` from the filter axis — see the warning below.
 
-    * **to-ONE** — declare the field and scope it in its `resolve_` method:
+    * **to-ONE** — declare the field when it needs custom resolver behavior:
 
         ```python
         from django_graphex.core import Field
 
         class PostType(DjangoObjectType):
-            # REQUIRED: without this declaration the resolver below never runs.
+            # Required for this custom resolver, not for automatic FK scoping.
             author = Field(AuthorType)
 
             class Meta:
                 model = Post
 
             def resolve_author(self, info):
-                # The auto-expanded FK read would bypass AuthorType.get_queryset.
+                # A custom resolver owns its own destination-scope check.
                 return AuthorType.get_queryset(
                     Author.objects.filter(pk=self.author_id), info
                 ).first()

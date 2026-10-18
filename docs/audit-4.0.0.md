@@ -52,12 +52,13 @@ needed to use the report.
   `GraphQLError` before cost/depth evaluation recurses. Fragment effects use
   source order; a separate duplicate FieldNode policy was not changed. See
   `tests/test_fragment_cycles.py` and `tests/test_fragment_fanout.py`.
-- Generated FK/M2M mutation input checks reject a **hidden destination ID**;
-  the permission boundary for automatic output relation traversal remains
-  field-level. A root `get_queryset` hook does not turn every FK or reverse-FK
-  read into a globally scoped destination query. Joined filters can still
-  reveal a hidden-row match under the documented model; a new strict-scope
-  policy is deferred. See `tests/test_destination_link_scope.py` and
+- Generated FK/M2M mutation input checks reject a **hidden destination ID**.
+  Automatic forward-FK and reverse-FK output reads now apply the destination
+  type's hook: a hidden nullable FK is `null`, and reverse results and counts
+  omit hidden rows. This does not make joined filters globally scoped; a join
+  can still reveal a hidden-row match. O2O/M2M and custom output resolvers
+  remain separate. See `tests/test_destination_link_scope.py`,
+  `tests/test_sd1_relation_read_scope.py`, and
   `tests/test_permission_relation_bypass.py`.
 - For finite typed subscription filters, `Decimal("1.0")` matches an
   event-time JSON-safe snapshot of `"1.00"`, including valid high-precision
@@ -140,10 +141,9 @@ problems even when a nearby assertion is contradicted.
 | Q1 | Project dependency declarations mismatch on graphql-core. | `pyproject.toml`, `uv.lock`, `tox.ini`, and CI agree on 3.3; ambient 3.2.13 is unsupported stale local state. | Fresh CI and environment repair were unrun; broad environment cleanliness remains unproved. |
 | M-U3 | Finite Float subscription filters never match. | That blanket Float claim is **not verified**; the accepted numeric witness is Decimal `1.0` matching snapshot `1.00`. | Float generalization and DateTime/delete precision remain undecided; a broader match policy remains open. |
 
-SD1 is a **confirmed** field-level scope boundary, not a false positive:
-an automatic relation read can traverse a destination whose own
-`get_queryset` would hide it. The report records that behavior; a universal
-strict-scope rule was not introduced.
+SD1 was a **confirmed** field-level scope boundary, not a false positive.
+The approved FK/reverse-FK output slice now applies destination hooks, without
+introducing a universal strict-scope rule or changing joined-filter behavior.
 
 ## All 100 original claims
 
@@ -171,7 +171,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | A11 | bounded-fixed | A single result is bounded by a Unicode-aware output cap; an aggregate multi-result response quota was not added. | One overlong Unicode result → capped; many individually small results are not aggregate-capped. | `tests/test_replace_output_limit.py` |
 | A12 | bounded-fixed | AND across a to-many relation can match independent related rows; one relation predicate still uses same-row semantics. | AND filters matching two distinct related rows → accepted; one predicate keeps same-row meaning. | `tests/test_and_many_filtering.py` |
 | A13 | partial | valid Float/Decimal/UUID continuation + invalid decoded bounds; other cursor policies open. | Valid typed Float/Decimal/UUID cursor → continued; other cursor policies remain open. | `tests/test_pagination_cursor_typed_http.py` |
-| SD1 | partial | confirmed automatic FK/reverse-FK relation traversal bypasses destination get_queryset under documented field-level scope; O2O/M2M unprobed and global policy unapproved. | Authorized parent points to hidden FK target → automatic relation read can still traverse it. | `tests/test_permission_relation_bypass.py` |
+| SD1 | partial | Automatic forward-FK/reverse-FK output traversal now applies destination get_queryset; O2O/M2M, custom resolvers and joined-filter/global policy remain separate. | Visible parent points to hidden nullable FK target → relation is null; reverse results/count omit hidden children. | `tests/test_sd1_relation_read_scope.py` |
 | SD2 | partial | hidden-row ORM-join oracle confirmed; pruning/masking pass; M2M unprobed. | Joined filter matches a hidden related row → parent match may reveal its existence. | `tests/test_schema_pruner_filter_scope.py` |
 | SD3 | bounded-fixed | Generated FK/M2M destination IDs are checked against the caller's visible choices; this does not make all relation reads globally scoped. | Mutation names hidden destination ID → generated FK/M2M link is rejected. | `tests/test_destination_link_scope.py` |
 | SD4 | bounded-fixed | hostless nullable reverse-FK orphan adoption denied only. | Parent 10 tries to adopt parentless child 7 → covered reverse-FK assignment denied. | `tests/test_nested_sd4_orphan_scope.py` |
@@ -310,12 +310,13 @@ because approving one does not silently approve another.
   installation is unsupported and was not refreshed. Current
   `pyproject.toml`, `uv.lock`, `tox.ini`, and CI dependency declarations
   agree on 3.3; that configuration check is not a fresh CI matrix run.
-- The final local configured suite passed **5,627 tests**, with **7 skipped**
+- At the historical R11 snapshot, the local configured suite passed **5,627 tests**, with **7 skipped**
   and **10 warnings**. Raw branch coverage was **4,148 / 4,346 = 95.44%**;
   combined covered lines and branches were **15,546 / 15,927 = 97.61%**.
   The nonempty cumulative production diff against the initial feature-branch
   base covered **1,221 / 1,238 changed lines = 98.63%**, including branch
-  coverage. This was a local supported-runtime run, not a clean CI matrix.
+  coverage. These are historical R11 figures, not a final SD1 verification.
+  This was a local supported-runtime run, not a clean CI matrix.
   The proof applies to the guarded finite inputs, not to every host file,
   physical index state, or power-loss mode. No package was published and no
   real PostgreSQL integration database was run.

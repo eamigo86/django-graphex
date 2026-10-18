@@ -772,35 +772,51 @@ def _to_graphql_field(
             )
             return {}
 
-        # SCOPE BOUNDARY (documented, not a defect): this is a plain attribute
-        # read off the already-fetched parent, so it does NOT route through
-        # ``utils.apply_object_type_get_queryset`` — a target type declaring
-        # ``get_queryset`` scopes its own root fields but NOT this relation.
-        # Enforcing it here would mean re-fetching the target per parent row,
-        # trading the ``select_related`` join for one query per row on exactly
-        # the types that opted into scoping. The to-MANY sibling has the same
-        # boundary for the same reason.
-        #
-        # The escape hatch is an explicitly DECLARED field of the same name on
-        # the parent type: ``types._compile_declared_fields`` runs last in the
-        # output thunk and a declared override wins, and only that path wires a
-        # ``resolve_<name>``. This resolver deliberately does NOT look for one
-        # itself — the compiler is per-MODEL and has no source class, so it
-        # would have to recover the parent type per row, and the to-MANY sibling
-        # (``fields.DjangoNestedListObjectField.wrap_resolve``) does not honour
-        # one either. A bare ``resolve_<relation>`` method is therefore inert;
-        # docs/usage/types.md says so, and tests/test_relation_scope_hatch.py
-        # pins both halves.
+        # The FK output remains nullable. A scoped prefetch stores the visible
+        # destination under a dedicated attribute so an unrelated select_related
+        # or caller-populated relation cache cannot substitute an unscoped row.
         def _default_resolver(
             root: Any,
             _info: Any,
             *,
             _name: str = field_name,
+            _target_gql: Any = resolved_type,
+            _is_fk: bool = bool(
+                getattr(field, "many_to_one", False)
+                and not getattr(field, "one_to_one", False)
+            ),
         ) -> Any:
             if isinstance(root, dict):
                 return root.get(_name)
-            return getattr(root, _name, None)
+            if not _is_fk:
+                return getattr(root, _name, None)
+            from django_graphex.core.compat import _gdx_graphene_type
+            from django_graphex.utils import (
+                apply_object_type_get_queryset,
+                has_object_type_queryset_override,
+            )
 
+            target_type = _gdx_graphene_type(_target_gql)
+            if not has_object_type_queryset_override(target_type):
+                return getattr(root, _name, None)
+
+            scoped_name = f"_gqx_scoped_{_name}"
+            sentinel = object()
+            prefetched = getattr(root, scoped_name, sentinel)
+            if prefetched is not sentinel:
+                return prefetched
+
+            related = getattr(root, _name, None)
+            if related is None:
+                return None
+            alias = getattr(getattr(root, "_state", None), "db", None)
+            queryset = related.__class__._default_manager.db_manager(alias).filter(
+                pk=related.pk
+            )
+            queryset = apply_object_type_get_queryset(queryset, target_type, _info)
+            return related if queryset.exists() else None
+
+        _default_resolver._gqx_automatic_fk = True  # type: ignore[attr-defined]
         gql_field = GraphQLField(
             type_=resolved_type,
             resolve=_default_resolver,

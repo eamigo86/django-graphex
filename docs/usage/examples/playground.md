@@ -137,19 +137,17 @@ Log out of `/admin` to test the anonymous (public) behaviour again.
     [`get_queryset` hook](../permissions.md) working on every top-level field
     type.
 
-    `get_queryset` is **field-level**, and the playground shows both sides of
-    that. Anonymously:
+    The hook also scopes automatic FK and reverse-FK output reads. Anonymously:
 
     | Query | Statuses returned |
     |---|---|
     | `{ posts { results { status } } }` | `PUBLISHED` only |
     | `{ categories { name posts { title status } } }` | `PUBLISHED` only — `CategoryType.posts` is a mounted `DjangoFilterListField`, so the scope runs |
-    | `{ authors { results { posts { results { status } } } } }` | `DRAFT`, `ARCHIVED`, `PUBLISHED` — the auto-expanded relation reads the prefetch cache, so `PostType.get_queryset` never runs |
+    | `{ authors { results { posts { results { status } } } } }` | `PUBLISHED` only — the automatic reverse-FK container applies `PostType.get_queryset` |
 
-    The third row is not a bug; it is the boundary the
-    [scoping hatch](../types.md#relation-scope-hatch) exists to close, and the
-    second row is that hatch mounted. Declaring it costs the relation its
-    nested filter paths — see the table under
+    The mounted field in the second row changes the wire shape to a plain list;
+    it is no longer needed merely to hide drafts. Declaring it costs the
+    relation its nested filter paths — see the table under
     [Filtering](../filtering.md#filter-refusal-shapes).
 
 ## Schema tour
