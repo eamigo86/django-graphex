@@ -61,25 +61,25 @@ def _section(text: str, heading: str) -> str:
     return text.split(marker, 1)[1].split("\n## ", 1)[0]
 
 
-def _dispositions(text: str) -> list[tuple[str, str, str, str]]:
-    """Parse the primary four-column disposition table.
+def _dispositions(text: str) -> list[tuple[str, str, str, str, str]]:
+    """Parse the primary five-column disposition table.
 
     Args:
         text: Complete Markdown document.
 
     Returns:
-        Ordered ID, status, outcome, and evidence cells.
+        Ordered ID, status, outcome, example, and evidence cells.
     """
     body = _section(text, "All 100 original claims")
     lines = [line for line in body.splitlines() if line.startswith("|")]
     assert lines[:2] == [
-        "| ID | Status | Finding, outcome, and limit | Evidence |",
-        "|---|---|---|---|",
+        "| ID | Status | Finding, outcome, and limit | Small example | Evidence |",
+        "|---|---|---|---|---|",
     ]
     rows = []
     for line in lines[2:]:
         cells = tuple(cell.strip() for cell in line.strip("|").split("|"))
-        assert len(cells) == 4
+        assert len(cells) == 5
         rows.append(cells)
     return rows
 
@@ -94,8 +94,9 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert tuple(row[0] for row in rows) == EXPECTED_IDS
     assert len(set(row[0] for row in rows)) == 100
     assert Counter(row[1] for row in rows) == EXPECTED_COUNTS
-    assert all(row[2] and row[3] for row in rows)
-    assert all((ROOT / row[3].strip("`")).is_file() for row in rows)
+    assert all(row[2] and row[3] and row[4] for row in rows)
+    assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
+    assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
     assert "41 does not mean 41 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
@@ -124,6 +125,57 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
         and "MaxIntrospectionDepthRule" in rows["N3"][2]
     )
     assert rows["N4"][1] == "contract" and "process-global" in rows["N4"][2]
+
+
+def test_registry_and_factory_examples_state_the_actual_unit() -> None:
+    """Distinguish model-registry conflicts from input-object coercions.
+
+    The report must name the real ownership boundary for each correction.
+    """
+    rows = {row[0]: row for row in _dispositions(_report())}
+    a4 = " ".join(rows["A4"][2:4])
+    assert "same model" in a4 and "same registry" in a4
+    assert "different names" in a4 and "separate registries" in a4
+    a7 = " ".join(rows["A7"][2:4])
+    assert "coerced input object" in a7
+    assert "two aliases" in a7 and "one variable" in a7
+    assert "introspection" in a7 and "factory" in a7
+
+
+def test_false_positive_subclaims_keep_counterexample_and_residual() -> None:
+    """Separate contradicted premises from unproved whole-claim conclusions.
+
+    Every named subclaim needs a counterexample and a remaining limit.
+    """
+    section = _section(_report(), "False-positive subclaims and corrected premises")
+    for original_id, allegation, counterexample in (
+        ("M-D5", "raw JSON", "JSONString"),
+        ("L-C8", "positive final", "tail window"),
+        ("L-E3", "SITE-B", "hook ran once"),
+        ("N4", "request-scoped", "process-global"),
+        ("Q8", "dead", "MUTATION_ERRORS_FLAG"),
+        ("Q1", "mismatch", "3.2.13"),
+        ("M-U3", "never match", "not verified"),
+    ):
+        line = next(
+            line
+            for line in section.splitlines()
+            if line.startswith(f"| {original_id} |")
+        )
+        assert allegation in line and counterexample in line
+        assert "remains" in line or "unproved" in line
+    assert "SD1" in section and "confirmed" in section
+
+
+def test_report_discloses_original_tdd_limit_without_rewriting_history() -> None:
+    """Keep the earlier RED and later unequal test bytes distinguishable.
+
+    A narrower later same-byte cycle cannot repair the original mismatch.
+    """
+    limits = _section(_report(), "Verification and provenance limits")
+    assert "original RED" in limits and "file absence" in limits
+    assert "not identical" in limits and "helper" in limits
+    assert "same-byte" in limits and "later" in limits
 
 
 def test_examples_and_decision_queue_do_not_turn_boundaries_into_fixes() -> None:

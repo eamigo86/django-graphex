@@ -92,6 +92,14 @@ needed to use the report.
   through input, DB reload, and output. The distinct `JSONString` scalar
   intentionally decodes JSON text `"123"` to integer `123`; these
   contracts must not be collapsed into “all JSON strings change type.”
+- A registry keys a public output type by its Django model, not by the
+  output type's spelling. `PublicAuthor` and `AdminAuthor` for the same
+  `Author` model conflict in one registry even though their names differ;
+  separate registries can carry distinct public schemas. A runtime input
+  factory runs when a **coerced input object** omits its field: two
+  independent objects receive fresh values, while two aliases referencing
+  one variable share that already-coerced object. SDL introspection does
+  not evaluate the factory.
 
 ### Pagination and negative checks
 
@@ -116,6 +124,27 @@ needed to use the report.
   query, whereas the custom `MAX_QUERY_DEPTH` setting concerns a different
   rule. None of these observations proves universal access, DoS, or CI safety.
 
+## False-positive subclaims and corrected premises
+
+These are corrections to **specific allegations**, not blanket declarations
+that their entire audit IDs are false. Confirmed problems such as SD1 remain
+problems even when a nearby assertion is contradicted.
+
+| ID | Original allegation | Actual reason and small counterexample | Remaining limit |
+|---|---|---|---|
+| M-D5 | The raw JSON string input changes type on reload. | Raw model JSONField string `"123"` remains a string through input, DB reload and output; `JSONString` separately parses JSON text to integer `123`. | Other JSON scalar policy remains separate. |
+| L-C8 | Negative page `-1` must equal the short positive final page. | With 23 rows and page size 10, `-1` is the final 10-row tail window, not positive page 3's three rows. | A uniform page-ordering policy remains separate. |
+| L-E3 | Exact SITE-B filtered prefetch loses its child hook. | Public SQLite witness: hook ran once, only visible children returned, one batched predicate query. | Other optimizer branches and backends remain unproved. |
+| N4 | Every utility cache is request-scoped. | GFK target-type lookup uses process-global Django class metadata, not a fresh request cache. | Broader cache ownership remains subject to specific inspection. |
+| Q8 | Named mutation flag and other named methods are dead code. | `MUTATION_ERRORS_FLAG` is reached by a live view path, so a name-only dead-code search is insufficient. | Other alleged dead symbols remain unproved pending qualified caller and compatibility review. |
+| Q1 | Project dependency declarations mismatch on graphql-core. | `pyproject.toml`, `uv.lock`, `tox.ini`, and CI agree on 3.3; ambient 3.2.13 is unsupported stale local state. | Fresh CI and environment repair were unrun; broad environment cleanliness remains unproved. |
+| M-U3 | Finite Float subscription filters never match. | That blanket Float claim is **not verified**; the accepted numeric witness is Decimal `1.0` matching snapshot `1.00`. | Float generalization and DateTime/delete precision remain undecided; a broader match policy remains open. |
+
+SD1 is a **confirmed** field-level scope boundary, not a false positive:
+an automatic relation read can traverse a destination whose own
+`get_queryset` would hide it. The report records that behavior; a universal
+strict-scope rule was not introduced.
+
 ## All 100 original claims
 
 Statuses are intentionally narrow. “Bounded-fixed” means the described slice
@@ -124,108 +153,108 @@ means a correction to an allegation or a documented boundary, not a new
 security guarantee. “Negative-limited” means the reassuring statement needs
 qualification. Each row gives a compact case, outcome or remaining limit.
 
-| ID | Status | Finding, outcome, and limit | Evidence |
-|---|---|---|---|
-| C1 | bounded-fixed | Decimal primary keys no longer pass through Float/null conversion; distinct Decimal output and non-finite policies remain separate. | `tests/core/test_decimal_output.py` |
-| C2 | bounded-fixed | Fragment-dependent selections now retain source order; duplicate FieldNode behavior was not changed. | `tests/test_fragment_fanout.py` |
-| C3 | bounded-fixed | A shared fragment cycle is rejected as GraphQLError before the cost/depth walker can recurse indefinitely. | `tests/test_fragment_cycles.py` |
-| A1 | partial | A GraphQL error rolls back covered default-DB sibling writes; native `ok: false`, multi-DB atomicity, and stale-row overwrites remain separate. | `tests/test_views_atomic_errors.py` |
-| A2 | partial | The POST body-size guard runs before GraphQL body parsing; retained AST/cache bytes and aggregate memory are not capped by that change. | `tests/test_views_body_cap_cache.py` |
-| A3 | bounded-fixed | Invalid output field selectors are rejected rather than silently bypassing the selection gate; this is not a proof about every unauthenticated request. | `tests/test_output_selector_validation.py` |
-| A4 | bounded-fixed | Two different output types cannot silently take the same registered name; independent registry/fork behavior remains distinct. | `tests/test_output_registration_conflict.py` |
-| A5 | bounded-fixed | A cold Django user in WS/SSE receives the covered permission pruning; a fake-user control does not prove every authentication source. | `tests/subscriptions/test_transport_real_user_resolution.py` |
-| A6 | bounded-fixed | Automatic notification failures are best-effort rather than raising through model writes; manual broadcasts remain strict and delivery is not guaranteed. | `tests/subscriptions/test_automatic_best_effort.py` |
-| A7 | bounded-fixed | Each input field's runtime factory executes independently instead of leaking a prior field's value. | `tests/core/test_input_factory_per_object.py` |
-| A8 | bounded-fixed | A BigInteger value above JavaScript's exact-number range serializes as a decimal string; relation IDs and enum behavior are separate. | `tests/core/test_bigint.py` |
-| A9 | bounded-fixed | Generated delete errors redact underlying database detail; arbitrary DB exceptions were not given a blanket catch. | `tests/test_generated_delete_security.py` |
-| A10 | partial | Email input, two positive-number fields, and generated DB-error redaction have bounded fixes; a general full-clean/upsert policy remains open. | `tests/core/test_positive_input_validation.py` |
-| A11 | bounded-fixed | A single result is bounded by a Unicode-aware output cap; an aggregate multi-result response quota was not added. | `tests/test_replace_output_limit.py` |
-| A12 | bounded-fixed | AND across a to-many relation can match independent related rows; one relation predicate still uses same-row semantics. | `tests/test_and_many_filtering.py` |
-| A13 | partial | valid Float/Decimal/UUID continuation + invalid decoded bounds; other cursor policies open. | `tests/test_pagination_cursor_typed_http.py` |
-| SD1 | partial | confirmed automatic FK/reverse-FK relation traversal bypasses destination get_queryset under documented field-level scope; O2O/M2M unprobed and global policy unapproved. | `tests/test_permission_relation_bypass.py` |
-| SD2 | partial | hidden-row ORM-join oracle confirmed; pruning/masking pass; M2M unprobed. | `tests/test_schema_pruner_filter_scope.py` |
-| SD3 | bounded-fixed | Generated FK/M2M destination IDs are checked against the caller's visible choices; this does not make all relation reads globally scoped. | `tests/test_destination_link_scope.py` |
-| SD4 | bounded-fixed | hostless nullable reverse-FK orphan adoption denied only. | `tests/test_nested_sd4_orphan_scope.py` |
-| SD5 | bounded-fixed | flat GFK metadata pruned on target read/scope denial; not global ACL. | `tests/test_flat_gfk_pruned_security.py` |
-| SD6 | recommendation | strict_scope/system-check recommendation; public semantics need decision. | `docs/usage/permission-scoped-schema.md` |
-| M-S1 | bounded-fixed | variable-backed cost limits; no hard memory/DB cap. | `tests/test_cost_variable_http.py` |
-| M-S2 | partial | default page size 100 already fixed; other defaults/width/depth unverified/policy, LRU not byte-cap proof. | `docs/usage/query-limits.md` |
-| M-S3 | contract | The guide now states the configured introspection middleware requirement; the runtime default itself did not change. | `tests/test_introspection_docs.py` |
-| M-S4 | bounded-fixed | Production-mode HTTP errors no longer expose the covered internal detail; this is a bounded response contract, not a blanket leak audit. | `tests/test_http_internal_error_diagnostics.py` |
-| M-S5 | bounded-fixed | GET cache-key components are length-framed so adjacent values cannot collide inside one identity partition; cross-identity policy is separate. | `tests/test_views_cache_key_framing.py` |
-| M-S6 | contract | shortcut required_perms raises TypeError; lowercase field works; untagged public documented. | `tests/test_permission_keyword_boundaries.py` |
-| M-D1 | partial | external current native 3.3 witness shows sequential stale backend instance overwrites separately updated bio; not a threaded/PostgreSQL race. update_fields policy deferred for auto_now/custom save behavior. | `docs/usage/mutations.md` |
-| M-D2 | partial | Stable/model-routed CREATE and existing-state UPDATE use their write alias for nested rollback; instance-dependent CREATE routing and cross-DB atomicity remain open. | `tests/test_routed_nested_atomic.py` |
-| M-D3 | partial | Decimal output avoids Float precision loss; SQLite reload rounding and input coercion remain separate. | `tests/core/test_decimal_output.py` |
-| M-D4 | partial | public mutation rejects NaN/±Infinity/1e1000 structurally/no save; exact 1E+999999999 untested. | `docs/usage/mutations.md` |
-| M-D5 | contract | Public model JSONField input string '123' stays a string through DB/output; separate JSONString intentionally decodes JSON text to integer 123. | `tests/test_explicit_null_and_json_input.py` |
-| M-D6 | decision-deferred | Undefined list/infinity errors require new scalar policy. | `docs/usage/mutations.md` |
-| M-D7 | bounded-fixed | incompatible same-name choices rejected; reordered equivalent kept. | `tests/core/test_choices_enum_name_collisions.py` |
-| M-D8 | bounded-fixed | reserved-name construction fixed; inherited-hook history qualified. | `tests/core/test_reserved_model_fields.py` |
-| M-D9 | bounded-fixed | interface implementor name honored; general type rename unapproved. | `tests/test_model_type_list_type_name.py` |
-| M-D10 | partial | Unsupported Literal/dict/set/Union input annotations still fall back to String, now with a diagnostic warning; no conversion policy was added. | `tests/core/test_input_typing_fallback_warnings.py` |
-| M-F1 | bounded-fixed | nested related datepart/PK shadow fixed; SDL/null/A12 separate. | `tests/test_filter_lookup_boundaries.py` |
-| M-F2 | bounded-fixed | numeric Date/DateTime parts typed Int; whole-value/TimeField policy unchanged. | `tests/test_datepart_filtering.py` |
-| M-F3 | partial | exact:null/omission only; broader Boolean identities open. | `tests/test_exact_null_filtering.py` |
-| M-F4 | bounded-fixed | explicit page:null equals omission; zero/negative unchanged. | `tests/test_pagination_page_null_http.py` |
-| M-F5 | bounded-fixed | model-backed PK-ASC tie-break; offset/random unaffected. | `tests/test_pagination_pk_tiebreak.py` |
-| M-F6 | bounded-fixed | no full fetch on negative-page count-error fallback; not universal DB proof. | `tests/test_negative_page_count_error_http.py` |
-| M-F7 | bounded-fixed | omitted-page default fixed/documented; explicit None legacy unchanged. | `tests/test_default_page_size_http.py` |
-| M-H1 | bounded-fixed | batch HTTP400 prior data/error/stop; prior writes persist, no batch transaction. | `tests/test_batch_http_error_partial.py` |
-| M-H2 | bounded-fixed | sync/async misuse JSON500/cleanup; no general async support. | `tests/test_sync_async_http.py` |
-| M-H3 | bounded-fixed | preserve 0/False; fragment classifier separate. | `tests/test_clean_response_http.py` |
-| M-H4 | partial | success-only cache fixed; finite-safety/Ruff caveats retained. | `tests/test_success_response_cache.py` |
-| M-O1 | bounded-fixed | merged-node optimizer N+1 fixed in bounded case. | `tests/test_optimizer_merged_field_nodes.py` |
-| M-O2 | bounded-fixed | warm-hit lock split; no general concurrency guarantee. | `tests/test_permission_cache_lock_split.py` |
-| M-U1 | partial | Real-ASGI startup now cleans a group joined before cancellation returns; the same failed-Source/same-channel retry works. Distributed-backend cleanup remains best-effort. | `tests/subscriptions/test_startup_cleanup.py` |
-| M-U2 | decision-deferred | delete visibility/scope policy; do not remove checks to force match. | `docs/usage/subscriptions.md` |
-| M-U3 | partial | Finite Decimal exact filters compare numeric event snapshots, including 1.0 versus 1.00 and valid 257-character values; DateTime/delete precision policy remains open. | `tests/subscriptions/test_decimal_snapshot_filter.py` |
-| M-U4 | contract | Automatic post-save/post-delete signals schedule commit-time sends, while bulk/update paths emit no model signals and manual binding broadcast is immediate; use a fresh post-commit instance when timing matters. | `docs/usage/subscriptions.md` |
-| M-U5 | bounded-fixed | Native async directive formatting waits for resolver values and preserves borrowed Future ownership; synchronous HTTP still returns its controlled JSON 500 rather than gaining async support. | `tests/test_async_directive_middleware.py` |
-| M-U6 | partial | The directive guide clarifies naive `@date` values in Django's active timezone and bounded case formatting; null/date/acronym transformations remain separate. | `docs/directives.md` |
-| M-T1 | bounded-fixed | fork-depth marker isolation; other registry races separate. | `tests/core/test_schema_fork_threads.py` |
-| L-C1 | partial | malformed abc IDs in get_node/retrieve/DjangoObjectField yield GraphQL null plus wrapped ValueError; well-typed missing ID yields null/no errors. Not raw HTTP500; null-only vs client error policy deferred. | `odd/tasks/audit-400-remediation.md` |
-| L-C2 | bounded-fixed | Two specific constructor validations now survive optimized Python (`-O`); no universal validation claim follows. | `tests/test_settings_boundary_values.py` |
-| L-C3 | partial | public Base view non-null root error is HTTP200/data:null; enhanced view HTTP400/no data key. Contracts confirmed; alignment policy deferred. | `odd/tasks/audit-400-remediation.md` |
-| L-C4 | decision-deferred | MAX_UPLOAD_SIZE/base64 request docs are separate; multipart per-file quota would be a new policy, not evidence of existing promise. | `odd/tasks/audit-400-remediation.md` |
-| L-C5 | decision-deferred | zero-preserving minimum validation may alter behavior/errors; approval needed. | `odd/tasks/audit-400-remediation.md` |
-| L-C6 | contract | A cache miss reaches ensure_csrf_cookie and can set csrftoken; a cache hit returns earlier without Set-Cookie. A later cookie-bearing request bypasses the any-cookie cache policy. | `tests/test_views_cache_cookie_bypass.py` |
-| L-C7 | bounded-fixed | ambiguous enum members rejected; optional multiselect untested. | `tests/core/test_choices_enum_member_ambiguity.py` |
-| L-C8 | contract | Negative page -1 means a fixed-size tail window, not the positive final page's short remainder. | `tests/test_pagination_page_null_http.py` |
-| L-C9 | partial | Cursor DB/list paths agree on NULL last ascending/first descending in the bounded SQLite case; offset/page queryset order inherits backend NULL placement and can diverge. | `docs/usage/pagination.md` |
-| L-C10 | decision-deferred | declarations include fragment spread/inline fragment; behavioral/SDL policy unresolved. | `odd/tasks/audit-400-remediation.md` |
-| L-C11 | decision-deferred | truncate/title/floor Infinity are distinct paths; error semantics require decision. | `odd/tasks/audit-400-remediation.md` |
-| L-C12 | partial | The covered GFK union-wrapper path no longer makes an N+1 query; broader multi-table-inheritance paths remain unproved. | `tests/test_optimizer_phase_e.py` |
-| L-C13 | contract | The guide distinguishes native DateTime scalar naive parsing from `@date`'s active-timezone interpretation, including `USE_TZ=False`; no scalar policy changed. | `docs/directives.md` |
-| L-E1 | bounded-fixed | get_fields failure surfaces model/cause; healthy path unchanged. | `tests/core/test_metadata_enumeration_failures.py` |
-| L-E2 | bounded-fixed | explicit source property AttributeError surfaced; legitimate null/unrelated descriptors unchanged. | `tests/core/test_source_property_attribute_error.py` |
-| L-E3 | partial | The exact SITE-B filtered-prefetch hook-loss allegation was contradicted by a public SQLite witness: hook called once, visible rows only, one batched predicate query. Other branches/backends remain unproved. | `tests/test_optimizer_phase_e.py` |
-| L-E4 | partial | cancellation intentional; single-group aclose warning fixed only. | `tests/subscriptions/test_source.py` |
-| L-M1 | decision-deferred | Declared input classes are intentionally registry-owned and a static three-schema reuse stayed bounded; dynamic class churn needs an ownership/lifecycle policy. | `tests/core/test_registry_compiler.py` |
-| L-M2 | partial | A bounded internal live-field identity/lifetime case was corrected; public schema impact and Graphene behavior were not established. | `tests/core/test_native_field_identity_lifetime.py` |
-| L-M3 | partial | A direct GraphQLSchema enum-cache race was corrected; public exposure was not established. | `tests/core/test_enum_cache_concurrency.py` |
-| L-M4 | partial | A direct GraphQLSchema list-creation race was corrected; public exposure was not established. | `tests/core/test_registry_creation_concurrency.py` |
-| L-S1 | decision-deferred | heartbeat/per-principal caps are absent-feature/product policy, not an existing behavioral contract. | `docs/usage/subscriptions.md` |
-| L-S2 | decision-deferred | connection_init/token on_connect hook is new authentication/protocol policy, not an established contract. | `docs/usage/subscriptions.md` |
-| L-S3 | decision-deferred | empty offered protocol handshake confirmed; accept/reject/close code is wire-policy decision. | `docs/usage/subscriptions.md` |
-| L-S4 | bounded-fixed | WS operation cleanup and slot release precede the server `complete` frame, so immediate same-ID reuse is not mistaken for a duplicate; other lifecycle cases remain. | `tests/subscriptions/test_ws_completion_reuse.py` |
-| Q1 | contract | pyproject/uv/tox/CI require graphql-core 3.3 consistently; root 3.2.13 is stale unsupported env, not refreshed; no tox config mismatch. | `tests/test_tox_dependency_contract.py` |
-| Q2 | bounded-fixed | The benchmark reader selects eight canonical result files deterministically; missing or invalid results still fail, and no timing was regenerated. | `tests/benchmarks/test_core33_results.py` |
-| Q3 | bounded-fixed | Direct-view tests now close their own multipart temporary upload and ASGI body spool, including exception exits; no ResourceWarning was observed and no production leak is inferred. | `tests/test_views_multipart_body_bound.py` |
-| Q4 | recommendation | regression matrix duplicates existing IDs. | `odd/tasks/audit-400-remediation.md` |
-| Q5 | recommendation | historical test naming suggestion only. | `odd/tasks/audit-400-remediation.md` |
-| Q6 | recommendation | module split suggestion, no authority. | `odd/tasks/audit-400-remediation.md` |
-| Q7 | recommendation | cross-reference plan only; verify before refactor. | `odd/tasks/audit-400-remediation.md` |
-| Q8 | negative-limited | MUTATION_ERRORS_FLAG is live; other alleged dead symbols require qualified caller and compatibility review, not deletion. | `django_graphex/views.py` |
-| Q9 | recommendation | historical Graphene names/comments only. | `odd/tasks/audit-400-remediation.md` |
-| Q10 | decision-deferred | deriving non-null from null=False changes SDL. | `odd/tasks/audit-400-remediation.md` |
-| P1 | recommendation | duplicate priority plan, not new finding/authority. | `odd/tasks/audit-400-remediation.md` |
-| N1 | negative-limited | The schema cache uses an effective permission signature, not a unique user key; this is not a universal cross-user response-cache guarantee. | `odd/tasks/audit-400-remediation.md` |
-| N2 | negative-limited | anonymous/falsy permission and scoped update/delete chain not universally runtime-proved. | `odd/tasks/audit-400-remediation.md` |
-| N3 | negative-limited | Core MaxIntrospectionDepthRule rejected one bounded nested introspection query; custom MAX_QUERY_DEPTH is a different guard, and no universal DoS proof follows. | `tests/test_depth_limit.py` |
-| N4 | contract | The GFK field-type cache is process-global Django class metadata; saying all caches are request-scoped is inaccurate. | `django_graphex/utils.py` |
-| N5 | negative-limited | regex safety is bounded only; no universal conclusion. | `odd/tasks/audit-400-remediation.md` |
-| N6 | negative-limited | Twenty-three tracked-test docstring findings were corrected, but seven ignored-profile DOC002 findings remain locally; original ignored preimages and a whole-CI-clean verdict are unavailable. | `scripts/check_docstrings.py` |
+| ID | Status | Finding, outcome, and limit | Small example | Evidence |
+|---|---|---|---|---|
+| C1 | bounded-fixed | Decimal primary keys no longer pass through Float/null conversion; distinct Decimal output and non-finite policies remain separate. | Decimal PK 9007199254740993 → exact decimal text, not rounded Float. | `tests/core/test_decimal_output.py` |
+| C2 | bounded-fixed | Fragment-dependent selections now retain source order; duplicate FieldNode behavior was not changed. | Spread B then A → selection expansion follows that source order. | `tests/test_fragment_fanout.py` |
+| C3 | bounded-fixed | A shared fragment cycle is rejected as GraphQLError before the cost/depth walker can recurse indefinitely. | Fragment A spreads B and B spreads A → bounded GraphQLError. | `tests/test_fragment_cycles.py` |
+| A1 | partial | A GraphQL error rolls back covered default-DB sibling writes; native `ok: false`, multi-DB atomicity, and stale-row overwrites remain separate. | Sibling write then GraphQL error → covered same-DB writes roll back; ok: false differs. | `tests/test_views_atomic_errors.py` |
+| A2 | partial | The POST body-size guard runs before GraphQL body parsing; retained AST/cache bytes and aggregate memory are not capped by that change. | Oversized POST body → rejected before parsing; retained cache bytes remain uncapped. | `tests/test_views_body_cap_cache.py` |
+| A3 | bounded-fixed | Invalid output field selectors are rejected rather than silently bypassing the selection gate; this is not a proof about every unauthenticated request. | Unknown output selector → rejected rather than silently exposing all fields. | `tests/test_output_selector_validation.py` |
+| A4 | bounded-fixed | `Registry.register` keys public outputs by Django model: a distinct output type for the same model and same registry is rejected regardless of type names; separate registries may define distinct schemas. | PublicAuthor then AdminAuthor for the same Author model in one Registry → rejected despite different names; separate registries allowed. | `tests/test_output_registration_conflict.py` |
+| A5 | bounded-fixed | A cold Django user in WS/SSE receives the covered permission pruning; a fake-user control does not prove every authentication source. | Cold Django user opens SSE/WS → covered private fields remain pruned. | `tests/subscriptions/test_transport_real_user_resolution.py` |
+| A6 | bounded-fixed | Automatic notification failures are best-effort rather than raising through model writes; manual broadcasts remain strict and delivery is not guaranteed. | Automatic notification failure after save → model write does not raise; manual send differs. | `tests/subscriptions/test_automatic_best_effort.py` |
+| A7 | bounded-fixed | An omitted-field factory runs per coerced input object, not per selected field or alias. Explicit values skip it; schema construction and introspection do not evaluate it. | Two independent coerced input objects → two fresh factory values; two aliases using one variable share its coerced object; SDL introspection does not run the factory. | `tests/core/test_input_factory_per_object.py` |
+| A8 | bounded-fixed | A BigInteger value above JavaScript's exact-number range serializes as a decimal string; relation IDs and enum behavior are separate. | BigInteger 9007199254740993 → exact decimal string rather than a rounded number. | `tests/core/test_bigint.py` |
+| A9 | bounded-fixed | Generated delete errors redact underlying database detail; arbitrary DB exceptions were not given a blanket catch. | Generated delete hits a DB error → response omits underlying database detail. | `tests/test_generated_delete_security.py` |
+| A10 | partial | Email input, two positive-number fields, and generated DB-error redaction have bounded fixes; a general full-clean/upsert policy remains open. | Invalid email or covered positive-number input → validation; general full_clean remains open. | `tests/core/test_positive_input_validation.py` |
+| A11 | bounded-fixed | A single result is bounded by a Unicode-aware output cap; an aggregate multi-result response quota was not added. | One overlong Unicode result → capped; many individually small results are not aggregate-capped. | `tests/test_replace_output_limit.py` |
+| A12 | bounded-fixed | AND across a to-many relation can match independent related rows; one relation predicate still uses same-row semantics. | AND filters matching two distinct related rows → accepted; one predicate keeps same-row meaning. | `tests/test_and_many_filtering.py` |
+| A13 | partial | valid Float/Decimal/UUID continuation + invalid decoded bounds; other cursor policies open. | Valid typed Float/Decimal/UUID cursor → continued; other cursor policies remain open. | `tests/test_pagination_cursor_typed_http.py` |
+| SD1 | partial | confirmed automatic FK/reverse-FK relation traversal bypasses destination get_queryset under documented field-level scope; O2O/M2M unprobed and global policy unapproved. | Authorized parent points to hidden FK target → automatic relation read can still traverse it. | `tests/test_permission_relation_bypass.py` |
+| SD2 | partial | hidden-row ORM-join oracle confirmed; pruning/masking pass; M2M unprobed. | Joined filter matches a hidden related row → parent match may reveal its existence. | `tests/test_schema_pruner_filter_scope.py` |
+| SD3 | bounded-fixed | Generated FK/M2M destination IDs are checked against the caller's visible choices; this does not make all relation reads globally scoped. | Mutation names hidden destination ID → generated FK/M2M link is rejected. | `tests/test_destination_link_scope.py` |
+| SD4 | bounded-fixed | hostless nullable reverse-FK orphan adoption denied only. | Parent 10 tries to adopt parentless child 7 → covered reverse-FK assignment denied. | `tests/test_nested_sd4_orphan_scope.py` |
+| SD5 | bounded-fixed | flat GFK metadata pruned on target read/scope denial; not global ACL. | GFK target fails read/scope check → flat target metadata is not returned. | `tests/test_flat_gfk_pruned_security.py` |
+| SD6 | recommendation | strict_scope/system-check recommendation; public semantics need decision. | Proposed strict_scope switch → no new relation-read semantics adopted. | `docs/usage/permission-scoped-schema.md` |
+| M-S1 | bounded-fixed | variable-backed cost limits; no hard memory/DB cap. | Costly operation using a variable → covered cost limit rejects it before execution. | `tests/test_cost_variable_http.py` |
+| M-S2 | partial | default page size 100 already fixed; other defaults/width/depth unverified/policy, LRU not byte-cap proof. | Omitted page size → existing default 100; no new depth/byte cap inferred. | `docs/usage/query-limits.md` |
+| M-S3 | contract | The guide now states the configured introspection middleware requirement; the runtime default itself did not change. | Configured introspection middleware absent → guide warns; runtime default unchanged. | `tests/test_introspection_docs.py` |
+| M-S4 | bounded-fixed | Production-mode HTTP errors no longer expose the covered internal detail; this is a bounded response contract, not a blanket leak audit. | Covered production HTTP exception → public response omits internal detail. | `tests/test_http_internal_error_diagnostics.py` |
+| M-S5 | bounded-fixed | GET cache-key components are length-framed so adjacent values cannot collide inside one identity partition; cross-identity policy is separate. | Cache-key parts ab+c versus a+bc → framed distinctly within one identity. | `tests/test_views_cache_key_framing.py` |
+| M-S6 | contract | shortcut required_perms raises TypeError; lowercase field works; untagged public documented. | Shortcut required_perms → TypeError; lower-case field keyword works. | `tests/test_permission_keyword_boundaries.py` |
+| M-D1 | partial | external current native 3.3 witness shows sequential stale backend instance overwrites separately updated bio; not a threaded/PostgreSQL race. update_fields policy deferred for auto_now/custom save behavior. | Stale model instance saves bio after separate title update → full save can overwrite title. | `docs/usage/mutations.md` |
+| M-D2 | partial | Stable/model-routed CREATE and existing-state UPDATE use their write alias for nested rollback; instance-dependent CREATE routing and cross-DB atomicity remain open. | Model-routed nested CREATE fails → same-alias writes roll back; instance-routed CREATE open. | `tests/test_routed_nested_atomic.py` |
+| M-D3 | partial | Decimal output avoids Float precision loss; SQLite reload rounding and input coercion remain separate. | Large Decimal output → exact text; SQLite reload precision is separate. | `tests/core/test_decimal_output.py` |
+| M-D4 | partial | public mutation rejects NaN/±Infinity/1e1000 structurally/no save; exact 1E+999999999 untested. | NaN, Infinity or 1e1000 mutation input → no save; extreme 1E+999999999 unrun. | `docs/usage/mutations.md` |
+| M-D5 | contract | Public model JSONField input string '123' stays a string through DB/output; separate JSONString intentionally decodes JSON text to integer 123. | Raw JSONField string 123 → string after reload; JSONString JSON text decodes an integer. | `tests/test_explicit_null_and_json_input.py` |
+| M-D6 | decision-deferred | Undefined list/infinity errors require new scalar policy. | Undefined inside a JSON list → desired error policy is not yet selected. | `docs/usage/mutations.md` |
+| M-D7 | bounded-fixed | incompatible same-name choices rejected; reordered equivalent kept. | Same enum name with incompatible choices → rejected; equivalent reordering remains. | `tests/core/test_choices_enum_name_collisions.py` |
+| M-D8 | bounded-fixed | reserved-name construction fixed; inherited-hook history qualified. | Model field with reserved name → covered type construction now succeeds. | `tests/core/test_reserved_model_fields.py` |
+| M-D9 | bounded-fixed | interface implementor name honored; general type rename unapproved. | Named interface implementor → chosen type name appears; global renaming remains open. | `tests/test_model_type_list_type_name.py` |
+| M-D10 | partial | Unsupported Literal/dict/set/Union input annotations still fall back to String, now with a diagnostic warning; no conversion policy was added. | Unsupported Literal/dict input annotation → warning plus String fallback, not conversion. | `tests/core/test_input_typing_fallback_warnings.py` |
+| M-F1 | bounded-fixed | nested related datepart/PK shadow fixed; SDL/null/A12 separate. | Nested related date-part/PK shadow → correct lookup retained in covered case. | `tests/test_filter_lookup_boundaries.py` |
+| M-F2 | bounded-fixed | numeric Date/DateTime parts typed Int; whole-value/TimeField policy unchanged. | Date year or DateTime month filter → GraphQL Int input, not string. | `tests/test_datepart_filtering.py` |
+| M-F3 | partial | exact:null/omission only; broader Boolean identities open. | exact: null versus omitted exact → distinct covered behavior; empty Boolean open. | `tests/test_exact_null_filtering.py` |
+| M-F4 | bounded-fixed | explicit page:null equals omission; zero/negative unchanged. | page: null → omitted-page path; zero and negative pages keep their contracts. | `tests/test_pagination_page_null_http.py` |
+| M-F5 | bounded-fixed | model-backed PK-ASC tie-break; offset/random unaffected. | Equal sort values on model rows → PK ascending tie-break stabilizes order. | `tests/test_pagination_pk_tiebreak.py` |
+| M-F6 | bounded-fixed | no full fetch on negative-page count-error fallback; not universal DB proof. | Negative-page count fails → bounded fallback avoids fetching every row. | `tests/test_negative_page_count_error_http.py` |
+| M-F7 | bounded-fixed | omitted-page default fixed/documented; explicit None legacy unchanged. | Omitted page size → documented default; explicit null keeps legacy behavior. | `tests/test_default_page_size_http.py` |
+| M-H1 | bounded-fixed | batch HTTP400 prior data/error/stop; prior writes persist, no batch transaction. | Batch item 2 fails → HTTP 400 with prior item data/error, then stop; prior writes stay. | `tests/test_batch_http_error_partial.py` |
+| M-H2 | bounded-fixed | sync/async misuse JSON500/cleanup; no general async support. | Sync view receives async misuse → controlled JSON 500 and cleanup. | `tests/test_sync_async_http.py` |
+| M-H3 | bounded-fixed | preserve 0/False; fragment classifier separate. | Response value 0 or false → retained instead of dropped by cleaning. | `tests/test_clean_response_http.py` |
+| M-H4 | partial | success-only cache fixed; finite-safety/Ruff caveats retained. | Failed response → not cached; success cache still has separate finite-safety limits. | `tests/test_success_response_cache.py` |
+| M-O1 | bounded-fixed | merged-node optimizer N+1 fixed in bounded case. | Merged alias selection across rows → batched relation fetch, not one fetch per row. | `tests/test_optimizer_merged_field_nodes.py` |
+| M-O2 | bounded-fixed | warm-hit lock split; no general concurrency guarantee. | Warm cache hit beside cold fill → hit need not wait for unrelated cold fill. | `tests/test_permission_cache_lock_split.py` |
+| M-U1 | partial | Real-ASGI startup now cleans a group joined before cancellation returns; the same failed-Source/same-channel retry works. Distributed-backend cleanup remains best-effort. | ASGI startup cancellation after group join → cleanup; same failed Source retry succeeds. | `tests/subscriptions/test_startup_cleanup.py` |
+| M-U2 | decision-deferred | delete visibility/scope policy; do not remove checks to force match. | Delete event with id-only scope → visibility policy remains undecided. | `docs/usage/subscriptions.md` |
+| M-U3 | partial | Finite Decimal exact filters compare numeric event snapshots, including 1.0 versus 1.00 and valid 257-character values; DateTime/delete precision policy remains open. | Decimal 1.0 event filter versus snapshot 1.00 → matches; DateTime policy open. | `tests/subscriptions/test_decimal_snapshot_filter.py` |
+| M-U4 | contract | Automatic post-save/post-delete signals schedule commit-time sends, while bulk/update paths emit no model signals and manual binding broadcast is immediate; use a fresh post-commit instance when timing matters. | save() → after-commit send; bulk_update() → no signal; manual binding send → immediate. | `docs/usage/subscriptions.md` |
+| M-U5 | bounded-fixed | Native async directive formatting waits for resolver values and preserves borrowed Future ownership; synchronous HTTP still returns its controlled JSON 500 rather than gaining async support. | Async directive resolver → awaited; borrowed Future not cancelled by formatter. | `tests/test_async_directive_middleware.py` |
+| M-U6 | partial | The directive guide clarifies naive `@date` values in Django's active timezone and bounded case formatting; null/date/acronym transformations remain separate. | Naive @date value → active Django timezone, even when USE_TZ is false. | `docs/directives.md` |
+| M-T1 | bounded-fixed | fork-depth marker isolation; other registry races separate. | Fork in thread A → depth marker must not mutate ordinary schema B. | `tests/core/test_schema_fork_threads.py` |
+| L-C1 | partial | malformed abc IDs in get_node/retrieve/DjangoObjectField yield GraphQL null plus wrapped ValueError; well-typed missing ID yields null/no errors. Not raw HTTP500; null-only vs client error policy deferred. | Malformed ID abc → null plus wrapped error; well-typed missing ID → null without error. | `odd/tasks/audit-400-remediation.md` |
+| L-C2 | bounded-fixed | Two specific constructor validations now survive optimized Python (`-O`); no universal validation claim follows. | Two invalid constructor values under python -O → still rejected. | `tests/test_settings_boundary_values.py` |
+| L-C3 | partial | public Base view non-null root error is HTTP200/data:null; enhanced view HTTP400/no data key. Contracts confirmed; alignment policy deferred. | Same non-null root error → Base HTTP 200 versus enhanced HTTP 400 today. | `odd/tasks/audit-400-remediation.md` |
+| L-C4 | decision-deferred | MAX_UPLOAD_SIZE/base64 request docs are separate; multipart per-file quota would be a new policy, not evidence of existing promise. | Multipart file over a proposed per-file quota → no such new quota was adopted. | `odd/tasks/audit-400-remediation.md` |
+| L-C5 | decision-deferred | zero-preserving minimum validation may alter behavior/errors; approval needed. | Zero-valued negative config boundary → error policy still needs approval. | `odd/tasks/audit-400-remediation.md` |
+| L-C6 | contract | A cache miss reaches ensure_csrf_cookie and can set csrftoken; a cache hit returns earlier without Set-Cookie. A later cookie-bearing request bypasses the any-cookie cache policy. | Cookie-free miss can set csrftoken → next cookie request bypasses; hit does not set it. | `tests/test_views_cache_cookie_bypass.py` |
+| L-C7 | bounded-fixed | ambiguous enum members rejected; optional multiselect untested. | Two enum choices map to one ambiguous member → rejected. | `tests/core/test_choices_enum_member_ambiguity.py` |
+| L-C8 | contract | Negative page -1 means a fixed-size tail window, not the positive final page's short remainder. | page -1 with size 10 and 23 rows → last 10, not positive page 3's last 3. | `tests/test_pagination_page_null_http.py` |
+| L-C9 | partial | Cursor DB/list paths agree on NULL last ascending/first descending in the bounded SQLite case; offset/page queryset order inherits backend NULL placement and can diverge. | NULL row in cursor ASC → last; offset/page queryset keeps backend NULL placement. | `docs/usage/pagination.md` |
+| L-C10 | decision-deferred | declarations include fragment spread/inline fragment; behavioral/SDL policy unresolved. | Directive on a fragment spread → behavior policy remains undecided. | `odd/tasks/audit-400-remediation.md` |
+| L-C11 | decision-deferred | truncate/title/floor Infinity are distinct paths; error semantics require decision. | floor(Infinity) or title(Infinity) → error semantics not standardized. | `odd/tasks/audit-400-remediation.md` |
+| L-C12 | partial | The covered GFK union-wrapper path no longer makes an N+1 query; broader multi-table-inheritance paths remain unproved. | Covered GFK union wrapper across rows → batched; wider inheritance path unproved. | `tests/test_optimizer_phase_e.py` |
+| L-C13 | contract | The guide distinguishes native DateTime scalar naive parsing from `@date`'s active-timezone interpretation, including `USE_TZ=False`; no scalar policy changed. | Naive DateTime scalar input → stays naive; naive @date value → active timezone. | `docs/directives.md` |
+| L-E1 | bounded-fixed | get_fields failure surfaces model/cause; healthy path unchanged. | get_fields raises while building a type → model and cause surface. | `tests/core/test_metadata_enumeration_failures.py` |
+| L-E2 | bounded-fixed | explicit source property AttributeError surfaced; legitimate null/unrelated descriptors unchanged. | Explicit source property raises AttributeError → surfaced, not treated as null. | `tests/core/test_source_property_attribute_error.py` |
+| L-E3 | partial | The exact SITE-B filtered-prefetch hook-loss allegation was contradicted by a public SQLite witness: hook called once, visible rows only, one batched predicate query. Other branches/backends remain unproved. | SITE-B filtered prefetch → hook ran once and visible rows stayed filtered. | `tests/test_optimizer_phase_e.py` |
+| L-E4 | partial | cancellation intentional; single-group aclose warning fixed only. | Cancelled source with one group → aclose warning handled; other cancellation paths open. | `tests/subscriptions/test_source.py` |
+| L-M1 | decision-deferred | Declared input classes are intentionally registry-owned and a static three-schema reuse stayed bounded; dynamic class churn needs an ownership/lifecycle policy. | Three static schemas reuse declared input classes → bounded; dynamic churn policy open. | `tests/core/test_registry_compiler.py` |
+| L-M2 | partial | A bounded internal live-field identity/lifetime case was corrected; public schema impact and Graphene behavior were not established. | Internal live field reused across schemas → covered identity/lifetime case corrected. | `tests/core/test_native_field_identity_lifetime.py` |
+| L-M3 | partial | A direct GraphQLSchema enum-cache race was corrected; public exposure was not established. | Two threads request same enum compilation → one protected cache creation. | `tests/core/test_enum_cache_concurrency.py` |
+| L-M4 | partial | A direct GraphQLSchema list-creation race was corrected; public exposure was not established. | Two threads request same list construction → one protected registry creation. | `tests/core/test_registry_creation_concurrency.py` |
+| L-S1 | decision-deferred | heartbeat/per-principal caps are absent-feature/product policy, not an existing behavioral contract. | Idle WebSocket without heartbeat → no new heartbeat or per-principal cap added. | `docs/usage/subscriptions.md` |
+| L-S2 | decision-deferred | connection_init/token on_connect hook is new authentication/protocol policy, not an established contract. | connection_init token → no new on_connect authentication hook added. | `docs/usage/subscriptions.md` |
+| L-S3 | decision-deferred | empty offered protocol handshake confirmed; accept/reject/close code is wire-policy decision. | Client offers no subprotocol → observed handshake; new close policy deferred. | `docs/usage/subscriptions.md` |
+| L-S4 | bounded-fixed | WS operation cleanup and slot release precede the server `complete` frame, so immediate same-ID reuse is not mistaken for a duplicate; other lifecycle cases remain. | WS operation completes then reuses same ID → slot released before complete frame. | `tests/subscriptions/test_ws_completion_reuse.py` |
+| Q1 | contract | pyproject/uv/tox/CI require graphql-core 3.3 consistently; root 3.2.13 is stale unsupported env, not refreshed; no tox config mismatch. | pyproject/uv/tox/CI require core 3.3 → ambient 3.2.13 remains unsupported. | `tests/test_tox_dependency_contract.py` |
+| Q2 | bounded-fixed | The benchmark reader selects eight canonical result files deterministically; missing or invalid results still fail, and no timing was regenerated. | Benchmark reader sees eight canonical files → deterministic read, no new timing run. | `tests/benchmarks/test_core33_results.py` |
+| Q3 | bounded-fixed | Direct-view tests now close their own multipart temporary upload and ASGI body spool, including exception exits; no ResourceWarning was observed and no production leak is inferred. | Direct-view upload test exits through exception → its owned temp file closes. | `tests/test_views_multipart_body_bound.py` |
+| Q4 | recommendation | regression matrix duplicates existing IDs. | Proposed regression matrix repeats existing claim IDs → no extra runtime fix. | `odd/tasks/audit-400-remediation.md` |
+| Q5 | recommendation | historical test naming suggestion only. | Suggested test renaming → historical names retained pending review. | `odd/tasks/audit-400-remediation.md` |
+| Q6 | recommendation | module split suggestion, no authority. | Suggested giant-module split → no 10k-line refactor silently performed. | `odd/tasks/audit-400-remediation.md` |
+| Q7 | recommendation | cross-reference plan only; verify before refactor. | Suggested cross-reference cleanup → existing callers require review first. | `odd/tasks/audit-400-remediation.md` |
+| Q8 | negative-limited | MUTATION_ERRORS_FLAG is live; other alleged dead symbols require qualified caller and compatibility review, not deletion. | Flag marked dead → MUTATION_ERRORS_FLAG has a live view path; other names unproved. | `django_graphex/views.py` |
+| Q9 | recommendation | historical Graphene names/comments only. | Historical Graphene naming → no compatibility names removed on suggestion alone. | `odd/tasks/audit-400-remediation.md` |
+| Q10 | decision-deferred | deriving non-null from null=False changes SDL. | null=False model field → GraphQL non-null SDL not automatically inferred. | `odd/tasks/audit-400-remediation.md` |
+| P1 | recommendation | duplicate priority plan, not new finding/authority. | Duplicate priority plan → no additional defect or approval created. | `odd/tasks/audit-400-remediation.md` |
+| N1 | negative-limited | The schema cache uses an effective permission signature, not a unique user key; this is not a universal cross-user response-cache guarantee. | Two users with same effective permissions → schema cache signature can match. | `odd/tasks/audit-400-remediation.md` |
+| N2 | negative-limited | anonymous/falsy permission and scoped update/delete chain not universally runtime-proved. | Anonymous/falsy permissions → no universal fail-closed proof from bounded checks. | `odd/tasks/audit-400-remediation.md` |
+| N3 | negative-limited | Core MaxIntrospectionDepthRule rejected one bounded nested introspection query; custom MAX_QUERY_DEPTH is a different guard, and no universal DoS proof follows. | Nested introspection query → core depth rule rejects bounded case, not all DoS. | `tests/test_depth_limit.py` |
+| N4 | contract | The GFK field-type cache is process-global Django class metadata; saying all caches are request-scoped is inaccurate. | GFK target-type lookup → cached in process-global Django class metadata. | `django_graphex/utils.py` |
+| N5 | negative-limited | regex safety is bounded only; no universal conclusion. | One bounded regex probe → cannot establish universal input safety. | `odd/tasks/audit-400-remediation.md` |
+| N6 | negative-limited | Twenty-three tracked-test docstring findings were corrected, but seven ignored-profile DOC002 findings remain locally; original ignored preimages and a whole-CI-clean verdict are unavailable. | Tracked docstrings pass → seven ignored-profile DOC002 findings remain locally. | `scripts/check_docstrings.py` |
 
 ## Decisions still required
 
@@ -281,7 +310,7 @@ because approving one does not silently approve another.
   installation is unsupported and was not refreshed. Current
   `pyproject.toml`, `uv.lock`, `tox.ini`, and CI dependency declarations
   agree on 3.3; that configuration check is not a fresh CI matrix run.
-- The final local configured suite passed **5,624 tests**, with **7 skipped**
+- The final local configured suite passed **5,627 tests**, with **7 skipped**
   and **10 warnings**. Raw branch coverage was **4,148 / 4,346 = 95.44%**;
   combined covered lines and branches were **15,546 / 15,927 = 97.61%**.
   The nonempty cumulative production diff against the initial feature-branch
@@ -304,3 +333,8 @@ because approving one does not silently approve another.
   rewriting failed attempts as passing evidence. No new benchmark timings,
   PostgreSQL 17, CI matrix, dependency audit, package build, tag, or remote
   publication was run for this documentation unit; those checks were not run.
+- The original RED demonstrated report and navigation **file absence**, but
+  its test bytes are **not identical** to the eventual GREEN because a table
+  helper and wording were corrected in between. A later, narrower
+  **same-byte** wording RED/GREEN cycle does not retroactively repair that
+  original TDD provenance. The retained proof records both paths.
