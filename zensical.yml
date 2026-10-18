@@ -123,6 +123,7 @@ nav:
   - Development:
     - Contributing: contributing.md
     - Release process: releasing.md
+    - 4.0.0 audit disposition: audit-4.0.0.md
     - Changelog: changelog.md
 
 extra:

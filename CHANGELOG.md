@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a local, evidence-bounded disposition of the 100 original audit claims
+  in [the 4.0.0 audit report](docs/audit-4.0.0.md). It separates scoped fixes,
+  current contracts, recommendations, limited negative checks, and pending
+  policy decisions. This is not a release or a claim that all issues are closed.
+
 - Document current subscription, timezone, cache-cookie, partial-update and
   pagination boundaries without changing runtime behavior. The guides now
   distinguish automatic signals from manual broadcast, directive timezone
