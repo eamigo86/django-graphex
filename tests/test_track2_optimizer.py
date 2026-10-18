@@ -434,7 +434,10 @@ def _seed_gfk_rows() -> None:
 @requires_generic_prefetch
 @pytest.mark.django_db
 def test_gfk_union_wrapper_inline_and_named_fragments_batch_targets() -> None:
-    """Batch union-wrapper member selections without per-row customer reads."""
+    """Batch targets selected through inline and named union fragments.
+
+    Member selections should avoid per-row reads of related customers.
+    """
     reg = Registry()
 
     class AccountType(DjangoObjectType):
@@ -545,7 +548,10 @@ def test_gfk_union_wrapper_inline_and_named_fragments_batch_targets() -> None:
 def test_gfk_union_wrapper_bucket_walk_bounds_cycles_and_excludes_foreign_types() -> (
     None
 ):
-    """Visit union wrapper spreads once without routing a foreign model."""
+    """Bound cyclic union-fragment traversal to relevant member types.
+
+    Foreign models must not enter the target buckets during the walk.
+    """
     from graphql.language.ast import (
         InlineFragmentNode,
         NamedTypeNode,

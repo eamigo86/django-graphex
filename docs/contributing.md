@@ -120,6 +120,10 @@ python3 scripts/check_docstrings.py . --strict-public --strict-content
 
 The `.` scope includes runtime, scripts, tests, benchmarks, and
 examples/playground; environments, caches, site output, and migrations are excluded.
+It also scans eligible local Python files that Git ignores. A clean CI checkout
+contains tracked files, not ad hoc ignored scripts. When a local result differs
+from CI, identify the input files before attributing findings to the committed
+project; do not weaken the checker or add exclusions to hide them.
 
 #### Strict result sections
 

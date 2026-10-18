@@ -11,11 +11,17 @@ from .test_query_optimization import schema
 
 
 class MergedRootFieldNodesTest(TestCase):
-    """A repeated root response key must share one complete query plan."""
+    """Check merged root selections against complete query plans.
+
+    Repeated response keys must not introduce per-row relation queries.
+    """
 
     @classmethod
     def setUpTestData(cls) -> None:
-        """Create five rows so per-row relation loads are observable."""
+        """Create five posts sharing one author and tag.
+
+        Multiple rows make per-row relation loading observable.
+        """
         author = Author.objects.create(name="Ada", bio="bio")
         tag = Tag.objects.create(label="shared")
         for index in range(5):
@@ -27,7 +33,10 @@ class MergedRootFieldNodesTest(TestCase):
     def test_direct_and_fragment_root_fields_share_relation_and_column_plan(
         self,
     ) -> None:
-        """The second root node supplies relations and columns absent from the first."""
+        """Merge relations and columns selected by a later root node.
+
+        The combined query and split selections should use the same plan.
+        """
         split_query = """
             {
               allPosts { results { title } }
@@ -62,7 +71,10 @@ class MergedRootFieldNodesTest(TestCase):
         self.assertEqual(len(split_queries), 2)
 
     def test_second_root_node_promotes_annotated_relation(self) -> None:
-        """A later root fragment still supplies the related annotation plan."""
+        """Include a related annotation selected by a later root fragment.
+
+        The merged plan should retain the bounded query count.
+        """
         root_type = _promo_schema.graphql_schema.query_type.name
         query = f"""
             {{

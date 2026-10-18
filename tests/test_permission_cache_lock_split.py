@@ -47,7 +47,10 @@ def _join_all(threads: list[threading.Thread]) -> None:
 
 
 def test_warm_hit_completes_before_unrelated_cold_prune_is_released() -> None:
-    """A cached B must not wait for a different signature's blocked prune."""
+    """Let a warm cache hit complete during an unrelated cold prune.
+
+    The blocked build for one signature must not hold up another cached key.
+    """
     cache = _SignatureSchemaCache()
     full = _schema()
     user_a, user_b = _User({"app.a"}), _User({"app.b"})
@@ -110,7 +113,10 @@ def test_warm_hit_completes_before_unrelated_cold_prune_is_released() -> None:
 
 
 def test_cold_builds_remain_serial_and_same_key_is_shared() -> None:
-    """Two cold keys never prune together, and one key builds once."""
+    """Serialize cold prunes and share a build for the same key.
+
+    Distinct signatures cannot enter their pruning callbacks together.
+    """
     cache = _SignatureSchemaCache()
     full = _schema()
     user_a, user_c = _User({"app.a"}), _User({"app.c"})
@@ -173,7 +179,10 @@ def test_cold_builds_remain_serial_and_same_key_is_shared() -> None:
 
 
 def test_clear_waits_for_build_then_removes_entry() -> None:
-    """Clear preserves build-ordering and leaves no completed entry behind."""
+    """Make cache clearing wait for an active build.
+
+    No completed entry should survive the ordered clear operation.
+    """
     cache = _SignatureSchemaCache()
     full = _schema()
     entered_build = threading.Event()
@@ -220,7 +229,10 @@ def test_clear_waits_for_build_then_removes_entry() -> None:
 
 
 def test_reentrant_clear_and_failed_prune_leave_cache_recoverable() -> None:
-    """An owned build can clear recursively; exceptions do not publish entries."""
+    """Keep the cache usable after reentrant clear and failed pruning.
+
+    A failed build must not publish an entry before a later successful retry.
+    """
     cache = _SignatureSchemaCache()
     full = _schema()
     user = _User({"app.a"})

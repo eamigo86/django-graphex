@@ -262,7 +262,10 @@ def test_public_schema_rejects_relation_metadata_failure(
 
 
 def test_eager_field_recompile_retains_original_cause() -> None:
-    """Eager unwrapping retains an existing configuration error cause."""
+    """Keep the original cause when eager field compilation fails.
+
+    The unwrapping layer must not replace the metadata failure's cause.
+    """
     original = RuntimeError("original eager metadata failure")
 
     def fields() -> NoReturn:
@@ -281,7 +284,10 @@ def test_eager_field_recompile_retains_original_cause() -> None:
 
 
 def test_eager_field_recompile_keeps_uncaused_error_unchained() -> None:
-    """Existing uncaused configuration refusals remain unchained."""
+    """Leave an existing uncaused configuration refusal unchained.
+
+    Eager field compilation must not invent a cause for this failure.
+    """
 
     def fields() -> NoReturn:
         """Raise an existing uncaused configuration refusal.

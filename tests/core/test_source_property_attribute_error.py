@@ -70,7 +70,10 @@ def test_wrapped_python_property_source_preserves_original_error(
 
 
 def test_source_property_attribute_error_surfaces_graphql_resolution_error() -> None:
-    """Expose a property getter failure without losing sibling data or origin."""
+    """Expose a property getter failure as a GraphQL resolution error.
+
+    Preserve the original exception and the healthy sibling's data.
+    """
     failure = AttributeError("failure inside property getter")
 
     class Root:
@@ -103,7 +106,10 @@ def test_source_property_attribute_error_surfaces_graphql_resolution_error() -> 
 
 
 def test_inherited_source_property_failure_preserves_required_propagation() -> None:
-    """Propagate required-field null while retaining inherited getter origin."""
+    """Propagate a required-field failure from an inherited property.
+
+    The GraphQL error must retain the inherited getter's original cause.
+    """
     failure = AttributeError("inherited property failure")
 
     class BaseRoot:
@@ -136,7 +142,10 @@ def test_inherited_source_property_failure_preserves_required_propagation() -> N
 
 
 def test_source_absence_and_successful_dynamic_fallback_remain_nullable() -> None:
-    """Keep normal missing, null, mapping, and dynamic lookup semantics."""
+    """Keep ordinary source lookup and null behavior unchanged.
+
+    Cover missing attributes, explicit nulls, mappings, and dynamic fallback.
+    """
 
     class Root:
         """Provide successful and absent source attributes."""
@@ -211,7 +220,10 @@ def test_source_absence_and_successful_dynamic_fallback_remain_nullable() -> Non
 
 
 def test_absent_django_reverse_one_to_one_stays_nullable_through_property() -> None:
-    """Treat Django's absent reverse relation as null, even in a property."""
+    """Treat an absent Django reverse one-to-one relation as null.
+
+    Property wrapping must not turn legitimate relation absence into an error.
+    """
 
     class Root:
         """Wrap an unsaved author with no reverse one-to-one relation."""
@@ -245,7 +257,10 @@ def test_absent_django_reverse_one_to_one_stays_nullable_through_property() -> N
 
 
 def test_custom_attribute_lookup_and_nested_required_propagation() -> None:
-    """Preserve successful custom lookup and a nested required error path."""
+    """Preserve custom lookup and nested required-field propagation.
+
+    The successful sibling and failing property follow separate paths.
+    """
     failure = AttributeError("nested property failed")
 
     class ChildRoot:
@@ -298,7 +313,10 @@ def test_custom_attribute_lookup_and_nested_required_propagation() -> None:
 
 
 def test_unrelated_descriptor_and_dynamic_absence_keep_legacy_null() -> None:
-    """Do not apply the property policy to other descriptors or absent fallback."""
+    """Keep legacy null behavior for non-property lookup failures.
+
+    Neither an unrelated descriptor nor final dynamic absence uses the policy.
+    """
 
     class Descriptor:
         """Represent a non-property descriptor whose lookup fails."""
@@ -353,7 +371,10 @@ def test_unrelated_descriptor_and_dynamic_absence_keep_legacy_null() -> None:
 
 
 def test_explicit_resolver_precedes_source_and_method_body_error_is_unchanged() -> None:
-    """Keep resolver precedence and non-property method errors unchanged."""
+    """Keep explicit resolver precedence and method errors unchanged.
+
+    A source property is skipped when a resolver exists; method failures remain errors.
+    """
     method_failure = AttributeError("method failed")
 
     class Root:

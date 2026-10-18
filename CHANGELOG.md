@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Complete Google-style docstrings in tracked regression tests for metadata
+  errors, schema isolation, source properties, optimizer plans, and permission
+  caching. This is a test-documentation change only; library behavior is
+  unchanged. Local ignored profiling scripts are outside the clean checkout.
+
 - Warn when unsupported hand-authored input annotations such as `Literal`,
   parameterized `dict` or `set`, and non-optional `Union` fall back to GraphQL
   `String`. Existing SDL, coercion, and resolver dictionaries are unchanged;

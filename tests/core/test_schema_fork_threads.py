@@ -171,7 +171,10 @@ def test_concurrent_fork_preserves_sibling_output_projections(
 
 
 def test_serial_projected_list_keeps_its_node_type() -> None:
-    """Show that the list result shape is valid without fork overlap."""
+    """Confirm the projected list retains its node type without overlap.
+
+    This serial case separates ordinary schema construction from a fork race.
+    """
     reg = get_global_registry()
 
     class SerialAuthor(DjangoObjectType):
@@ -199,7 +202,13 @@ def test_serial_projected_list_keeps_its_node_type() -> None:
 
 
 def test_fork_marker_is_nested_and_restored_after_error() -> None:
-    """Nested same-thread scopes restore their prior depth on an exception."""
+    """Restore the fork marker after nested same-thread scopes unwind.
+
+    The inner failure must not leave either scope marked as active.
+
+    Raises:
+        RuntimeError: Raised intentionally inside the captured nested scope.
+    """
     assert not is_forking()
     with pytest.raises(RuntimeError, match="owned failure"):
         with _forking_build():

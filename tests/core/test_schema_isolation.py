@@ -46,6 +46,9 @@ def test_isolated_default_pair_restores_after_exception(
 
     Args:
         monkeypatch: Restores the original cache after this test.
+
+    Raises:
+        ValueError: Raised intentionally inside the captured temporary scope.
     """
     monkeypatch.setattr(base_module, "_default_schema_registries", None)
     previous_registry = registry_module.registry
