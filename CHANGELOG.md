@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Apply field directives after awaiting resolver values in native asynchronous
+  graphql-core execution, rather than formatting coroutine representations.
+  Built-in synchronous HTTP views still reject asynchronous execution with
+  their existing JSON 500 error; this does not add asynchronous HTTP support
+  or change directive names, arguments, or synchronous results.
+
 - Clean up subscription group memberships when WebSocket or SSE startup is
   cancelled after a backend join but before the join call returns. Partial
   startup failures attempt the same source-owned cleanup while preserving the

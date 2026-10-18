@@ -36,6 +36,18 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     registered directive class. Both the schema `directives=` list **and** the
     middleware entry are required — either alone does nothing.
 
+## Asynchronous resolvers
+
+When using graphql-core's native asynchronous execution, the middleware waits
+for an asynchronous resolver's value before applying field directives in query
+order. For example, an asynchronous resolver returning `"Hello"` yields
+`"HELLO"` for `@uppercase`, not a representation of its coroutine.
+
+The built-in Django HTTP views remain synchronous. They reject asynchronous
+resolvers with a JSON error and HTTP 500; adding a directive does not enable
+asynchronous HTTP execution. Use synchronous resolvers and middleware with
+these views.
+
 ## Overview
 
 Directives are applied to fields in your GraphQL queries and are processed after the field value is resolved. They enable you to:

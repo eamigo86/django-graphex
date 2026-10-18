@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 from graphql.execution.values import get_directive_values
+from graphql.pyutils import is_awaitable
 from graphql.type.directives import GraphQLIncludeDirective, GraphQLSkipDirective
 
 from .registry import get_global_registry
@@ -56,6 +57,7 @@ class GraphQLDirectiveMiddleware:
             value: The resolved field value.
             root: The root value passed to the resolver.
             info: The GraphQL resolve info for the field.
+            **kwargs: The field arguments forwarded to each directive.
 
         Returns:
             The value after every registered directive has been applied.
@@ -64,6 +66,19 @@ class GraphQLDirectiveMiddleware:
         field = info.field_nodes[0]
         if not field.directives:
             return value
+
+        if is_awaitable(value):
+
+            async def resolve_awaitable() -> Any:
+                """Apply field directives after native async resolution.
+
+                Returns:
+                    The resolved value after its directives are applied.
+                """
+                resolved = await value
+                return self.__process_value(resolved, root, info, **kwargs)
+
+            return resolve_awaitable()
 
         new_value = value
         for directive in field.directives:
