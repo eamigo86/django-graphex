@@ -1565,6 +1565,24 @@ explicit values and `null` still bypass a zero-argument factory. A resolver
 still receives a snake-keyed `dict`, not an automatically validated Pydantic
 instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
 
+### Unsupported hand-authored input annotations
+
+The native input compiler warns when an annotation such as
+`Literal["a", "b"]`, `dict[str, int]`, `set[int]`, or `Union[int, str]`
+falls back to GraphQL `String`. This is a diagnostic change, **not** new
+support for those shapes: the SDL and GraphQL coercion remain `String`
+(`String!` for required fields). A `Literal` value outside its declared
+choices can still reach a mutation resolver if it is a string. Resolvers
+receive a plain dictionary, not an automatically validated Pydantic model.
+
+For a string-valued field, annotate it as `str` to match the wire contract.
+If the narrower Pydantic constraint is required, explicitly validate the
+resolver's dictionary with the input model's `model_validate()` method and
+handle its validation error. A supported `int | None` field remains nullable
+`Int`; a required `list[int]` remains `[Int!]!`. Neither emits this fallback
+warning. Do not treat the warning as an Enum, JSON, set, or input-union
+conversion.
+
 !!! warning "Compile the input type before you declare the mutation"
     `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`
     to be compiled **already** — it is read when `YourMutation.Field()` is

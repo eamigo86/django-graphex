@@ -26,7 +26,7 @@ import decimal
 import uuid
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, get_origin
 
 from graphql import (
     GraphQLBoolean,
@@ -319,11 +319,14 @@ def _resolve_input_model_type(py_type: Any) -> Any:
 def _python_type_to_gql(py_type: Any) -> Any:
     """Map a Python type to a graphql-core scalar/type.
 
-    Returns GraphQLString as a fallback for unknown types so the schema
-    still builds. Unlike the pre-fix silent fallback, a truly-unknown CLASS
-    annotation (not a scalar, not an Enum, not a BaseModel input model)
-    now emits a loud UserWarning so the degradation is visible rather than
-    silently corrupting a structured field into a String.
+    Unknown classes and unsupported typing forms retain the GraphQLString
+    fallback, but warn so that the wire-type degradation is visible.
+
+    Args:
+        py_type: The annotation after optional and list handling.
+
+    Returns:
+        The existing GraphQL input scalar or nested input type.
     """
     if py_type is None:
         return GraphQLString
@@ -357,6 +360,18 @@ def _python_type_to_gql(py_type: Any) -> Any:
 
     if isinstance(py_type, type) and issubclass(py_type, _enum.Enum):
         return GraphQLString
+
+    # Unsupported typing forms also retain the legacy String fallback. Optional
+    # and list annotations are handled before this function is called.
+    if get_origin(py_type) is not None:
+        warnings.warn(
+            f"compile_input_type: unsupported input field type {py_type!s} — "
+            "falling back to the GraphQLString scalar. Annotate the field "
+            "with a supported scalar, a list of supported scalars, or an "
+            "InputType/BaseModel subclass to avoid this degradation.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Truly-unknown CLASS: keep the String fallback (schema still builds) but
     # warn LOUDLY — a silent String here historically corrupted structured data.

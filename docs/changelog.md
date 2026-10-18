@@ -14,6 +14,11 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Warn when unsupported hand-authored input annotations such as `Literal`,
+  parameterized `dict` or `set`, and non-optional `Union` fall back to GraphQL
+  `String`. Existing SDL, coercion, and resolver dictionaries are unchanged;
+  this does not add structured input conversion or automatic Pydantic validation.
+
 - Apply field directives after awaiting resolver values in native asynchronous
   graphql-core execution, rather than formatting coroutine representations.
   Built-in synchronous HTTP views still reject asynchronous execution with
