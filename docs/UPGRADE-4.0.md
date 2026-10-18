@@ -50,6 +50,22 @@ saw those values omitted should accept the full introspection response. Mixed
 ordinary root fields are still cleaned, and the default
 `CLEAN_RESPONSE=False` is unchanged. See [response cleaning](usage/security.md#ast-based-introspection-detection-clean_response).
 
+### Review filters that traverse a forward FK
+
+A public nested filter such as
+`posts(filter: { author: { name: { exact: "Ada" } } })` now applies
+`AuthorType.get_queryset` for the current request before the author can
+satisfy the predicate. A post linked to a hidden author no longer matches,
+even when the post itself remains visible. Each forward-FK hop in a longer
+filter path is scoped. If clients previously expected hidden destinations to
+match, review those filters and destination hooks.
+
+Direct source FK-ID filters such as `author: { exact: 7 }` keep their existing
+contract; a hidden target ID may still match the source row. An omitted filter
+and real nullable-FK matches also keep their meanings. Reverse-FK, M2M, O2O,
+custom filter bodies and ordering are not changed by this filter rule. See
+[forward-FK filter scope](usage/filtering.md#forward-fk-filter-scope).
+
 ### Check custom integration code
 
 1. **Execution backends:** the HTTP view accepts `executor_class=` and keeps

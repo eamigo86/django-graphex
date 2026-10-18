@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from django.db.models import Exists, OuterRef, Q
-from graphql import Undefined
+from django.db.models import Exists, ForeignKey, OuterRef, Q
+from graphql import GraphQLError, Undefined, get_named_type
 
 from .translate import _is_pk_lookups, _relation_target, to_q
 
@@ -21,6 +21,123 @@ if TYPE_CHECKING:
     from django_graphex.registry import Registry
 
 __all__ = ("FilterBackend", "NativeFilterBackend", "resolve_filter_backend")
+
+
+class _ForwardFkFilterScope:
+    """Carry the active schema, request and database alias through filter branches."""
+
+    def __init__(self, info: Any, alias: str, node_type: Any) -> None:
+        """Bind one filter evaluation to its request and compiled output type.
+
+        Args:
+            info: Active GraphQL resolve information.
+            alias: Database alias of the source queryset.
+            node_type: Compiled output type serving the current model.
+        """
+        self.info = info
+        self.alias = alias
+        self.node_type = node_type
+
+    @classmethod
+    def for_queryset(cls, info: Any, queryset: QuerySet) -> _ForwardFkFilterScope:
+        """Build the root scope from the actual request's compiled result type.
+
+        Args:
+            info: Active GraphQL resolve information.
+            queryset: Source queryset being filtered.
+
+        Returns:
+            A request-bound scope for the list's item type.
+        """
+        from .native_schema import _node_of
+
+        return cls(info, queryset.db, _node_of(get_named_type(info.return_type)))
+
+    def for_relation(
+        self, model: type[Model], name: str, prefix: str
+    ) -> tuple[Q, _ForwardFkFilterScope]:
+        """Scope a forward-FK traversal while preserving real-null matches.
+
+        Args:
+            model: Model owning the relation.
+            name: Relation field name from the coerced filter input.
+            prefix: Current ORM relation path.
+
+        Returns:
+            A relation condition and the scope for nested filter fields.
+
+        Raises:
+            GraphQLError: If the schema omits a traversed FK type or a hook
+                switches the destination queryset to another database.
+        """
+        from django_graphex.core.compat import _gdx_graphene_type
+        from django_graphex.utils import (
+            apply_object_type_get_queryset,
+            has_object_type_queryset_override,
+        )
+
+        from .native_schema import _traversed_type
+
+        child_type = (
+            _traversed_type(self.node_type, name)
+            if self.node_type is not None
+            else None
+        )
+        child_scope = type(self)(self.info, self.alias, child_type)
+        field = model._meta.get_field(name)
+        if not isinstance(field, ForeignKey) or getattr(field, "one_to_one", False):
+            return Q(), child_scope
+        if self.node_type is None:
+            return Q(), child_scope
+        if child_type is None:
+            raise GraphQLError(
+                f"The filter relation {model._meta.label}.{name} has no "
+                "destination type in the active schema."
+            )
+        output_type = _gdx_graphene_type(child_type)
+        if not has_object_type_queryset_override(output_type):
+            return Q(), child_scope
+
+        destination = field.related_model._default_manager.db_manager(self.alias).all()
+        visible = apply_object_type_get_queryset(destination, output_type, self.info)
+        if (
+            visible.model._meta.concrete_model
+            is not field.related_model._meta.concrete_model
+            or visible.db != self.alias
+        ):
+            raise GraphQLError(
+                f"{output_type.__name__}.get_queryset must retain the "
+                "destination model and database alias for a relation filter."
+            )
+
+        path = f"{prefix}{name}"
+        # The existing nullable-join predicate still decides whether a truly
+        # absent FK matches. A hidden, non-null destination never matches.
+        condition = Q(**{f"{path}__isnull": True}) | Q(
+            **{f"{path}__pk__in": visible.values("pk")}
+        )
+        return condition, child_scope
+
+
+def apply_filter_backend(
+    backend: FilterBackend, queryset: QuerySet, value: Any, info: Any
+) -> QuerySet:
+    """Pass request context only to the package's unmodified native backend.
+
+    Args:
+        backend: Selected filter backend instance.
+        queryset: Source queryset to filter.
+        value: Coerced GraphQL filter input.
+        info: Active GraphQL resolve information.
+
+    Returns:
+        The filtered queryset.
+    """
+    if isinstance(backend, NativeFilterBackend) and (
+        type(backend).apply is NativeFilterBackend.apply
+    ):
+        return backend.apply(queryset, value, info=info)
+    return backend.apply(queryset, value)
 
 
 def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
@@ -57,7 +174,10 @@ def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
 
 
 def _independent_many_q(
-    node: Any, queryset: QuerySet, combinator: str | None = None
+    node: Any,
+    queryset: QuerySet,
+    combinator: str | None = None,
+    scope: _ForwardFkFilterScope | None = None,
 ) -> Q:
     """Compile Boolean input with independent to-many AND at each model scope.
 
@@ -72,6 +192,7 @@ def _independent_many_q(
         node: A generated filter input node.
         queryset: The queryset at this model scope.
         combinator: Enclosing Boolean operator for unknown-field validation.
+        scope: Request-bound forward-FK destination scope, when available.
 
     Returns:
         A SQL-composable condition for the node.
@@ -85,7 +206,7 @@ def _independent_many_q(
             continue
         if key == "and":
             for child in value:
-                child_q = _independent_many_q(child, queryset, "and")
+                child_q = _independent_many_q(child, queryset, "and", scope)
                 if not child_q:
                     continue
                 _, child_many = to_q(child, queryset.model, _combinator="and")
@@ -98,28 +219,35 @@ def _independent_many_q(
             combined = Q()
             has_any = False
             for child in value:
-                child_q = _independent_many_q(child, queryset, "or")
+                child_q = _independent_many_q(child, queryset, "or", scope)
                 combined = child_q if not has_any else (combined | child_q)
                 has_any = True
             if has_any:
                 result &= combined
         elif key == "not":
-            result &= ~_independent_many_q(value, queryset, "not")
+            result &= ~_independent_many_q(value, queryset, "not", scope)
         else:
-            leaf_q, _ = to_q({key: value}, queryset.model, _combinator=combinator)
+            leaf_q, _ = to_q(
+                {key: value}, queryset.model, _combinator=combinator, _scope=scope
+            )
             related = _relation_target(queryset.model, key)
             if (
                 related is not None
                 and not _is_pk_lookups(value)
                 and _has_independent_many_and(value, related)
             ):
+                relation_scope, child_scope = (
+                    scope.for_relation(queryset.model, key, "")
+                    if scope is not None
+                    else (Q(), None)
+                )
                 related_rows = related._base_manager.using(queryset.db).all()
                 matching = related_rows.filter(
-                    _independent_many_q(value, related_rows)
+                    _independent_many_q(value, related_rows, scope=child_scope)
                 ).values("pk")
                 present = Q(**{f"{key}__in": matching})
                 missing = Q(**{f"{key}__isnull": True}) & leaf_q
-                result &= present | missing
+                result &= (present | missing) & relation_scope
             else:
                 result &= leaf_q
     return result
@@ -221,7 +349,7 @@ class NativeFilterBackend(FilterBackend):
             node_type=node_type,
         )
 
-    def apply(self, queryset: QuerySet, value: Any) -> QuerySet:
+    def apply(self, queryset: QuerySet, value: Any, *, info: Any = None) -> QuerySet:
         """Filter "queryset" with the "Q" translated from "value".
 
         Applies ".distinct()" when a to-many relation was traversed (to
@@ -230,17 +358,23 @@ class NativeFilterBackend(FilterBackend):
         Args:
             queryset: The base queryset to filter.
             value: The filter input value, or "None" / empty for a no-op.
+            info: Active GraphQL request, or None for direct backend callers.
 
         Returns:
             The filtered (and possibly de-duplicated) queryset.
         """
         if not value:
             return queryset
-        q, touched_to_many = to_q(value, queryset.model)
+        scope = (
+            _ForwardFkFilterScope.for_queryset(info, queryset)
+            if info is not None and getattr(info, "return_type", None) is not None
+            else None
+        )
+        q, touched_to_many = to_q(value, queryset.model, _scope=scope)
         if not q:
             return queryset
         if _has_independent_many_and(value, queryset.model):
-            q = _independent_many_q(value, queryset)
+            q = _independent_many_q(value, queryset, scope=scope)
         queryset = queryset.filter(q)
         if touched_to_many:
             queryset = queryset.distinct()

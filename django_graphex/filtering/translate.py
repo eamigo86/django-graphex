@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from django.db.models import Q
+from django.db.models import BooleanField, Case, Q, Value, When
 from graphql import GraphQLError, Undefined
 
 from .lookups import ALL_LOOKUPS
@@ -158,6 +158,7 @@ def to_q(
     prefix: str = "",
     *,
     _combinator: str | None = None,
+    _scope: Any = None,
 ) -> tuple[Q, bool]:
     """Translate a filter node into a "(Q, touched_to_many)" pair.
 
@@ -191,6 +192,7 @@ def to_q(
             combinator whose child node this call is translating, or "None" at
             the top level. When set, an unknown (non-model, non-relation,
             non-combinator) key fails loud instead of being skipped.
+        _scope: Request-bound destination scope, or None for legacy direct use.
 
     Returns:
         A pair of the combined "Q" and whether any to-many relation was
@@ -212,7 +214,9 @@ def to_q(
 
         if key == "and":
             for child in value:
-                child_q, child_many = to_q(child, model, prefix, _combinator="and")
+                child_q, child_many = to_q(
+                    child, model, prefix, _combinator="and", _scope=_scope
+                )
                 result &= child_q
                 touched_to_many = touched_to_many or child_many
             continue
@@ -220,7 +224,9 @@ def to_q(
             combined = Q()
             has_any = False
             for child in value:
-                child_q, child_many = to_q(child, model, prefix, _combinator="or")
+                child_q, child_many = to_q(
+                    child, model, prefix, _combinator="or", _scope=_scope
+                )
                 combined = child_q if not has_any else (combined | child_q)
                 has_any = True
                 touched_to_many = touched_to_many or child_many
@@ -228,7 +234,9 @@ def to_q(
                 result &= combined
             continue
         if key == "not":
-            child_q, child_many = to_q(value, model, prefix, _combinator="not")
+            child_q, child_many = to_q(
+                value, model, prefix, _combinator="not", _scope=_scope
+            )
             result &= ~child_q
             touched_to_many = touched_to_many or child_many
             continue
@@ -245,8 +253,35 @@ def to_q(
         if related is not None and not _is_pk_lookups(value):
             # Relation children keep their own combinator scope reset: a relation
             # node is a fresh filter node against the related model.
+            # Determine whether the child has a predicate before consulting the
+            # destination hook. Empty nested inputs are still true no-ops.
             child_q, child_many = to_q(value, related, f"{prefix}{key}__")
-            result &= child_q
+            if not child_q:
+                touched_to_many = touched_to_many or child_many
+                continue
+            relation_scope, child_scope = (
+                _scope.for_relation(model, key, prefix)
+                if _scope is not None
+                else (Q(), None)
+            )
+            if child_scope is not None:
+                child_q, child_many = to_q(
+                    value, related, f"{prefix}{key}__", _scope=child_scope
+                )
+            if relation_scope:
+                # SQL UNKNOWN must behave like a false filter match before an
+                # enclosing NOT complements this branch. Otherwise a real NULL
+                # FK can disappear from NOT even though it never matched.
+                match = relation_scope & child_q
+                result &= Q(
+                    Case(
+                        When(match, then=Value(True)),
+                        default=Value(False),
+                        output_field=BooleanField(),
+                    )
+                )
+            else:
+                result &= child_q
             touched_to_many = touched_to_many or child_many
             continue
 

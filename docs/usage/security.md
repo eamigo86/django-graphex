@@ -390,8 +390,10 @@ user is denied (fail-closed). `""` (default) disables it, and the public
 Generated mutation FK/M2M ID links have a separate **destination row-scope**
 check when the destination public type overrides `get_queryset`. Hidden and
 nonexistent IDs return the same structured invalid-pk error before the parent
-write; child write permissions do not run for a link. This does not scope
-automatic relation expansion or ORM relation-filter joins. See
+write; child write permissions do not run for a link. Automatic FK/reverse-FK
+output reads and nested forward-FK filters have separate bounded destination
+scope rules; this ID-link check does not make other relation joins globally
+scoped. See
 [mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
 
 Adopting an existing nullable reverse-FK orphan by ID is a **child write**, not

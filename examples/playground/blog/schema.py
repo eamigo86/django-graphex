@@ -239,8 +239,9 @@ class PostType(DjangoObjectType):
     #         authenticated request (log in via /admin) → all posts visible.
     #
     # The destination hook also scopes automatic FK and reverse-FK output reads.
-    # This is not a global row policy: joined filters and custom resolvers remain
-    # distinct paths. See docs/usage/types.md#relation-scope-hatch.
+    # This is not a global row policy: the Playground declares a direct author
+    # FK-ID filter, not an author-field traversal. Other relation filters and
+    # custom resolvers remain separate. See docs/usage/filtering.md.
     #
     #   { posts { results { title status } } }                  scoped   (published only)
     #   { categories { name posts { title status } } }          scoped   (declared hatch,
@@ -254,8 +255,9 @@ class PostType(DjangoObjectType):
 
         This hook runs on all four top-level field types and on automatic
         FK/reverse-FK output reads, so anonymous callers see only published
-        posts while authenticated callers see all. Joined filters and custom
-        resolvers are separate paths; see docs/usage/types.md.
+        posts while authenticated callers see all. Nested forward-FK filters
+        have a destination-hook rule, while direct FK-ID filters and custom
+        resolvers retain separate contracts; see docs/usage/filtering.md.
 
         Args:
             queryset: The base Post queryset to scope.

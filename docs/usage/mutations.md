@@ -885,7 +885,8 @@ Adoption from a **different** parent remains forbidden, and a missing ID keeps
 the existing child-creation/validation behavior. Reverse one-to-one and generic
 relations are outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),
 this is a **child write** and its host checks apply; automatic relation reads
-and ORM relation-filter joins remain separate boundaries.
+and relation-filter joins retain separate boundaries; nested forward-FK
+filters have their own destination-hook rule.
 
 !!! warning "Reverse child re-parenting"
     Attempting to assign an existing reverse child (by pk) to a new parent via
@@ -931,7 +932,9 @@ and ORM relation-filter joins remain separate boundaries.
     that actually CREATE or UPDATE a child retain their separate existing
     rules. For example, a missing M2M ID accompanied by required child data
     can create a child rather than link an existing one. This does not
-    change automatic relation expansion on reads or ORM relation-filter joins;
+    change automatic relation expansion on reads or relation-filter joins;
+    automatic FK/reverse-FK output reads and nested forward-FK filters have
+    their own bounded destination-hook rules;
     see [row-scope boundaries](types.md#relation-scope-hatch).
 
 #### Migrating ID links hidden by a destination scope

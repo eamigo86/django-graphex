@@ -330,6 +330,37 @@ The table shows the default-set shapes; the extra catalog lookups (`iexact`,
 `contains`, date/time parts, …) follow the same pattern — see the
 [lookup catalog](#lookup-catalog-defaults-vs-the-full-set).
 
+### Forward-FK filters use the destination's row scope { #forward-fk-filter-scope }
+
+When a filter descends through a forward foreign key, its destination type's
+`get_queryset(queryset, info)` hook now limits which target rows can satisfy
+the nested predicate. The hook receives the current request and a queryset on
+the source queryset's database alias. A hidden author cannot make a post match
+`{ author: { name: { exact: "hidden" } } }`, even if the post itself is visible.
+Each forward-FK hop in a longer path is checked separately.
+
+This changes **nested target-field filters**, not direct source FK-ID lookups.
+A declaration of `{"author": ("exact", "in")}` can still match a source row
+whose `author_id` names a hidden author. An omitted or empty nested filter
+remains a no-op, and direct `exact: null` still means a real SQL NULL FK. A
+nested nullable lookup can still match a genuinely absent FK when its ordinary
+predicate matches NULL; a non-null hidden target cannot stand in for that
+absence.
+
+The scope is part of the branch it qualifies, rather than a blanket filter on
+all parent rows. An unrelated `or` branch can still select a parent, and
+`not` complements the scoped match, including a genuinely absent nullable FK
+that did not match the positive predicate. Hook failures become GraphQL errors;
+they do not retry the filter without the scope. No destination rows are loaded
+into Python for this check: the ORM composes the hook's queryset as a
+same-database subquery.
+
+This is not a global relation policy. Reverse-FK, many-to-many and one-to-one
+filter paths, custom `@filter_field` bodies, ordering, and direct FK-ID
+lookups retain their separate contracts. See
+[relation output scope](types.md#relation-scope-hatch) and
+[permission-scoped schemas](permission-scoped-schema.md).
+
 ## Logical operators: `and` / `or` / `not`
 
 Every `<Model>FilterInput` carries `and: [..]`, `or: [..]` and `not: {..}`,

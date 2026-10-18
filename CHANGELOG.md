@@ -2,12 +2,19 @@
 
 ## Unreleased
 
+- Scope public nested forward-FK filters to the destination type's
+  request-specific `get_queryset`. Hidden target rows no longer make a
+  visible source row match; each hop in a forward-FK chain is checked.
+  Real absent-FK NULL matches, unrelated Boolean branches, and direct source
+  FK-ID predicates retain their existing meanings. This does not scope
+  reverse-FK, M2M, O2O, custom filter bodies, or ordering.
+
 - Apply the destination type's `get_queryset` hook to automatic forward-FK
   and reverse-FK output reads. Hidden nullable FK targets now resolve to
   `null`; reverse-FK results, windows, and `totalCount` include only visible
   rows. Optimized scoped FK reads stay batched, while disabling optimization
-  can add per-parent scope queries. This does not scope O2O/M2M relations,
-  custom resolvers, or joined filters; clients previously relying on expanded
+  can add per-parent scope queries. This does not scope O2O/M2M output relations,
+  custom resolvers, or other joined filters; clients previously relying on expanded
   hidden rows should review their destination hooks before upgrading.
 
 - Add a local, evidence-bounded disposition of the 100 original audit claims

@@ -27,6 +27,7 @@ from .core.output_compiler import MASKED_COLUMN_EXT
 from .core.validators import build_validator_model
 from .errors import ErrorType
 from .fields import DjangoListObjectField, DjangoObjectField
+from .filtering.backend import apply_filter_backend
 from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
@@ -3787,7 +3788,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         qs = queryset_factory(base, root, info, **kwargs)
 
         filter_value = kwargs.get("filter")
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
 
         # Apply custom @filter_field methods in declaration order.
         custom_filters = getattr(cls, "_dgx_custom_filters", None) or []

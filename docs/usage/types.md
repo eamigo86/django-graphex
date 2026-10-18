@@ -225,12 +225,14 @@ level.
     correct but can cost one additional query per parent. Types with the
     default no-op hook retain the ordinary read path.
 
-    This does **not** add a global access-control policy. Automatic
-    one-to-one and many-to-many output relations, custom resolvers, and joins
-    used by filters or ordering have separate behavior. In particular, an ORM
-    filter joining through a hidden destination can still match its parent;
-    see [relation input scope](permission-scoped-schema.md). Do not infer a
-    tenant-wide or row-level guarantee from the two automatic output paths.
+    This does **not** add a global access-control policy. Nested filters
+    traversing an automatic forward FK now apply the destination's hook too;
+    a hidden destination cannot satisfy that filter branch. Direct source
+    FK-ID lookups, automatic one-to-one and many-to-many output relations,
+    custom resolvers, other relation-filter paths, and ordering retain
+    separate behavior. See [forward-FK filter scope](filtering.md#forward-fk-filter-scope)
+    and [relation input scope](permission-scoped-schema.md). Do not infer a
+    tenant-wide guarantee from these bounded paths.
 
     Older clients that expanded an FK or reverse FK through a destination
     hook may now receive `null`, fewer children, a shorter page, or a smaller
@@ -301,19 +303,23 @@ level.
     a nested `posts__…` filter on the parent type now has to go. Nothing about
     the *output* changes — the relation is still selectable, still scoped, and
     still returns the rows its `get_queryset` allows. What goes is the ORM
-    **join** through it, which never ran that `get_queryset` and therefore
-    answered, one lookup at a time, the very question the hatch was mounted to
-    refuse. If you need the join, the parent type has to serve the relation
-    itself: drop the declaration and scope the parent's own queryset instead.
+    **join** through a declared custom resolver, which cannot reproduce that
+    resolver's behavior and was therefore refused at schema build. If you need
+    a filterable forward-FK path, let the parent type serve its automatic
+    relation instead: that path applies the destination's `get_queryset` to
+    nested filters. Drop the declaration and the custom resolver only if that
+    output change is acceptable to your application.
 
     This is not a cost the boundary could have avoided. Both axes read the
-    relation **unscoped**: `ordering` ranks by the raw foreign-key column on the
-    parent's own row, and a nested filter compiles to an ORM join that never
-    passes through `AuthorType.get_queryset`. Left open,
+    custom relation **unscoped**: `ordering` ranks by the raw foreign-key
+    column on the parent's own row, and a filter over a declared resolver
+    cannot model that resolver's value. Left open,
     `{ posts(filter: { author: { name: { icontains: "a" } } }) }` narrows posts
     by an author the hatch exists to hide — the row's *name* stays out of the
     response while the filter confirms, one substring at a time, that such an
-    author exists behind that post. And a `resolve_author` that returns no
+    author exists behind that post. The automatic forward-FK filter path now
+    checks `AuthorType.get_queryset`, but it cannot infer an arbitrary
+    `resolve_author` body. A resolver that returns no
     author at all — a stand-in, a `None` — would still have published a ranking
     over `author_id`, a key **no type in the schema serves**.
 

@@ -150,6 +150,12 @@ Log out of `/admin` to test the anonymous (public) behaviour again.
     relation its nested filter paths — see the table under
     [Filtering](../filtering.md#filter-refusal-shapes).
 
+    The Playground's `PostType` declares a direct `author` FK-ID filter, not
+    `author__name` traversal. That source-owned ID lookup retains its current
+    behavior; nested forward-FK filters in applications that declare them now
+    apply the destination type's request scope. See
+    [forward-FK filter scope](../filtering.md#forward-fk-filter-scope).
+
 ## Schema tour
 
 Everything lives in [`blog/schema.py`](https://github.com/eamigo86/django-graphex/blob/main/examples/playground/blog/schema.py)

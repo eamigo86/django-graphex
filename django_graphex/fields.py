@@ -13,7 +13,10 @@ from django.db.models.functions import RowNumber
 from graphql import GraphQLID, GraphQLList, GraphQLNonNull
 
 import django_graphex.settings as _settings_module
-from django_graphex.filtering.backend import resolve_filter_backend
+from django_graphex.filtering.backend import (
+    apply_filter_backend,
+    resolve_filter_backend,
+)
 from django_graphex.settings import graphql_api_settings
 
 from ._strconv import to_snake_case
@@ -411,20 +414,20 @@ class DjangoFilterListField(NativeMountedField):
                 qs = operator.attrgetter(
                     f"{getattr(field, 'related_name', None) or field.name}.all"
                 )(root)()
-                # The relation accessor bypasses queryset_factory, so the
-                # row-level scope must be applied here too -- otherwise the
-                # hook enforced at the top level leaks through the parent.
-                qs = apply_object_type_get_queryset(qs, output_type, info)
-                qs = filter_backend.apply(qs, filter_value)
-                qs = apply_custom_filters(qs, custom_filters, info, filter_value)
             except AttributeError:
                 qs = None
+            if qs is not None:
+                # Only a missing relation accessor may take the fallback. A
+                # destination hook failure must propagate, not serve unscoped.
+                qs = apply_object_type_get_queryset(qs, output_type, info)
+                qs = apply_filter_backend(filter_backend, qs, filter_value, info)
+                qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
         if qs is None:
             qs = queryset_factory(
                 manager, root, info, output_type=output_type, **kwargs
             )
-            qs = filter_backend.apply(qs, filter_value)
+            qs = apply_filter_backend(filter_backend, qs, filter_value, info)
             qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
             if root and is_valid_django_model(root._meta.model):
@@ -582,7 +585,7 @@ class DjangoFilterPaginateListField(NativeMountedField):
         """
         filter_value = kwargs.get("filter")
         qs = self.get_queryset(manager, root, info, **kwargs)
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
 
         # Apply custom @filter_field methods in declaration order.
         custom_filters = getattr(self, "custom_filters", None) or []
@@ -684,7 +687,7 @@ class DjangoListObjectField(NativeMountedField):
         """
         filter_value = kwargs.get("filter")
         qs = queryset_factory(manager, root, info, output_type=output_type, **kwargs)
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
 
         # Apply custom @filter_field methods in declaration order.
         custom_filters = getattr(self, "custom_filters", None) or []
@@ -837,7 +840,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         Returns:
             The queryset after both filter stages.
         """
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
         return apply_custom_filters(qs, self.custom_filters, info, filter_value)
 
     def _is_reverse_fk(self, parent_model: type[Model]) -> bool:
