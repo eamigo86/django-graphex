@@ -37,6 +37,8 @@ class Registry:
         self._types: dict[tuple[type[Model], str | None], Any] = {}
         #: model -> canonical DjangoListObjectType.
         self._list_types: dict[type[Model], Any] = {}
+        #: List creation calls back into registration, so its lock is reentrant.
+        self._list_lock = RLock()
         #: enum name -> enum type (its own namespace; never clashes with types).
         self._enums: dict[str, Any] = {}
         #: Native choices validation and registration share this reentrant lock.
@@ -366,7 +368,8 @@ class Registry:
             model: Django model class the list type describes.
             cls: the DjangoListObjectType to register.
         """
-        self._list_types[model] = cls
+        with self._list_lock:
+            self._list_types[model] = cls
 
     def get_list_type_for_model(self, model: type[Model]) -> Any | None:
         """Return the registered "DjangoListObjectType" for a model.
@@ -377,10 +380,12 @@ class Registry:
         Returns:
             The registered list type, or None if absent.
         """
-        return self._list_types.get(model)
+        with self._list_lock:
+            return self._list_types.get(model)
 
 
 registry = None
+_GLOBAL_REGISTRY_LOCK = RLock()
 
 
 def get_global_registry() -> Registry:
@@ -390,6 +395,9 @@ def get_global_registry() -> Registry:
         The shared global registry instance.
     """
     global registry
-    if not registry:
-        registry = Registry()
+    if registry:
+        return registry
+    with _GLOBAL_REGISTRY_LOCK:
+        if not registry:
+            registry = Registry()
     return registry

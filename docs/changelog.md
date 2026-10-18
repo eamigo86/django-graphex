@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Share one global registry instance on concurrent first access and one
+  auto-generated list class per model and built-in registry on concurrent
+  misses. Explicit list registration keeps its last-registration-wins rule;
+  names, SDL, pagination and filter configuration are unchanged. This is not
+  a general registry or schema thread-safety guarantee.
+
 - Share one enum type for concurrent equivalent cache misses and retain the
   existing incompatible-choices error when definitions race in one registry.
   Native enum names, member order, values and serial schema output are

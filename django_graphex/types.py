@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections import OrderedDict
+from contextlib import nullcontext
 from copy import copy
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
@@ -2870,31 +2871,37 @@ def get_or_create_list_object_type(
     if registry is None:
         registry = get_global_registry()
 
-    existing = registry.get_list_type_for_model(model)
-    if existing is not None:
-        return existing
+    # Built-in registries serialize the entire miss-to-registration transaction.
+    # A factory-created class registers itself before factory_type returns, so
+    # the getter and setter use the same reentrant lock. Registry-shaped adapters
+    # retain their historical serial behavior without a new lock requirement.
+    lock = registry._list_lock if isinstance(registry, Registry) else nullcontext()
+    with lock:
+        existing = registry.get_list_type_for_model(model)
+        if existing is not None:
+            return existing
 
-    paginator_cls = graphql_api_settings.DEFAULT_PAGINATION_CLASS
-    if paginator_cls is not None:
-        pagination = paginator_cls()
-    else:
-        from .paginations.pagination import LimitOffsetGraphqlPagination
+        paginator_cls = graphql_api_settings.DEFAULT_PAGINATION_CLASS
+        if paginator_cls is not None:
+            pagination = paginator_cls()
+        else:
+            from .paginations.pagination import LimitOffsetGraphqlPagination
 
-        pagination = LimitOffsetGraphqlPagination()
+            pagination = LimitOffsetGraphqlPagination()
 
-    # Inherit the node type's filter config so nested lists stay filterable.
-    node = registry.get_type_for_model(model)
-    filter_fields = getattr(node._meta, "filter_fields", None) if node else None
+        # Inherit the node type's filter config so nested lists stay filterable.
+        node = registry.get_type_for_model(model)
+        filter_fields = getattr(node._meta, "filter_fields", None) if node else None
 
-    # factory_type builds a DjangoListObjectType subclass which self-registers.
-    return factory_type(
-        "list",
-        DjangoListObjectType,
-        model=model,
-        pagination=pagination,
-        registry=registry,
-        filter_fields=filter_fields,
-    )
+        # factory_type builds a DjangoListObjectType subclass which self-registers.
+        return factory_type(
+            "list",
+            DjangoListObjectType,
+            model=model,
+            pagination=pagination,
+            registry=registry,
+            filter_fields=filter_fields,
+        )
 
 
 class DjangoModelType(NestedFieldsMixin, NativeObjectType):

@@ -573,6 +573,13 @@ class UserListType(DjangoListObjectType):
 - **Caching**: Optional query result caching
 - **Custom Queryset**: Override default queryset behavior
 
+When two threads first request an auto-generated list type for the same model
+and built-in `Registry`, they now receive the same list class and GraphQL
+object. An explicitly declared list type still replaces the generated entry
+when registered later, and a subsequent lookup reuses that explicit type.
+This narrows one cold-creation race; it does not make arbitrary registry
+changes, schema construction, or explicit declarations generally thread-safe.
+
 ### Configuration Options
 
 A `DjangoListObjectType` concentrates its list behavior in `Meta`: the paginator
