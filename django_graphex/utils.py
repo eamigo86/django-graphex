@@ -2632,6 +2632,7 @@ def _walk_filtered_prefetches(
     hook_map: dict | None = None,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
     _seen: set[tuple[int, int, type[Model] | None, str]] | None = None,
+    source_alias: str | None = None,
 ) -> None:
     """Collect filtered Prefetch objects for nested list fields with filters.
 
@@ -2650,6 +2651,7 @@ def _walk_filtered_prefetches(
         _fmap_cache: Optional request-scoped memoization dict (see
             _relation_field_map).
         _seen: Selection contexts already expanded for these bound variables.
+        source_alias: Database alias of the source queryset for M2M prefetches.
     """
     if _seen is None:
         _seen = set()
@@ -2687,6 +2689,7 @@ def _walk_filtered_prefetches(
                     hook_map=hook_map,
                     _fmap_cache=_fmap_cache,
                     _seen=_seen,
+                    source_alias=source_alias,
                 )
             continue
         if isinstance(field, InlineFragmentNode):
@@ -2714,6 +2717,7 @@ def _walk_filtered_prefetches(
                 hook_map=hook_map,
                 _fmap_cache=_fmap_cache,
                 _seen=_seen,
+                source_alias=source_alias,
             )
             continue
 
@@ -2828,6 +2832,7 @@ def _walk_filtered_prefetches(
                             hook_map=hook_map,
                             _fmap_cache=_fmap_cache,
                             _seen=_seen,
+                            source_alias=source_alias,
                         )
                     continue
                 # Window path declined (pre-checks failed) → fall through to plain path.
@@ -2837,13 +2842,26 @@ def _walk_filtered_prefetches(
             # A destination scope also needs a dedicated prefetch when the
             # client supplied no filter. Keeping it in to_attr prevents an
             # unrelated unscoped relation cache from becoming an output path.
-            reverse_fk = inst._is_reverse_fk(model)
-            scoped_item = reverse_fk and has_object_type_queryset_override(
+            scope_destination = inst._scopes_destination(model)
+            scoped_item = scope_destination and has_object_type_queryset_override(
                 getattr(inst.type._meta, "baseType", None)
             )
             if filter_value or scoped_item:
+                relation = relation_map.get(
+                    inst.accessor, relation_map.get(to_snake_case(inst.accessor))
+                )
+                m2m_alias = (
+                    source_alias
+                    if inst.automatic_relation
+                    and getattr(relation, "many_to_many", False)
+                    else None
+                )
                 pf = inst.build_prefetch(
-                    lookup, filter_value, info, scope_reverse_fk=reverse_fk
+                    lookup,
+                    filter_value,
+                    info,
+                    scope_reverse_fk=scope_destination,
+                    source_alias=m2m_alias,
                 )
                 # Phase E (AC2): apply hook on filtered-plain Prefetch queryset.
                 if hook is not None:
@@ -2879,6 +2897,7 @@ def _walk_filtered_prefetches(
                     hook_map=hook_map,
                     _fmap_cache=_fmap_cache,
                     _seen=_seen,
+                    source_alias=source_alias,
                 )
             continue
 
@@ -2899,6 +2918,7 @@ def _walk_filtered_prefetches(
                     hook_map=hook_map,
                     _fmap_cache=_fmap_cache,
                     _seen=_seen,
+                    source_alias=source_alias,
                 )
             continue
 
@@ -2915,6 +2935,7 @@ def _walk_filtered_prefetches(
                 hook_map=hook_map,
                 _fmap_cache=_fmap_cache,
                 _seen=_seen,
+                source_alias=source_alias,
             )
 
 
@@ -3140,6 +3161,7 @@ def build_filtered_prefetches(
     info: GraphQLResolveInfo,
     _fmap_cache: dict[tuple[int, str], Any] | None = None,
     root_selection_set: SelectionSetNode | None = None,
+    source_alias: str | None = None,
 ) -> tuple[list[Any], dict, set[str]]:
     """Build filtered Prefetch objects for the nested list fields in the query.
 
@@ -3157,6 +3179,7 @@ def build_filtered_prefetches(
         _fmap_cache: Optional request-scoped memoization dict (see
             "_relation_field_map").
         root_selection_set: The merged root selection, if already computed.
+        source_alias: Database alias of the source queryset for M2M prefetches.
 
     Returns:
         result: A 3-tuple of the list of filtered Prefetch objects (one per
@@ -3195,6 +3218,7 @@ def build_filtered_prefetches(
         seen,
         hook_map=hook_map,
         _fmap_cache=_fmap_cache,
+        source_alias=source_alias,
     )
     # Keep one Prefetch per lookup, and only where every selection at that
     # lookup asked for the SAME row set. When they disagree the prefetch is
@@ -3992,7 +4016,10 @@ def _apply_optimizations(
     # unsafe_lookups).
     if root_selection_set is not None:
         filtered_prefetches, hook_map, unsafe_lookups = build_filtered_prefetches(
-            info, _fmap_cache=_fmap_cache, root_selection_set=root_selection_set
+            info,
+            _fmap_cache=_fmap_cache,
+            root_selection_set=root_selection_set,
+            source_alias=base.db,
         )
     else:
         filtered_prefetches, hook_map, unsafe_lookups = [], {}, set()

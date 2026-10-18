@@ -774,6 +774,8 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         _type: Any,
         accessor: str | None = None,
         fields: Any = None,
+        *,
+        automatic_relation: bool = False,
         **kwargs: Any,
     ) -> None:
         """Store the "accessor" and build the field, filter only if declared.
@@ -786,9 +788,11 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             _type: the GraphQL list object type to resolve.
             accessor: the parent attribute name for the related set.
             fields: filterable field configuration, or None to use the type's.
+            automatic_relation: Whether the compiler derived this model relation.
             **kwargs: extra keyword arguments forwarded to the base field.
         """
         self.accessor = accessor
+        self.automatic_relation = automatic_relation
         self.filter_backend = resolve_filter_backend()
         self.filter_type = None
 
@@ -859,6 +863,34 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             for relation in parent_model._meta.related_objects
         )
 
+    def _scopes_destination(self, parent_model: type[Model]) -> bool:
+        """Identify automatic to-many outputs whose destination hook applies.
+
+        Reverse foreign keys retain their existing scope. Many-to-many fields
+        additionally require the compiler's automatic-relation marker so an
+        explicitly declared relation keeps its resolver-owned behavior.
+
+        Args:
+            parent_model: Model that owns the relation accessor.
+
+        Returns:
+            Whether this field scopes destination members and counts.
+        """
+        if self._is_reverse_fk(parent_model):
+            return True
+        if not self.automatic_relation:
+            return False
+        for relation in parent_model._meta.get_fields():
+            if not getattr(relation, "many_to_many", False):
+                continue
+            if getattr(relation, "auto_created", False):
+                accessor = relation.get_accessor_name()
+            else:
+                accessor = relation.name
+            if accessor == self.accessor:
+                return True
+        return False
+
     def build_prefetch(
         self,
         lookup: str,
@@ -866,6 +898,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         info: ResolveInfo,
         *,
         scope_reverse_fk: bool = False,
+        source_alias: str | None = None,
     ) -> Prefetch:
         """Build a "Prefetch" of the related set, filtered by "filter_value".
 
@@ -878,7 +911,8 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             lookup: the relation lookup path to prefetch.
             filter_value: the filter input value applied to the related set.
             info: the GraphQL resolve info.
-            scope_reverse_fk: Apply the destination hook for a reverse FK only.
+            scope_reverse_fk: Apply the destination hook for an eligible relation.
+            source_alias: Database alias of the originating queryset for M2M scope.
 
         Returns:
             A Prefetch object for the filtered related set.
@@ -886,6 +920,8 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         model = self.type._meta.model
         item_type = getattr(self.type._meta, "baseType", None)
         qs = model._default_manager.all()
+        if source_alias is not None:
+            qs = qs.using(source_alias)
         if scope_reverse_fk:
             qs = apply_object_type_get_queryset(qs, item_type, info)
         qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
@@ -1172,8 +1208,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                 count=0, results=[], results_field_name=results_field_name
             )
 
-        scope_reverse_fk = self._is_reverse_fk(root._meta.model)
-        if not scope_reverse_fk:
+        if not self._scopes_destination(root._meta.model):
             output_type = None
 
         # --- C3: check for window-sliced prefetch first -------------------------
@@ -1293,7 +1328,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         Overrides the parent "DjangoListObjectField.wrap_resolve" because
         Nested-relation fields obtain rows from the parent's scoped prefetch
         or relation accessor. The item type is bound for destination scoping
-        on reverse-FK paths; other relation kinds keep their existing behavior.
+        on eligible automatic to-many paths; other relations keep their behavior.
 
         A bare "resolve_<rel>" method remains inert because the generated field
         owns its resolver; explicit declarations retain their own behavior.

@@ -57,8 +57,13 @@ optimizer replaces that unscoped join with a batched, request-scoped prefetch
 and resolves the nullable field from its visible result. This also runs for
 ordinary list reads when `OPTIMIZE_QUERYSET=False`; a custom-returned parent
 without a planned prefetch is checked at the field resolver instead. A cached
-unscoped relation is never used as visibility evidence. M2M output reads and
-explicit resolver fields have separate contracts.
+unscoped relation is never used as visibility evidence. Automatic declared
+and reverse M2M output lists also use a scoped prefetch when the destination
+type overrides `get_queryset`. Their `totalCount` is taken from visible
+members before nested pagination; M2M window slicing is not introduced.
+The optimized M2M destination queryset is bound to the originating list's
+database alias before its visibility hook runs, matching ordinary traversal.
+Explicit resolver fields keep their separate contract.
 
 It is transparent to the `DjangoListObjectType` wrapper (`results` / `totalCount`
 / `pageInfo`), to **fragments** and to **inline fragments**, and matches both

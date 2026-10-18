@@ -101,7 +101,10 @@ def _nested_list_object_field(
         field, "verbose_name", None
     )
     return DjangoNestedListObjectField(
-        list_type, accessor=accessor, description=description or None
+        list_type,
+        accessor=accessor,
+        automatic_relation=True,
+        description=description or None,
     )
 
 

@@ -218,12 +218,19 @@ level.
     child cannot make a visible page short or inflate its count.
     This includes Django's default `*_set` accessors and a `related_name`
     that differs from `related_query_name`.
+    Automatically exposed **declared and reverse M2M** lists likewise apply
+    the destination type's hook before `results`, pagination, and
+    `totalCount`. A parent linked only to hidden targets remains visible with
+    `results: []` and `totalCount: 0`; a mixed relation contains and counts
+    only its visible targets. The reverse field uses Django's accessor even
+    when its ORM query name differs.
 
     Ordinary list traversal batches scoped FK and OneToOne destinations with
     a prefetch, including when queryset optimization is disabled. A direct
     custom root returning an already-cached parent still checks its automatic
     child field against the hook. The reverse-FK prefetch and
-    window paths also scope their source querysets. Already-cached unscoped
+    window paths, and automatic M2M plain prefetches, scope their source
+    querysets. Already-cached unscoped
     relation values are not authorization evidence. A resolver path without
     the scoped prefetch can cost one additional membership query per parent.
     Types with the default no-op hook retain the ordinary read path.
@@ -232,10 +239,9 @@ level.
     traversing a forward FK, forward OneToOne or reverse FK apply the
     destination's hook; a hidden destination cannot satisfy that branch.
     Reverse child-ID lookups are scoped because they traverse child rows.
-    Direct source FK/OneToOne ID lookups, M2M output relations, custom
-    resolvers, and ordering retain separate behavior. M2M
-    filters also have a bounded destination-hook rule, but M2M output reads
-    remain outside this automatic output policy. See
+    Direct source FK/OneToOne ID lookups, explicit relation resolvers,
+    through-model access checks, and ordering retain separate behavior. M2M
+    filters have their own bounded destination-hook rule. See
     [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
     [forward OneToOne filter scope](filtering.md#forward-o2o-filter-scope),
     [reverse-FK filter scope](filtering.md#reverse-fk-filter-scope),
@@ -243,9 +249,9 @@ level.
     and [relation input scope](permission-scoped-schema.md). Do not infer a
     tenant-wide guarantee from these bounded paths.
 
-    Older clients that expanded an FK, reverse FK or OneToOne through a
-    destination hook may now receive `null`, fewer children, a shorter page,
-    or a smaller `totalCount`. Review those hooks and client assumptions before
+    Older clients that expanded an FK, reverse FK, OneToOne or automatic M2M
+    through a destination hook may now receive `null`, fewer children, a
+    shorter page, or a smaller `totalCount`. Review those hooks and client assumptions before
     upgrading. The GraphQL field shapes and nullability have not changed.
 
     Explicit relation declarations remain useful when you need custom

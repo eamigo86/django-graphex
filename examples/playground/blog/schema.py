@@ -140,7 +140,8 @@ class TagType(DjangoObjectType):
 
     Registering this type makes "Post.tags" (a many-to-many) resolve as a
     nested list with the uniform results/totalCount shape, plus filtering and
-    pagination.
+    pagination. Its automatic reverse posts list applies PostType.get_queryset
+    before exposing members or their count.
     """
 
     class Meta:

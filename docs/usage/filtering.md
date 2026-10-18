@@ -462,9 +462,11 @@ ORM query name; an automatically published reverse output accessor may have
 a different name. Replacing that accessor with an explicit resolver or
 pruning it from the active schema does not reopen the filter path.
 
-This rule does **not** authorize M2M output reads, custom filter bodies,
-ordering, or access control on the through model. Automatic OneToOne output
-reads have a separate destination-hook rule.
+Automatic M2M output reads have a separate destination-hook rule: hidden
+targets are absent from nested `results` and `totalCount` before pagination.
+This filter rule does **not** authorize custom filter bodies, ordering, or
+access control on the through model. Automatic OneToOne output reads have
+their own destination-hook rule.
 See [relation output scope](types.md#relation-scope-hatch) and
 [relation input scope](permission-scoped-schema.md).
 

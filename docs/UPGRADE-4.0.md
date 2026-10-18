@@ -60,7 +60,20 @@ the GraphQL field's nullability does not change. Review clients that previously
 expanded a hidden linked user or profile, and review the destination hooks
 before upgrading. Ordinary list reads batch scoped destinations; an automatic
 field on a custom-returned cached parent still checks its destination. Explicit
-relation resolvers and M2M output reads are not covered by this change. See
+relation resolvers and M2M output reads have separate rules. See
+[automatic output relation scope](usage/types.md#relation-scope-hatch).
+
+### Review automatic M2M output lists and counts
+
+An automatically published declared or reverse M2M field now applies the
+destination type's request-specific `get_queryset` before constructing its
+`results` and `totalCount`. For a visible post linked to one visible and one
+hidden tag, `tags { totalCount results { label } }` returns only the visible
+tag and a count of one. A hidden-only relation returns an empty result and a
+zero count; the parent remains visible. Pagination slices this visible set,
+not the original links. Review clients that previously displayed hidden
+members or relied on their counts. Explicit relation resolvers and
+through-model access control are unchanged. See
 [automatic output relation scope](usage/types.md#relation-scope-hatch).
 
 ### Review filters that traverse a forward FK
@@ -115,8 +128,9 @@ an M2M ID is read through the target table. An absent or hidden-only visible
 target set retains ordinary relation-NULL behavior, and separate `and`
 branches can still use different visible targets. Review filters that
 previously selected sources through hidden tags or other M2M destinations.
-This does not change M2M output reads, through-model permissions, custom
-filter bodies or ordering. See [M2M filter scope](usage/filtering.md#m2m-filter-scope).
+Automatic M2M output reads have the separate rule above. Through-model
+permissions, custom filter bodies and ordering are unchanged. See
+[M2M filter scope](usage/filtering.md#m2m-filter-scope).
 
 ### Check custom integration code
 

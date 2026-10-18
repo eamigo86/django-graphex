@@ -6,7 +6,9 @@ declaration remains useful for changing the wire shape; the explicit user
 resolver demonstrates a custom visibility rule not supplied by UserType:
 
 - to-MANY: both "CategoryType.posts = DjangoFilterListField(PostType)" and the
-  auto-expanded "AuthorType.posts" container hide drafts.
+  auto-expanded "AuthorType.posts" container hide drafts. The automatic
+  reverse M2M "TagType.posts" container also hides drafts and counts only
+  visible posts.
 - to-ONE: "AuthorType.user = Field(UserType)" plus "resolve_user" hides the
   linked user from anonymous callers.
 
@@ -118,6 +120,34 @@ def test_the_auto_expanded_reverse_fk_is_scoped(
         for post in author["posts"]["results"]
     }
     assert statuses == {"PUBLISHED"}, body
+
+
+def test_automatic_reverse_m2m_counts_visible_posts(
+    client: Client, one_of_each: Any
+) -> None:
+    """Count only visible posts linked to an automatically exposed tag.
+
+    Args:
+        client: The Django test client issuing the unauthenticated POST.
+        one_of_each: The author fixture carrying one draft and one published post.
+    """
+    from blog.models import Post, Tag
+
+    tag = Tag.objects.create(name="scope-proof")
+    for post in Post.objects.all():
+        post.tags.add(tag)
+    body = _graphql(
+        client,
+        "{ posts { results { tags { results { name posts { totalCount } } } } } }",
+    )
+
+    assert not body.get("errors"), body
+    counts = {
+        linked["name"]: linked["posts"]["totalCount"]
+        for post in body["data"]["posts"]["results"]
+        for linked in post["tags"]["results"]
+    }
+    assert counts == {"scope-proof": 1}, body
 
 
 def test_the_to_one_hatch_hides_the_linked_user_from_an_anonymous_caller(

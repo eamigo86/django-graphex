@@ -2,12 +2,20 @@
 
 ## Unreleased
 
+- Scope automatic declared and reverse M2M output lists with the destination
+  type's request-specific `get_queryset`. A visible parent retains its row,
+  while hidden linked targets leave `results` and the pre-pagination
+  `totalCount`; an empty or hidden-only relation returns `[]` and `0`.
+  Optimized reads use a scoped prefetch rather than trusting an unrelated
+  relation cache. Explicit resolvers, through-model access rules, custom
+  filters, and ordering are not changed.
+
 - Apply the destination type's request-specific `get_queryset` to automatic
   forward and reverse OneToOne output reads. A visible parent keeps its row
   while a hidden linked destination resolves to `null`; genuine absent
   relations and the nullable output shape are unchanged. Scoped to-one reads
   are batched for ordinary list traversal, including when queryset optimization
-  is disabled. Explicit resolvers and M2M output reads retain separate rules.
+  is disabled. Explicit resolvers and M2M output reads have separate rules.
 
 - Scope nested forward OneToOne destination-field filters to the destination
   type's request-specific `get_queryset`. A visible profile cannot match a
@@ -22,8 +30,8 @@
   a nested field or target-ID predicate. One relation object retains one
   visible target witness, separate `and` branches may use different targets,
   and `not` complements the matching-parent set. Empty and absent-target
-  predicates keep their existing meanings. This does not scope M2M output
-  reads, through models, custom filter bodies or ordering.
+  predicates keep their existing meanings. M2M output reads have the separate
+  rule above; through models, custom filter bodies and ordering are unchanged.
 
 - Scope public nested forward-FK filters to the destination type's
   request-specific `get_queryset`. Hidden target rows no longer make a
@@ -47,8 +55,8 @@
   `null`; reverse-FK results, windows, and `totalCount` include only visible
   rows. Optimized scoped FK reads stay batched, while disabling optimization
   can add per-parent scope queries. Automatic OneToOne has the separate rule
-  above; M2M outputs, custom resolvers, and other joined filters remain outside
-  this FK rule. Clients previously relying on expanded
+  above; M2M outputs have their own rule, while custom resolvers and other
+  joined filters remain outside this FK rule. Clients previously relying on expanded
   hidden rows should review their destination hooks before upgrading.
 
 - Add a local, evidence-bounded disposition of the 100 original audit claims
