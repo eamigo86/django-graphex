@@ -417,6 +417,19 @@ Powerful date and time formatting with multiple options:
     }
     ```
 
+### Naive dates and timezone
+
+`@date` converts a `date` or naive `datetime` into an aware datetime in the
+**active Django timezone** (falling back to `TIME_ZONE`) before formatting,
+even when `USE_TZ=False`. For example, a resolver returning
+`date(2026, 1, 10)` is interpreted as `2026-01-10 00:00` in that timezone;
+the directive does not infer a timezone from the client or preserve a naive
+midnight. Supply an offset-aware datetime when the instant must be explicit.
+
+This is the directive's formatting behavior, **not** native DateTime scalar
+input coercion: the native DateTime scalar preserves naive input and leaves
+the model write path to Django's own timezone rules.
+
 ### Relative Time Formatting
 
 === "Time Ago Formats"

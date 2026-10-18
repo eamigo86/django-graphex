@@ -1243,6 +1243,25 @@ Subscription broadcasts (`_on_save`, `_on_delete`) are now deferred via
     If your subscription tests assert on `captured_group_sends`, mark them with
     `@pytest.mark.django_db(transaction=True)` so real commits occur.
 
+### Automatic and manual write paths
+
+Automatic notifications come from Django's `post_save` and `post_delete`
+signals, not from every ORM write. `bulk_create`, `bulk_update`,
+`QuerySet.update`, and `M2M.add` do **not** send those model signals and therefore
+do not automatically broadcast through this binding. Use an ordinary model
+`save()` when signal-driven delivery is required.
+
+For a write path that deliberately bypasses signals, the manual API is
+`Subscription.get_binding().broadcast(action, instance)`, where
+`Subscription` is your concrete subscription class. This call captures and
+sends the instance's current state **immediately**; unlike automatic signal
+delivery, it is not queued with `on_commit` and can notify before a rollback.
+If the event must describe committed state, arrange the manual call through
+application-owned hooks **after the outermost commit**, using a fresh instance
+loaded at that point for an update. For a deletion, retain the needed event
+data in application code before the row disappears. Do not defer a lambda over
+a mutable model instance and assume it preserves the earlier state.
+
 ### ORM access in the subscribe hooks
 
 `authorize_subscription` and `subscription_scope` are synchronous classmethods

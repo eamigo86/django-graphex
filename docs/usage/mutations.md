@@ -1245,6 +1245,22 @@ mutation {
     irreversible, so nested writes never clear on `null`. To remove nested children, target the
     child model directly.
 
+### Partial input is not a concurrency guarantee
+
+The mutation validates and assigns only the **supplied fields**, so an
+**omitted field** retains its value on the model instance loaded for this
+request. The backend then performs a **full save**: the resulting SQL `UPDATE`
+can write columns that were absent from the GraphQL input. If another writer
+changes an omitted column after this request loads a **stale instance**, this
+save can **overwrite** that separately changed value. Partial input does not
+provide changed-columns SQL or optimistic concurrency protection.
+
+Do not assume a blanket `update_fields` change would solve the contract:
+restricting saved fields can also alter `auto_now`, **custom save** hooks, and
+**derived fields**. If concurrent updates matter, coordinate them in your
+application's transaction and model workflow; this library does not add a
+locking or merge API for partial mutations.
+
 ### perform_mutate response shape
 
 `DjangoModelMutation.perform_mutate` and `DjangoModelType.perform_mutate` intentionally differ in

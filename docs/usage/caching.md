@@ -346,6 +346,18 @@ cache hit a fresh `HttpResponse` is constructed from those stored values;
 `ensure_csrf_cookie` is not re-applied (the GraphQL endpoint is `csrf_exempt`
 so this has no security impact on the endpoint itself).
 
+### Browser cookie round trip
+
+On a browser's **first request without cookies**, an eligible public query can
+populate or hit the response cache. `ensure_csrf_cookie` puts `csrftoken` on
+the response. On the **second request**, the browser returns that cookie and
+the default `should_cache_query` bypasses the response cache. This is the
+approved **any cookie** privacy boundary, not a CSRF failure; keep CSRF
+protection enabled. A separate cookie-free client can still use the cached public
+response. If an application opts into caching cookie-bearing queries with a
+custom hook, its key must **fully partition** every cookie-dependent identity
+and response input; the default deliberately does not.
+
 ---
 
 ## `CACHE_ACTIVE=False` (default)

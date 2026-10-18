@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Document current subscription, timezone, cache-cookie, partial-update and
+  pagination boundaries without changing runtime behavior. The guides now
+  distinguish automatic signals from manual broadcast, directive timezone
+  assumptions, browser cookie cache bypass, partial-input versus SQL saves,
+  and cursor versus offset/page NULL ordering.
+
 - Close test-owned temporary multipart uploads and ASGI request-body spools
   after direct view dispatch, including exceptional exits. This changes test
   fixture ownership only; HTTP behavior and upload limits are unchanged.

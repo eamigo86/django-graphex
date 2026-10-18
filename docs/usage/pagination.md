@@ -710,6 +710,22 @@ page's last row — so it stays fast and stable. The list type also exposes a
     raises `GraphQLError("Invalid cursor")`. This is not a blanket promise for
     every other ordering-field type.
 
+### Null ordering across paginator types
+
+`CursorGraphqlPagination` explicitly places **NULL last ascending** and
+**NULL first descending** for both queryset and in-memory paths. This cursor
+policy does not extend to `LimitOffsetGraphqlPagination` or
+`PageGraphqlPagination`: their queryset ordering inherits the **database**'s
+default NULL placement, while an **in-memory** list follows its own sort-key
+policy. Consequently, the same nullable field can yield a different sequence
+across those two offset/page paths on a given backend.
+
+When the application needs one explicit server-side placement, a queryset
+ordering expression such as `F(...).asc(nulls_last=True)` or
+`F(...).desc(nulls_first=True)` is preserved by offset/page pagination. This
+documents the current distinction; it does not impose a **universal** NULL
+policy or change ordering for existing clients.
+
 ### Basic Usage
 
 ```python
