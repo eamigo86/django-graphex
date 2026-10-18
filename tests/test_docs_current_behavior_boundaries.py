@@ -60,12 +60,21 @@ def test_date_guide_states_naive_timezone_assumption_without_changing_scalar() -
 
 
 def test_cache_guide_explains_csrf_cookie_round_trip_and_privacy() -> None:
-    """Describe the browser's second cookie-bearing request as bypassed.
+    """Distinguish cookie-setting misses from cookie-free cache hits.
 
-    The initial public response may be cached, but the issued CSRF cookie
-    makes subsequent browser requests ineligible under the privacy default.
+    A miss issues the CSRF cookie, and the next cookie-bearing browser request
+    bypasses; a hit returns before the decorated dispatch and can stay eligible.
     """
     body = section("docs/usage/caching.md", "### Browser cookie round trip")
+    assert "populate or hit" not in body
+    assert body.count("A cache hit") == 1
+    assert body.index("cache miss") < body.index("ensure_csrf_cookie")
+    assert body.index("csrftoken") < body.index("If the browser returns that cookie")
+    assert body.index("If the browser returns that cookie") < body.index("A cache hit")
+    assert body.index("A cache hit") < body.index("before")
+    assert body.index("before") < body.index("does not") < body.index("Set-Cookie")
+    assert body.index("A cache hit") < body.index("cookie-free")
+    assert body.index("cookie-free") < body.index("remain eligible")
     assert "first request" in body and "without cookies" in body
     assert "ensure_csrf_cookie" in body and "csrftoken" in body
     assert "second request" in body and "bypasses" in body
