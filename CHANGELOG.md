@@ -5,7 +5,8 @@
 - Clean up subscription group memberships when WebSocket or SSE startup is
   cancelled after a backend join but before the join call returns. Partial
   startup failures attempt the same source-owned cleanup while preserving the
-  original error; backend discard failures remain best-effort. Wire frames,
+  original error. Failed sources remain retryable unless explicitly closed;
+  backend discard failures are logged and remain best-effort. Wire frames,
   authentication, and ordinary subscription delivery are unchanged.
 
 - Release a WebSocket subscription's operation ID after source teardown and

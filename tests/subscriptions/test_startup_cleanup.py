@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import pytest
 
@@ -244,8 +245,13 @@ async def test_failure_before_backend_join_preserves_original_error() -> None:
     assert not layer.groups
 
 
-async def test_cleanup_failure_does_not_replace_startup_failure() -> None:
+async def test_cleanup_failure_does_not_replace_startup_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Verify a discard error does not replace the startup failure.
+
+    Args:
+        caplog: Captured internal warnings from startup cleanup.
 
     Raises:
         AssertionError: The source changes the observed failure.
@@ -279,7 +285,83 @@ async def test_cleanup_failure_does_not_replace_startup_failure() -> None:
             raise RuntimeError("discard failed")
 
     source = ChannelLayerSource(["create"], FailingLayer())
-    with pytest.raises(ValueError, match="join failed"):
-        await source.start()
-    assert source.is_closed
+    with caplog.at_level(logging.WARNING, logger="django_graphex.subscriptions.source"):
+        with pytest.raises(ValueError, match="join failed"):
+            await source.start()
+    assert not source.is_closed
     assert source.joined_groups == []
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == "django_graphex.subscriptions.source"
+        and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert warnings[0].getMessage() == (
+        "Subscription startup group cleanup failed; continuing best-effort cleanup."
+    )
+    assert warnings[0].exc_info is not None
+    assert warnings[0].exc_info[0] is RuntimeError
+
+
+class _FailFirstJoinLayer(InMemoryChannelLayer):
+    """Reject the first join, then permit a real membership."""
+
+    def __init__(self) -> None:
+        """Initialize the one-time rejection state."""
+        super().__init__()
+        self._reject_first = True
+
+    async def group_add(self, group: str, channel: str) -> None:
+        """Fail before one join and delegate later calls to the backend.
+
+        Args:
+            group: The source-owned group.
+            channel: The source-owned channel.
+
+        Raises:
+            ValueError: Only on the first attempt.
+        """
+        if self._reject_first:
+            self._reject_first = False
+            raise ValueError("initial join rejected")
+        await super().group_add(group, channel)
+
+
+async def test_same_source_retry_after_failed_join_delivers_and_cleans_up() -> None:
+    """Retry the same source after a one-time pre-join failure.
+
+    The retry must deliver an actual group event and its final close must
+    remove the real membership.
+    """
+    layer = _FailFirstJoinLayer()
+    source = ChannelLayerSource(["create"], layer)
+    with pytest.raises(ValueError, match="initial join rejected"):
+        await source.start()
+    await source.start()
+    assert source.channel in layer.groups["create"]
+    was_closed = source.is_closed
+    await layer.group_send(
+        "create", {"type": "subscription.notify", "payload": {"data": {"id": "retry"}}}
+    )
+    try:
+        delivered = await asyncio.wait_for(source.__anext__(), timeout=2)
+    except StopAsyncIteration:
+        delivered = None
+    await source.aclose()
+    assert (was_closed, delivered, layer.groups) == (False, {"id": "retry"}, {})
+
+
+async def test_explicit_close_after_failed_join_stays_closed() -> None:
+    """Keep an explicitly closed source terminal after failed startup.
+
+    A later start call must not create another backend membership.
+    """
+    layer = _FailFirstJoinLayer()
+    source = ChannelLayerSource(["create"], layer)
+    with pytest.raises(ValueError, match="initial join rejected"):
+        await source.start()
+    await source.aclose()
+    await source.start()
+    assert source.is_closed
+    assert not layer.groups

@@ -38,6 +38,7 @@ imported lazily/guarded so the base package never hard-requires it.
 from __future__ import annotations
 
 import asyncio
+import logging
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +48,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Sequence
 
 __all__ = ["ChannelLayerSource"]
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelLayerSource:
@@ -167,8 +170,10 @@ class ChannelLayerSource:
         "self._groups" enforces the #1420 guard — a single-action source never
         touches the other two groups. If startup is cancelled or a join fails,
         it attempts to discard every confirmed or in-flight membership before
-        propagating the original failure. The channel layer's absent-member
-        discard is a no-op; backend discard failures remain best-effort.
+        propagating the original failure. The source remains retryable after
+        that failed attempt, but an explicit close stays terminal. The channel
+        layer's absent-member discard is a no-op; backend discard failures are
+        logged and remain best-effort.
 
         Returns:
             "self" so "await source.start()" can be chained.
@@ -177,22 +182,32 @@ class ChannelLayerSource:
             BaseException: The original startup failure or cancellation after
                 best-effort group cleanup.
         """
-        if self._started:
+        if self._started or self._closed:
             return self
-        self._channel = await self._channel_layer.new_channel()
+        if self._channel is None:
+            self._channel = await self._channel_layer.new_channel()
         for group in self._groups:
             try:
                 await self._channel_layer.group_add(group, self._channel)
             except BaseException:  # noqa: BLE001 - cancellation also needs cleanup
                 # Discarding an absent member is a no-op in Channels' group
                 # contract, covering failures before or after backend join.
-                self._joined.append(group)
                 try:
-                    await self.aclose()
-                except BaseException:  # noqa: BLE001 - preserve the startup failure
-                    # Cleanup is best-effort; never replace the original startup
-                    # exception or cooperative cancellation with a discard error.
-                    pass
+                    joined = (*self._joined, group)
+                    for joined_group in joined:
+                        try:
+                            await self._channel_layer.group_discard(
+                                joined_group, self._channel
+                            )
+                        except BaseException:  # noqa: BLE001 - best-effort cleanup
+                            # Keep the original startup failure or cancellation.
+                            logger.warning(
+                                "Subscription startup group cleanup failed; "
+                                "continuing best-effort cleanup.",
+                                exc_info=True,
+                            )
+                finally:
+                    self._joined = []
                 raise
             self._joined.append(group)
         self._started = True
