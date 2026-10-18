@@ -642,6 +642,11 @@ multiplexes any number of operations, each identified by a client-chosen `id`:
 | 4 | server → client | `{"type": "next", "id": "1", "payload": {"data": {…}}}` — one frame per delivered event |
 | 5 | server → client | `{"type": "complete", "id": "1"}` — only when the stream itself ends |
 
+After the server sends `complete`, it has finished this operation's source
+cleanup attempt and released its ID slot. A client may immediately send a new
+`subscribe` with the same ID; a genuinely concurrent duplicate still closes
+with `4409`.
+
 The `subscribe` payload carries the same `query` / `variables` /
 `operationName` keys as an HTTP POST. A subscribe-time failure (parse error,
 validation error, authorize-deny, a `payload` that is not a JSON object, or the

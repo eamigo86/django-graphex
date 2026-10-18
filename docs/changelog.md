@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Release a WebSocket subscription's operation ID after source teardown and
+  before sending its server `complete` frame, so an immediate same-ID subscribe
+  is not mistaken for a concurrent duplicate. Late callbacks cannot remove a
+  replacement operation; client cancellation and existing error framing are
+  unchanged.
+
 - Share one global registry instance on concurrent first access and one
   auto-generated list class per model and built-in registry on concurrent
   misses. Explicit list registration keeps its last-registration-wins rule;

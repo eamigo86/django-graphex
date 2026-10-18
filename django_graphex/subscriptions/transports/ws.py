@@ -429,8 +429,9 @@ def subscription_ws_consumer(
             (one already running) is 4409. A subscribe past
             "MAX_SUBSCRIPTIONS_PER_CONNECTION" gets an "error" frame and the
             socket keeps its running operations. Otherwise an "asyncio.Task"
-            runs the engine for this id; "add_done_callback" removes it from the
-            registry the instant the task ends (normal/error/cancel).
+            runs the engine for this id. Normal completion releases the id
+            before its terminal frame; the done callback removes abnormal or
+            cancelled tasks without disturbing a newer task using that id.
             """
             if not self._acked:
                 await self._close(_CODE_UNAUTHORIZED)
@@ -488,9 +489,8 @@ def subscription_ws_consumer(
 
             task = asyncio.ensure_future(self._run_operation_framed(op_id, payload))
             self._operations[op_id] = task
-            # strawberry.channels hardening: drop the id the instant its task ends
-            # (normal completion, error, OR abnormal cancel) so the registry never
-            # leaks a dead operation.
+            # Drop abnormal or cancelled tasks without disturbing a replacement
+            # that reuses the id after an earlier server complete.
             task.add_done_callback(lambda _t, _id=op_id: self._operation_done(_id, _t))
 
         def _operation_done(self, op_id: str, task: asyncio.Task) -> None:
@@ -505,7 +505,8 @@ def subscription_ws_consumer(
                 op_id: The operation id whose task ended.
                 task: The finished operation task.
             """
-            self._operations.pop(op_id, None)
+            if self._operations.get(op_id) is task:
+                self._operations.pop(op_id, None)
             if task.cancelled():
                 return
             exc = task.exception()
@@ -726,6 +727,7 @@ def subscription_ws_consumer(
                 operation_name=payload.get("operationName"),
             )
             delivery = drive_subscription(source, spec, context)
+            cancelled = False
             try:
                 try:
                     async for result in delivery:
@@ -747,17 +749,32 @@ def subscription_ws_consumer(
                     await self._send_next(
                         op_id, ExecutionResult(data=None, errors=[_as_error(exc)])
                     )
-                # The source ended (out-of-band close) → the terminal complete.
-                # A client-initiated complete cancels this task before this point,
-                # so it never reaches the server ``complete`` (per the spec).
-                await self.send_json({"id": op_id, "type": "complete"})
             except asyncio.CancelledError:
                 # Client complete / disconnect cancelled this operation: tear the
                 # source down (group_discard ITS groups), do NOT emit complete.
+                cancelled = True
                 raise
             finally:
-                self._sources.pop(op_id, None)
-                await delivery.aclose()
+                close_error: Exception | None = None
+                try:
+                    await delivery.aclose()
+                except Exception as exc:  # noqa: BLE001 - preserve framed failure
+                    # Keep the historical complete-then-error frame sequence
+                    # when backend cleanup fails after normal stream completion.
+                    # After a client cancel, the close failure instead overrides
+                    # cancellation so the wrapper emits its existing error frame.
+                    if cancelled:
+                        raise
+                    close_error = exc
+                finally:
+                    self._sources.pop(op_id, None)
+            # No other operation can own this id yet: the slot remains occupied
+            # until this point. Free it before exposing completion to the client;
+            # the task's later done callback checks identity before removing it.
+            self._operations.pop(op_id, None)
+            await self.send_json({"id": op_id, "type": "complete"})
+            if close_error is not None:
+                raise close_error
 
         async def _on_complete(self, content: dict[str, Any]) -> None:
             """Client "complete{id}": cancel ONLY that id (discard ITS groups).
@@ -784,8 +801,9 @@ def subscription_ws_consumer(
                 # The task's finally ran source.aclose() (group_discard); a
                 # cancel/teardown error here must not break the socket.
                 pass
-            self._operations.pop(op_id, None)
-            self._sources.pop(op_id, None)
+            if self._operations.get(op_id) is task:
+                self._operations.pop(op_id, None)
+                self._sources.pop(op_id, None)
 
         async def disconnect(self, code: int) -> None:
             """Disconnect: cancel ALL operation tasks + "group_discard" all.
