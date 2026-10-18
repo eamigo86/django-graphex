@@ -51,6 +51,14 @@ The data path:
    and broadcasts the payload to the group. Every subscriber receives the
    notification, projected to the fields it requested.
 
+Automatic save and delete notifications are queued on the database connection
+that performed the write. A transaction on that alias delays delivery until
+its commit and discards the notification on rollback. A transaction open only
+on `default` does not delay a write committed in autocommit mode on another
+alias. The same rule applies to the missing-channel-layer warning. This is a
+per-connection notification guarantee, not a cross-database transaction or
+all-or-nothing delivery guarantee.
+
 Broadcast groups are named after the model, the subscription's `Meta.stream` and
 the action, so two subscriptions on the **same model** under different streams
 never receive each other's events — including when they disagree on

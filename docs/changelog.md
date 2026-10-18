@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Queue automatic subscription save and delete notifications on the database
+  alias that performed the write. Routed secondary writes now wait for their
+  own commit, disappear on rollback, and are not delayed by an unrelated
+  default-database transaction. Missing-channel-layer warnings follow the
+  same alias; this does not add cross-database atomicity.
+
 - Complete Google-style docstrings in tracked regression tests for metadata
   errors, schema isolation, source properties, optimizer plans, and permission
   caching. This is a test-documentation change only; library behavior is

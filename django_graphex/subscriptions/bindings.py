@@ -247,11 +247,12 @@ class SubscriptionBinding:
             **kwargs: Additional Django signal arguments.
 
         Raises:
-            Exception: If snapshot preparation leaves the active default
-                database transaction broken; its error still propagates.
+            Exception: If snapshot preparation leaves the write transaction
+                broken; its error still propagates.
         """
         action = "create" if created else "update"
-        self._prepare_automatic_snapshot(action, instance)
+        using = kwargs.get("using") or instance._state.db
+        self._prepare_automatic_snapshot(action, instance, using)
 
     def _on_delete(self, sender: Any, instance: Model, **kwargs: Any) -> None:
         """Prepare an automatic delete event without failing a valid delete.
@@ -262,35 +263,46 @@ class SubscriptionBinding:
             **kwargs: Additional Django signal arguments.
 
         Raises:
-            Exception: If snapshot preparation leaves the active default
-                database transaction broken; its error still propagates.
+            Exception: If snapshot preparation leaves the write transaction
+                broken; its error still propagates.
         """
-        self._prepare_automatic_snapshot("delete", instance)
+        using = kwargs.get("using") or instance._state.db
+        self._prepare_automatic_snapshot("delete", instance, using)
 
-    def _prepare_automatic_snapshot(self, action: str, instance: Model) -> None:
+    def _prepare_automatic_snapshot(
+        self, action: str, instance: Model, using: str | None
+    ) -> None:
         """Drop notification-only failures while retaining broken DB state.
 
         Args:
             action: The model action emitted by the signal.
             instance: The model instance captured at signal time.
+            using: The database alias that performed the model write.
 
         Raises:
             Exception: If notification work left the active DB transaction broken.
         """
         try:
-            self._defer_snapshot(action, instance)
+            self._defer_snapshot(action, instance, using)
         except Exception as error:
-            if transaction.get_connection().needs_rollback:
+            if transaction.get_connection(using=using).needs_rollback:
                 raise
             _log_automatic_drop(
                 self.model_label, self.stream, action, "snapshot", error
             )
 
-    def _defer_snapshot(self, action: str, instance: Model) -> None:
-        """Capture event state without retaining the mutable model instance."""
+    def _defer_snapshot(self, action: str, instance: Model, using: str | None) -> None:
+        """Capture event state on the writing connection without retaining the model.
+
+        Args:
+            action: The model action emitted by the signal.
+            instance: The model instance captured at signal time.
+            using: The database alias that performed the model write.
+        """
         if get_channel_layer() is None:
             transaction.on_commit(
-                lambda action=action: self._deliver_missing_layer_warning(action)
+                lambda action=action: self._deliver_missing_layer_warning(action),
+                using=using,
             )
             return
 
@@ -308,7 +320,8 @@ class SubscriptionBinding:
                 self._deliver_automatic_snapshot(
                     action, pk_snapshot, index_snapshot, data_snapshot
                 )
-            )
+            ),
+            using=using,
         )
 
     def _deliver_automatic_snapshot(
