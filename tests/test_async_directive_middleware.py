@@ -8,10 +8,10 @@ import inspect
 import json
 import warnings
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 import pytest
-from django.test import Client, override_settings
+from django.test import Client, RequestFactory, override_settings
 from django.urls import clear_url_caches, path
 from graphql import (
     GraphQLField,
@@ -266,3 +266,115 @@ def test_synchronous_directive_behavior_is_unchanged() -> None:
     assert not inspect.isawaitable(result)
     assert result.errors is None
     assert result.data == {"value": "hello"}
+
+
+@pytest.mark.parametrize("manager", [False, True])
+@pytest.mark.parametrize("borrowed_kind", ["future", "task"])
+def test_http_outer_wrapper_does_not_leak_directive_coroutine(
+    manager: bool, borrowed_kind: str
+) -> None:
+    """Reject hidden async work without creating an unowned inner coroutine.
+
+    Args:
+        manager: Whether middleware is supplied as a native manager.
+        borrowed_kind: Caller-owned pending Future or Task.
+    """
+    loop = asyncio.new_event_loop()
+    calls: list[str] = []
+    retained: list[Any] = []
+
+    async def source() -> str:
+        """Record whether borrowed work was incorrectly started.
+
+        Returns:
+            The mixed-case source value.
+        """
+        calls.append("source-body")
+        return "HeLLo"
+
+    borrowed: Any = (
+        loop.create_future()
+        if borrowed_kind == "future"
+        else loop.create_task(source())
+    )
+
+    def resolve_value(_root: Any, _info: Any) -> Any:
+        """Return caller-owned work without transferring its ownership.
+
+        Args:
+            _root: GraphQL root value.
+            _info: GraphQL field information.
+
+        Returns:
+            The pending borrowed awaitable.
+        """
+        calls.append("resolver")
+        return borrowed
+
+    def outer(next_: Callable[..., Any], parent: Any, info: Any, **kwargs: Any) -> Any:
+        """Hide the directive result inside an unstarted outer coroutine.
+
+        Args:
+            next_: Inner middleware callback.
+            parent: GraphQL root value.
+            info: GraphQL field information.
+            **kwargs: Resolver arguments.
+
+        Returns:
+            The unstarted outer coroutine.
+        """
+        calls.append("outer")
+        value = next_(parent, info, **kwargs)
+        retained.append(value)
+
+        async def wrapped() -> Any:
+            """Await the inner result only if native execution starts.
+
+            Returns:
+                The resolved field value.
+            """
+            calls.append("outer-body")
+            return await value
+
+        result = wrapped()
+        retained.append(result)
+        return result
+
+    chain: Any = [GraphQLDirectiveMiddleware(), outer]
+    if manager:
+        chain = MiddlewareManager(*chain)
+    view = GraphQLView.as_view(
+        schema=SimpleNamespace(graphql_schema=_schema(resolve_value)),
+        middleware=chain,
+    )
+    try:
+        with (
+            override_settings(DEBUG=False, DJANGO_GRAPHEX={"CACHE_ACTIVE": False}),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always", RuntimeWarning)
+            response = view(
+                RequestFactory().post(
+                    "/graphql/",
+                    data=json.dumps({"query": "{ value @uppercase }"}),
+                    content_type="application/json",
+                )
+            )
+            assert response.status_code == 500
+            assert response["Content-Type"].startswith("application/json")
+            assert set(json.loads(response.content)) == {"errors"}
+            assert calls == ["outer", "resolver"]
+            assert not borrowed.done() and not borrowed.cancelled()
+            retained.clear()
+            gc.collect()
+            assert not [
+                item for item in caught if issubclass(item.category, RuntimeWarning)
+            ]
+    finally:
+        for item in retained:
+            if inspect.iscoroutine(item):
+                item.close()
+        borrowed.cancel()
+        if borrowed_kind == "task":
+            loop.run_until_complete(asyncio.gather(borrowed, return_exceptions=True))
+        loop.close()

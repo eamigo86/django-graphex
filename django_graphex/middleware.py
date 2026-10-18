@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Generator
 
 from graphql.execution.values import get_directive_values
 from graphql.pyutils import is_awaitable
@@ -12,6 +12,26 @@ from .registry import get_global_registry
 
 if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
+
+
+class _DirectiveAwaitable:
+    """Defer coroutine creation until native GraphQL execution awaits it."""
+
+    def __init__(self, factory: Callable[[], Coroutine[Any, Any, Any]]) -> None:
+        """Retain the coroutine factory without starting or allocating work.
+
+        Args:
+            factory: Creates the directive-processing coroutine on demand.
+        """
+        self._factory = factory
+
+    def __await__(self) -> Generator[Any, Any, Any]:
+        """Create the coroutine only when native execution awaits this value.
+
+        Returns:
+            An iterator yielding the resolved and transformed field value.
+        """
+        return self._factory().__await__()
 
 
 class GraphQLDirectiveMiddleware:
@@ -78,7 +98,7 @@ class GraphQLDirectiveMiddleware:
                 resolved = await value
                 return self.__process_value(resolved, root, info, **kwargs)
 
-            return resolve_awaitable()
+            return _DirectiveAwaitable(resolve_awaitable)
 
         new_value = value
         for directive in field.directives:

@@ -18,7 +18,9 @@ All notable changes to this library are documented here. The format is based on
   graphql-core execution, rather than formatting coroutine representations.
   Built-in synchronous HTTP views still reject asynchronous execution with
   their existing JSON 500 error; this does not add asynchronous HTTP support
-  or change directive names, arguments, or synchronous results.
+  or change directive names, arguments, or synchronous results. Defer directive
+  coroutine creation until native execution awaits it so an outer middleware
+  cannot leave an unawaited inner coroutine after synchronous HTTP rejection.
 
 - Clean up subscription group memberships when WebSocket or SSE startup is
   cancelled after a backend join but before the join call returns. Partial

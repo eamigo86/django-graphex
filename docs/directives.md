@@ -46,7 +46,8 @@ order. For example, an asynchronous resolver returning `"Hello"` yields
 The built-in Django HTTP views remain synchronous. They reject asynchronous
 resolvers with a JSON error and HTTP 500; adding a directive does not enable
 asynchronous HTTP execution. Use synchronous resolvers and middleware with
-these views.
+these views. A rejected request does not run or cancel a caller-owned pending
+Future or Task, even when another middleware wraps the directive result.
 
 ## Overview
 
