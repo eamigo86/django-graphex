@@ -355,12 +355,42 @@ they do not retry the filter without the scope. No destination rows are loaded
 into Python for this check: the ORM composes the hook's queryset as a
 same-database subquery.
 
-This is not a global relation policy. One-to-one filter paths, custom
-`@filter_field` bodies, ordering, and direct source FK-ID lookups retain
-their separate contracts. Reverse-FK and M2M filters have the bounded
-rules below. See
+This is not a global relation policy. Forward OneToOne, reverse-FK and M2M
+filters have their own bounded rules below. Custom `@filter_field` bodies,
+ordering, and direct source FK-ID lookups retain separate contracts. See
 [relation output scope](types.md#relation-scope-hatch) and
 [permission-scoped schemas](permission-scoped-schema.md).
+
+### Forward OneToOne filters use the destination's row scope { #forward-o2o-filter-scope }
+
+A nested filter through a forward OneToOne relation now applies the
+destination type's `get_queryset(queryset, info)` on the current request and
+source database alias. For a nullable `Profile.user` relation declared with
+`filter_fields = {"user__name": ("exact",)}`, a hidden user cannot make its
+visible profile match:
+
+```graphql
+{ profiles(filter: { user: { name: { exact: "hidden" } } }) {
+    results { id }
+    totalCount
+} }
+```
+
+The hook restricts this nested destination-field predicate, not the entire
+profile list. Empty or omitted relation nodes remain no-ops. A genuinely
+absent OneToOne target can still match a nested NULL predicate; a hidden,
+non-null target is not treated as absent. `or` and `not` compose around the
+scoped match, including real NULL rows. Direct source-column ID lookups such
+as `user: { exact: 7 }` retain their previous source-owned behavior even if
+that user is hidden. Each supported hop in a longer filter path is checked.
+
+The ORM keeps the destination hook lazy as a same-database subquery. A hook
+failure or a changed database alias rejects the request rather than retrying
+without scope. Existing reverse OneToOne filtering already invokes its
+destination hook; this change does not modify that path. It does not scope
+OneToOne **output** reads, custom filter bodies, ordering, or unrelated ORM
+joins. A relation replaced by an explicit resolver or pruned from the active
+schema does not gain a filter path.
 
 ### Reverse-FK filters use a visible child witness { #reverse-fk-filter-scope }
 
@@ -392,7 +422,8 @@ These query-name paths were formerly refused even when the automatic accessor
 was published. This does **not** reopen a relation replaced by a declared
 resolver such as `DjangoFilterListField`, or one removed from a permission-
 scoped schema; both still lose their filter path. M2M filters have the bounded
-rule below; O2O, custom filter bodies and ordering remain separate contracts.
+rule below; forward OneToOne has the bounded rule above. Custom filter bodies
+and ordering remain separate contracts.
 
 ### Many-to-many filters use a visible target witness { #m2m-filter-scope }
 
@@ -429,7 +460,7 @@ ORM query name; an automatically published reverse output accessor may have
 a different name. Replacing that accessor with an explicit resolver or
 pruning it from the active schema does not reopen the filter path.
 
-This rule does **not** authorize M2M output reads, one-to-one traversal,
+This rule does **not** authorize M2M output reads, OneToOne output reads,
 custom filter bodies, ordering, or access control on the through model.
 See [relation output scope](types.md#relation-scope-hatch) and
 [relation input scope](permission-scoped-schema.md).

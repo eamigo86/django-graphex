@@ -62,10 +62,23 @@ match, review those filters and destination hooks.
 
 Direct source FK-ID filters such as `author: { exact: 7 }` keep their existing
 contract; a hidden target ID may still match the source row. An omitted filter
-and real nullable-FK matches also keep their meanings. O2O,
-custom filter bodies and ordering are not changed by this filter rule. M2M
-filters have their own bounded rule below. See
+and real nullable-FK matches also keep their meanings. Forward OneToOne
+and M2M filters have their own bounded rules below; custom filter bodies,
+ordering, and OneToOne output reads are not changed by this FK filter rule. See
 [forward-FK filter scope](usage/filtering.md#forward-fk-filter-scope).
+
+### Review filters that traverse a forward OneToOne
+
+A declared destination-field filter such as
+`profiles(filter: { user: { name: { exact: "Ada" } } })` now applies
+`UserType.get_queryset` before the linked user can satisfy the predicate.
+Review clients that previously selected visible profiles through hidden
+users. A direct source-column `user: { exact: 7 }` filter and a genuinely
+absent nullable OneToOne relation retain their prior meanings. An omitted or
+empty relation filter is still a no-op. The existing reverse OneToOne filter
+path already invoked its destination hook; this change does not scope
+OneToOne output reads. See
+[forward OneToOne filter scope](usage/filtering.md#forward-o2o-filter-scope).
 
 ### Review filters that traverse a reverse FK
 

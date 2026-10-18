@@ -68,7 +68,7 @@ class _ForwardFkFilterScope:
     def for_relation(
         self, model: type[Model], name: str, prefix: str
     ) -> tuple[Q, _ForwardFkFilterScope]:
-        """Scope a forward-FK traversal while preserving real-null matches.
+        """Scope a forward FK or OneToOne traversal with real-null matches.
 
         Args:
             model: Model owning the relation.
@@ -79,7 +79,7 @@ class _ForwardFkFilterScope:
             A relation condition and the scope for nested filter fields.
 
         Raises:
-            GraphQLError: If the schema omits a traversed FK type or a hook
+            GraphQLError: If the schema omits a traversed destination type or a hook
                 switches the destination queryset to another database.
         """
         from django_graphex.core.compat import _gdx_graphene_type
@@ -97,7 +97,7 @@ class _ForwardFkFilterScope:
         )
         child_scope = type(self)(self.info, self.alias, child_type)
         field = model._meta.get_field(name)
-        if not isinstance(field, ForeignKey) or getattr(field, "one_to_one", False):
+        if not isinstance(field, ForeignKey):
             return Q(), child_scope
         if self.node_type is None:
             return Q(), child_scope

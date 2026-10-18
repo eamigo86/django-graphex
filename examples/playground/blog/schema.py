@@ -242,7 +242,7 @@ class PostType(DjangoObjectType):
     # This is not a global row policy: the Playground declares a direct author
     # FK-ID filter, not an author-field traversal. Automatic reverse-FK filter
     # traversals and M2M filters also use the destination hook. This example
-    # declares no M2M filter path; O2O filters and custom resolvers retain
+    # declares no M2M or forward OneToOne filter path; custom resolvers retain
     # separate contracts. See docs/usage/filtering.md.
     #
     #   { posts { results { title status } } }                  scoped   (published only)

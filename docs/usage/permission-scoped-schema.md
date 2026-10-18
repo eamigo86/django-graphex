@@ -452,6 +452,7 @@ for denied targets; do not interpret that as proof the target row is absent.
 This does not enable row-level security for other relations or arbitrary ORM
 joins. Public forward-FK, reverse-FK, and M2M filters have bounded
 destination-hook rules; see [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
+[forward OneToOne filter scope](filtering.md#forward-o2o-filter-scope),
 [reverse-FK filter scope](filtering.md#reverse-fk-filter-scope), and
 [M2M filter scope](filtering.md#m2m-filter-scope).
 Ordinary unpruned public schemas and explicitly typed GFK unions retain their
@@ -491,8 +492,9 @@ input, so a full-permission caller keeps the whole filter surface.
 Generated mutation FK/M2M **ID links** have a separate row-level check: when
 the destination public type overrides `get_queryset`, a hidden ID is refused
 like a nonexistent one before the parent is written. Automatic FK/reverse-FK
-output reads and forward-FK/reverse-FK/M2M filters now have their own bounded scope
-rules, but other relation joins are not globally scoped. A reverse filter
+output reads and forward-FK/forward-OneToOne/reverse-FK/M2M filters now have
+their own bounded scope rules, but other relation joins and OneToOne output
+reads are not globally scoped. A reverse filter
 declared by its ORM query name remains unavailable when its published output
 accessor is removed or replaced by an explicit resolver. See
 [mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
