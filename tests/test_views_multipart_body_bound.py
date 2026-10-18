@@ -113,24 +113,28 @@ def _asgi_request(
         length = len(body) if declared is None else declared
         headers.append((b"content-length", str(length).encode()))
     body_file = tempfile.SpooledTemporaryFile(max_size=1024 * 1024, mode="w+b")
-    body_file.write(body)
-    body_file.seek(0)
-    scope = {
-        "type": "http",
-        "http_version": "1.1",
-        "method": "POST",
-        "path": "/graphql/",
-        "raw_path": b"/graphql/",
-        "root_path": "",
-        "scheme": "http",
-        "query_string": b"",
-        "headers": headers,
-        "client": ("127.0.0.1", 12345),
-        "server": ("testserver", 80),
-    }
-    request = ASGIRequest(scope, body_file)
-    request.user = AnonymousUser()
-    return request
+    try:
+        body_file.write(body)
+        body_file.seek(0)
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/graphql/",
+            "raw_path": b"/graphql/",
+            "root_path": "",
+            "scheme": "http",
+            "query_string": b"",
+            "headers": headers,
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+        request = ASGIRequest(scope, body_file)
+        request.user = AnonymousUser()
+        return request
+    except BaseException:
+        body_file.close()
+        raise
 
 
 def _wsgi_request(
@@ -181,7 +185,44 @@ class UndeclaredMultipartLengthTest(TestCase):
         The view is built per test so a settings override applies to the
         instance the test actually dispatches through.
         """
-        self.view = GraphQLView.as_view(schema=_schema)
+        view = GraphQLView.as_view(schema=_schema)
+
+        def dispatch_owned_request(request: Any) -> Any:
+            """Close the test-owned request and ASGI body spool after dispatch.
+
+            Args:
+                request: A request constructed by this test module.
+
+            Returns:
+                The GraphQL view response.
+            """
+            body_spool = request._stream if isinstance(request, ASGIRequest) else None
+            try:
+                return view(request)
+            finally:
+                try:
+                    request.close()
+                finally:
+                    if body_spool is not None:
+                        body_spool.close()
+
+        self.view = dispatch_owned_request
+        self._owned_asgi_request: ASGIRequest | None = None
+        self._owned_asgi_spool: Any | None = None
+
+    def tearDown(self) -> None:
+        """Assert the ASGI body spool closed.
+
+        Always close it afterwards so a failed assertion leaves no test leak.
+        """
+        request = self._owned_asgi_request
+        if request is None:
+            return
+        try:
+            self.assertTrue(self._owned_asgi_spool.closed)
+        finally:
+            request.close()
+            self._owned_asgi_spool.close()
 
     @override_settings(**_GUARD_ON)
     def test_asgi_chunked_multipart_over_the_cap_is_refused(self) -> None:
@@ -196,7 +237,10 @@ class UndeclaredMultipartLengthTest(TestCase):
         """
         body = _multipart_body(_CAP * 4)
         self.assertGreater(len(body), _CAP)
-        response = self.view(_asgi_request(body, declare_length=False))
+        request = _asgi_request(body, declare_length=False)
+        self._owned_asgi_request = request
+        self._owned_asgi_spool = request._stream
+        response = self.view(request)
 
         self.assertEqual(
             response.status_code,

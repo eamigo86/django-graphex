@@ -85,7 +85,37 @@ class MultipartBodyGuardTest(TestCase):
         next one.
         """
         self.factory = RequestFactory()
-        self.view = GraphQLView.as_view(schema=_schema)
+        view = GraphQLView.as_view(schema=_schema)
+
+        def dispatch_owned_request(request: Any) -> Any:
+            """Close this test's request even if view dispatch raises.
+
+            Args:
+                request: A request constructed by this test case.
+
+            Returns:
+                The GraphQL view response.
+            """
+            try:
+                return view(request)
+            finally:
+                request.close()
+
+        self.view = dispatch_owned_request
+        self._owned_upload_request: Any | None = None
+
+    def tearDown(self) -> None:
+        """Assert the temporary upload closed.
+
+        Always close it afterwards so a failed assertion leaves no test leak.
+        """
+        request = self._owned_upload_request
+        if request is None:
+            return
+        try:
+            self.assertTrue(request.FILES["attachment"].closed)
+        finally:
+            request.close()
 
     @override_settings(**_BODY_CAP)
     def test_multipart_post_with_csrf_cookie_is_not_a_500(self) -> None:
@@ -128,6 +158,7 @@ class MultipartBodyGuardTest(TestCase):
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
         request.user = AnonymousUser()
+        self._owned_upload_request = request
         response = self.view(request)
         self.assertEqual(
             response.status_code,

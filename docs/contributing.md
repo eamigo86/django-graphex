@@ -161,6 +161,13 @@ def iter_ids(limit: int) -> Iterator[int]:
   fresh XML, alongside the unchanged combined and changed-line 95.01% gates.
 - Use descriptive test names
 - Follow the existing test structure
+- When a test calls a view directly with a `RequestFactory` multipart request,
+  close the test-owned request after dispatch so Django can close temporary
+  uploaded files. An `ASGIRequest` built over a test-owned spooled body also
+  needs that original spool closed: `request.close()` closes uploaded files,
+  not the body stream. Use `try/finally` around dispatch so assertions and
+  exceptions cannot leave these test fixtures open. Django's test client owns
+  its own request lifecycle; do not close borrowed requests.
 - Capability-path tests may use strict legacy signatures to verify that a
   newer GraphQL-core engine does not receive keywords unsupported by an older
   API. They do not extend the declared runtime support range.

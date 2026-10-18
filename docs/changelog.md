@@ -14,6 +14,10 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Close test-owned temporary multipart uploads and ASGI request-body spools
+  after direct view dispatch, including exceptional exits. This changes test
+  fixture ownership only; HTTP behavior and upload limits are unchanged.
+
 - Match finite typed Decimal subscription `exact` filters by numeric value
   against the event-time JSON-safe snapshot. A filter value of `1.0` now
   matches a full-payload `"1.00"` on create and delete without a row lookup.
