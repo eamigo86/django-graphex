@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Match finite typed Decimal subscription `exact` filters by numeric value
+  against the event-time JSON-safe snapshot. A filter value of `1.0` now
+  matches a full-payload `"1.00"` on create and delete without a row lookup.
+  String-valued server scopes, malformed/non-finite values, other scalar
+  filters, and the wire payload retain their existing behavior; this does
+  not resolve DateTime snapshot precision.
+
 - Select the nested create/update transaction boundary before related writes.
   Creates use the model router with `instance=None`; updates use the existing
   parent's database alias. A later child failure rolls back earlier writes

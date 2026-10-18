@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -18,6 +19,25 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # ``channels.layers.BaseChannelLayer.valid_group_name``).
 MAX_GROUP_NAME_LENGTH = 100
 _GROUP_NAME_RE = re.compile(r"^[a-zA-Z\d\-_.]+$")
+
+
+def _matches_decimal_snapshot(snapshot: Any, expected: Decimal) -> bool:
+    """Compare a bounded JSON-safe Decimal snapshot to a typed filter value.
+
+    Args:
+        snapshot: The value captured when the notification was produced.
+        expected: The parsed Decimal filter value.
+
+    Returns:
+        Whether both finite values represent the same number.
+    """
+    if not isinstance(snapshot, str) or len(snapshot) > 256 or not expected.is_finite():
+        return False
+    try:
+        captured = Decimal(snapshot)
+    except InvalidOperation:
+        return False
+    return captured.is_finite() and captured == expected
 
 
 def safe_group_name(name: str) -> str:
@@ -46,8 +66,10 @@ def split_filters(
     """Decide notification filters in memory, returning what still needs the DB.
 
     Plain-equality keys (no "__" lookup) whose field is present in the serialized
-    "data" are compared in memory (string-coerced, so 7 matches "7"). A mismatch
-    short-circuits the whole notification.
+    "data" are compared in memory. Existing equal string forms still match
+    (including 7 and "7"); a typed Decimal filter also matches a finite,
+    numerically equal JSON-safe string snapshot. A mismatch short-circuits the
+    whole notification without consulting the current database row.
 
     Args:
         data: The serialized instance mapping carried by the notification.
@@ -61,7 +83,10 @@ def split_filters(
     remaining: dict[str, Any] = {}
     for key, value in filters.items():
         if "__" not in key and isinstance(data, dict) and key in data:
-            if str(data[key]) != str(value):
+            if str(data[key]) != str(value) and not (
+                isinstance(value, Decimal)
+                and _matches_decimal_snapshot(data[key], value)
+            ):
                 return None
         else:
             remaining[key] = value

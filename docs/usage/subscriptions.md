@@ -746,6 +746,12 @@ Filters are evaluated **per connection at delivery time**:
 - **`exact`** is decided in memory against the serialized payload — no extra
   query. This is the fast path the whole serialize-once engine is built around,
   so prefer it for scoping.
+- A typed `Decimal` exact filter compares finite numeric values from the
+  event-time JSON snapshot, so `1.0` matches a serialized `"1.00"`. This also
+  works for full-payload delete events after the row is gone. Server scope
+  values supplied as strings keep their existing string comparison, while
+  malformed or non-finite values retain the prior fallback behavior. The
+  engine does not reread a possibly changed row to resolve this equality.
 - **The other three lookups** fall back to a single-row database check.
 - Combine them:
   `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
