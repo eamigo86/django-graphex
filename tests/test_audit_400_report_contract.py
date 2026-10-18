@@ -125,6 +125,15 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
         and "MaxIntrospectionDepthRule" in rows["N3"][2]
     )
     assert rows["N4"][1] == "contract" and "process-global" in rows["N4"][2]
+    assert "SSE" in rows["L-S1"][3] and "WebSocket" not in rows["L-S1"][3]
+    assert "GraphQLError" in rows["M-F6"][2]
+    assert "results: null" in rows["M-F6"][3] and "fallback" not in rows["M-F6"][3]
+    assert "page_size=None" in rows["M-F7"][2]
+    assert "pageSize:null" in rows["M-F7"][3] and "100" in rows["M-F7"][3]
+    assert "MAX_BATCH_SIZE" in rows["L-C5"][2]
+    assert "MAX_REQUEST_BODY_SIZE" in rows["L-C5"][2]
+    assert "DOCUMENT_CACHE_MAXSIZE" in rows["L-C5"][2]
+    assert "negative" in rows["L-C5"][3] and "zero" in rows["L-C5"][3]
 
 
 def test_registry_and_factory_examples_state_the_actual_unit() -> None:
