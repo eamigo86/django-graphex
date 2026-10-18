@@ -5,8 +5,8 @@
 in the same create/update call. This mixin centralizes that logic (the two hosts
 previously carried duplicate, buggy copies) and makes it:
 
-* atomic -- the whole operation runs in "transaction.atomic()"; a nested or
-  parent validation failure rolls everything back (no orphan rows),
+* atomic on the parent write alias -- a nested or parent validation failure
+  rolls back writes made on that same database alias (no same-alias orphans),
 * relation-aware -- forward FK/O2O children are saved before the parent and
   their pk injected; reverse FK/O2O and M2M children are saved after the parent
   and linked to it, all decided by Django's relation introspection,
@@ -359,8 +359,9 @@ class NestedFieldsMixin:
         Forward relations (the parent holds the key) are written first and their
         pk injected into "data"; the parent is then saved via the backend (so
         its validation/error handling is used); reverse and M2M children
-        are written last and linked to the saved parent. Any failure rolls the
-        whole transaction back -- no orphan rows are left behind.
+        are written last and linked to the saved parent. The transaction uses
+        the parent's write alias, so any failure rolls back writes on that
+        alias. It does not coordinate writes across different databases.
 
         Subscription broadcasts and commit-time delivery: model saves inside
         the "transaction.atomic()" block trigger "post_save" / "post_delete"
@@ -429,7 +430,10 @@ class NestedFieldsMixin:
         has_nested_work = any(
             field in data and data[field] not in (None, [], {}) for field in nested
         )
-        boundary = transaction.atomic() if has_nested_work else nullcontext()
+        using = (
+            instance._state.db if instance is not None else None
+        ) or router.db_for_write(cls._meta.model, instance=instance)
+        boundary = transaction.atomic(using=using) if has_nested_work else nullcontext()
 
         try:
             with boundary:

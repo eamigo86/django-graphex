@@ -640,9 +640,13 @@ Here's a complete example showing all features:
 related objects alongside the parent. The same engine backs both
 `DjangoModelMutation` and `DjangoModelType`.
 
-- **Atomic** — the whole operation runs in a `transaction.atomic()` block. If the
-  parent *or* any child fails validation, **everything rolls back** (no orphan
-  rows) and the response is `ok: false` with the errors.
+- **Atomic on the parent write alias** — when nested work is present, the
+  operation opens `transaction.atomic(using=parent_alias)` before the first
+  related write. A later child validation failure rolls back the parent and
+  earlier children written on that same alias, including a routed secondary
+  database; the response is `ok: false` with the errors. This is **not** a
+  transaction spanning multiple database aliases. Configure parent and child
+  writes on the same alias when they must roll back together.
 - **Relation-aware** — the relation is introspected from the model:
 
     | Relation | Order | Behavior |

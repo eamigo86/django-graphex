@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Open the nested create/update transaction on the parent's actual write
+  alias, so a later child failure rolls back earlier parent and child writes
+  on a routed secondary database. Default-database behavior is unchanged;
+  writes across different aliases are not distributed transactions.
+
 - Queue automatic subscription save and delete notifications on the database
   alias that performed the write. Routed secondary writes now wait for their
   own commit, disappear on rollback, and are not delayed by an unrelated
