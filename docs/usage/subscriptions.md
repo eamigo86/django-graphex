@@ -748,7 +748,9 @@ Filters are evaluated **per connection at delivery time**:
   so prefer it for scoping.
 - A typed `Decimal` exact filter compares finite numeric values from the
   event-time JSON snapshot, so `1.0` matches a serialized `"1.00"`. This also
-  works for full-payload delete events after the row is gone. Server scope
+  works for valid high-precision values, including snapshots longer than 256
+  characters, and for full-payload delete events after the row is gone. No
+  separate snapshot-length cutoff is added by this comparison. Server scope
   values supplied as strings keep their existing string comparison, while
   malformed or non-finite values retain the prior fallback behavior. The
   engine does not reread a possibly changed row to resolve this equality.

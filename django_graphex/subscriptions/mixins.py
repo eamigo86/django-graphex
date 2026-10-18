@@ -22,7 +22,7 @@ _GROUP_NAME_RE = re.compile(r"^[a-zA-Z\d\-_.]+$")
 
 
 def _matches_decimal_snapshot(snapshot: Any, expected: Decimal) -> bool:
-    """Compare a bounded JSON-safe Decimal snapshot to a typed filter value.
+    """Compare a finite JSON-safe Decimal snapshot to a typed filter value.
 
     Args:
         snapshot: The value captured when the notification was produced.
@@ -31,7 +31,7 @@ def _matches_decimal_snapshot(snapshot: Any, expected: Decimal) -> bool:
     Returns:
         Whether both finite values represent the same number.
     """
-    if not isinstance(snapshot, str) or len(snapshot) > 256 or not expected.is_finite():
+    if not isinstance(snapshot, str) or not expected.is_finite():
         return False
     try:
         captured = Decimal(snapshot)
