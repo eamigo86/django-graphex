@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-- Open the nested create/update transaction on the parent's actual write
-  alias, so a later child failure rolls back earlier parent and child writes
-  on a routed secondary database. Default-database behavior is unchanged;
-  writes across different aliases are not distributed transactions.
+- Select the nested create/update transaction boundary before related writes.
+  Creates use the model router with `instance=None`; updates use the existing
+  parent's database alias. A later child failure rolls back earlier writes
+  when parent and children stay on that alias. A router using the populated instance
+  may choose a different create alias, so rollback is not guaranteed
+  there. Default-database behavior is unchanged; transactions do not span
+  different database aliases.
 
 - Queue automatic subscription save and delete notifications on the database
   alias that performed the write. Routed secondary writes now wait for their

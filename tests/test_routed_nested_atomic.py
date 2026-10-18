@@ -1,8 +1,9 @@
-"""Keep generated nested mutations atomic on their parent write alias."""
+"""Exercise generated nested mutations under stable database routing."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,8 +12,10 @@ from django.db import connections, models, router
 from django.test import RequestFactory
 from graphql import ExecutionResult, GraphQLString, graphql_sync
 
+import django_graphex.nested as nested_module
 from django_graphex.core import ObjectType, field
 from django_graphex.mutation import DjangoModelMutation
+from django_graphex.nested import NestedFieldsMixin
 from django_graphex.schema import DjangoGraphQLSchema
 
 
@@ -279,3 +282,24 @@ def test_nested_create_succeeds_on_own_alias(routed_database: str) -> None:
     assert set(
         RoutedNestedChild.objects.using(routed_database).values_list("title", flat=True)
     ) == {"first", "second"}
+
+
+def test_nested_routing_contract_documents_instance_dependent_create_limit() -> None:
+    """Keep the instance-dependent create routing limit visible in public text.
+
+    Each documented surface must distinguish boundary selection before create
+    from the backend's later routing with a populated parent instance.
+    """
+    root = Path(__file__).resolve().parents[1]
+    documents = (
+        nested_module.__doc__ or "",
+        NestedFieldsMixin.save_with_nested.__doc__ or "",
+        (root / "docs/usage/mutations.md").read_text(encoding="utf-8"),
+        (root / "CHANGELOG.md").read_text(encoding="utf-8"),
+        (root / "docs/changelog.md").read_text(encoding="utf-8"),
+    )
+    for document in documents:
+        normalized = document.casefold()
+        assert "instance=none" in normalized
+        assert "populated instance" in normalized
+        assert "not guaranteed" in normalized

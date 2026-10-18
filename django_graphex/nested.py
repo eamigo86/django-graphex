@@ -5,8 +5,11 @@
 in the same create/update call. This mixin centralizes that logic (the two hosts
 previously carried duplicate, buggy copies) and makes it:
 
-* atomic on the parent write alias -- a nested or parent validation failure
-  rolls back writes made on that same database alias (no same-alias orphans),
+* atomic when routing stays on the boundary alias -- creates select it with
+  instance=None before the parent is populated; an instance-dependent router
+  may choose another alias for the populated instance, so rollback of those
+  writes is not guaranteed. Updates use the existing instance's database
+  alias. Parent and child writes must route consistently for rollback,
 * relation-aware -- forward FK/O2O children are saved before the parent and
   their pk injected; reverse FK/O2O and M2M children are saved after the parent
   and linked to it, all decided by Django's relation introspection,
@@ -354,23 +357,27 @@ class NestedFieldsMixin:
         instance: Model | None = None,
         serializer_kwargs: dict[str, Any] | None = None,
     ) -> tuple[bool, Any]:
-        """Validate and persist the parent plus its nested children atomically.
+        """Validate and persist nested writes within a selected alias boundary.
 
         Forward relations (the parent holds the key) are written first and their
         pk injected into "data"; the parent is then saved via the backend (so
         its validation/error handling is used); reverse and M2M children
         are written last and linked to the saved parent. The transaction uses
-        the parent's write alias, so any failure rolls back writes on that
-        alias. It does not coordinate writes across different databases.
+        a selected boundary alias, so a failure rolls back writes on that
+        alias. On create, router selection uses instance=None before the
+        parent is populated. If an instance-dependent router chooses another
+        alias for the populated instance, rollback is not guaranteed. On
+        update, the existing instance's database alias selects the boundary.
+        This does not coordinate writes across different databases.
 
         Subscription broadcasts and commit-time delivery: model saves inside
         the "transaction.atomic()" block trigger "post_save" / "post_delete"
         signals, which are connected to "SubscriptionBinding" receivers.
         Those receivers defer their broadcast via "transaction.on_commit",
         so subscribers only receive notifications for rows that were actually
-        persisted. A subsequent failure within the same atomic block causes a
-        rollback and suppresses all pending broadcast callbacks, eliminating
-        phantom notifications for non-existent rows.
+        persisted. A subsequent failure within the same atomic block rolls
+        back writes and suppresses pending callbacks on that alias. Parent
+        and child writes must use the boundary alias for this protection.
 
         A child is validated by the backend of a host that declared custom
         validation for its model when one exists (see "backend_for_nested"), so
@@ -402,8 +409,8 @@ class NestedFieldsMixin:
 
         Raises:
             GraphQLError: If a child host's "authorize" denies the nested write
-                (PERMISSION_DENIED / 403). The atomic block rolls the whole
-                write back on the way out.
+                (PERMISSION_DENIED / 403). The atomic block rolls back writes
+                on its selected alias on the way out.
             TypeError: If a destination row-scope hook returns an invalid
                 queryset for a generated FK or M2M ID link.
         """

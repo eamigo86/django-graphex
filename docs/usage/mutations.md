@@ -640,13 +640,16 @@ Here's a complete example showing all features:
 related objects alongside the parent. The same engine backs both
 `DjangoModelMutation` and `DjangoModelType`.
 
-- **Atomic on the parent write alias** — when nested work is present, the
-  operation opens `transaction.atomic(using=parent_alias)` before the first
-  related write. A later child validation failure rolls back the parent and
-  earlier children written on that same alias, including a routed secondary
-  database; the response is `ok: false` with the errors. This is **not** a
-  transaction spanning multiple database aliases. Configure parent and child
-  writes on the same alias when they must roll back together.
+- **Atomic when routing stays on one alias** — when nested work is present,
+  the transaction boundary opens before the first related write. For a create,
+  its alias is selected with `router.db_for_write(parent_model, instance=None)`;
+  for an update, it uses the existing parent's database alias. A later child
+  validation failure rolls back writes made on that boundary alias, including
+  a routed secondary database when parent and children consistently use it.
+  A router that chooses by the populated instance can select another alias
+  for the create itself; rollback of those writes is **not guaranteed**.
+  Configure consistent parent/child routing when they must roll back together.
+  Transactions do not span multiple database aliases.
 - **Relation-aware** — the relation is introspected from the model:
 
     | Relation | Order | Behavior |
