@@ -55,12 +55,13 @@ needed to use the report.
 - Generated FK/M2M mutation input checks reject a **hidden destination ID**.
   Automatic forward-FK and reverse-FK output reads now apply the destination
   type's hook: a hidden nullable FK is `null`, and reverse results and counts
-  omit hidden rows. A nested forward-FK filter now uses the active request's
-  destination hook too, so a hidden target cannot make its source match.
+  omit hidden rows. Forward-FK and reverse-FK filters now use the active
+  request's destination hook too, so hidden targets cannot make sources match.
   Direct source FK-ID lookups, other relation joins, O2O/M2M and custom
   output resolvers remain separate. See `tests/test_destination_link_scope.py`,
   `tests/test_sd1_relation_read_scope.py`, and
-  `tests/test_sd2_forward_fk_filter_scope.py`, and
+  `tests/test_sd2_forward_fk_filter_scope.py`,
+  `tests/test_sd2_reverse_fk_filter_scope.py`, and
   `tests/test_permission_relation_bypass.py`.
 - For finite typed subscription filters, `Decimal("1.0")` matches an
   event-time JSON-safe snapshot of `"1.00"`, including valid high-precision
@@ -144,9 +145,9 @@ problems even when a nearby assertion is contradicted.
 | M-U3 | Finite Float subscription filters never match. | That blanket Float claim is **not verified**; the accepted numeric witness is Decimal `1.0` matching snapshot `1.00`. | Float generalization and DateTime/delete precision remain undecided; a broader match policy remains open. |
 
 SD1 and SD2 were **confirmed** scope boundaries, not false positives.
-The approved FK/reverse-FK output slice and forward-FK nested-filter slice
+The approved FK/reverse-FK output and filter slices
 apply destination hooks without introducing a universal strict-scope rule.
-Other relation-filter paths remain separate.
+M2M/O2O relation-filter paths remain separate.
 
 ## All 100 original claims
 
@@ -175,7 +176,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | A12 | bounded-fixed | AND across a to-many relation can match independent related rows; one relation predicate still uses same-row semantics. | AND filters matching two distinct related rows → accepted; one predicate keeps same-row meaning. | `tests/test_and_many_filtering.py` |
 | A13 | partial | valid Float/Decimal/UUID continuation + invalid decoded bounds; other cursor policies open. | Valid typed Float/Decimal/UUID cursor → continued; other cursor policies remain open. | `tests/test_pagination_cursor_typed_http.py` |
 | SD1 | partial | Automatic forward-FK/reverse-FK output traversal now applies destination get_queryset; O2O/M2M and custom output resolvers remain separate. | Visible parent points to hidden nullable FK target → relation is null; reverse results/count omit hidden children. | `tests/test_sd1_relation_read_scope.py` |
-| SD2 | partial | Nested forward-FK filters now apply the destination get_queryset for each hop; direct source FK-ID lookups and other relation filters retain separate contracts. M2M remains unprobed. | Filter on a hidden author's name → visible post no longer matches; direct author ID remains source-owned. | `tests/test_sd2_forward_fk_filter_scope.py` |
+| SD2 | partial | Forward-FK and reverse-FK filters apply each traversed destination get_queryset. Reverse predicates use one visible child witness; direct reverse child IDs are scoped, while direct source FK IDs remain source-owned. M2M/O2O stay separate. | Hidden author name or comment label → visible post does not match; direct author ID keeps its prior meaning. | `tests/test_sd2_reverse_fk_filter_scope.py` |
 | SD3 | bounded-fixed | Generated FK/M2M destination IDs are checked against the caller's visible choices; this does not make all relation reads globally scoped. | Mutation names hidden destination ID → generated FK/M2M link is rejected. | `tests/test_destination_link_scope.py` |
 | SD4 | bounded-fixed | hostless nullable reverse-FK orphan adoption denied only. | Parent 10 tries to adopt parentless child 7 → covered reverse-FK assignment denied. | `tests/test_nested_sd4_orphan_scope.py` |
 | SD5 | bounded-fixed | flat GFK metadata pruned on target read/scope denial; not global ACL. | GFK target fails read/scope check → flat target metadata is not returned. | `tests/test_flat_gfk_pruned_security.py` |
@@ -265,8 +266,8 @@ These items are **not implemented by this audit report**. They are grouped
 because approving one does not silently approve another.
 
 1. **Security and data scope:** SD1 automatic FK/reverse-FK reads and SD2
-   forward-FK filters have bounded destination-hook behavior. O2O/M2M output,
-   other relation filters, direct FK-ID policy, and SD6 strict-scope/system-check
+   forward-FK/reverse-FK filters have bounded destination-hook behavior. O2O/M2M
+   output and filters, direct source FK-ID policy, and SD6 strict-scope/system-check
    semantics still need separate decisions. The exact SITE-B L-E3 case did not reproduce,
    but other branches/backends remain unproved. Generated input destination
    IDs and hostless reverse-FK adoption have narrower accepted safeguards.

@@ -226,11 +226,13 @@ level.
     default no-op hook retain the ordinary read path.
 
     This does **not** add a global access-control policy. Nested filters
-    traversing an automatic forward FK now apply the destination's hook too;
-    a hidden destination cannot satisfy that filter branch. Direct source
+    traversing an automatic forward FK or reverse FK now apply the destination's
+    hook too; a hidden destination cannot satisfy that filter branch. Reverse
+    child-ID lookups are scoped because they traverse child rows. Direct source
     FK-ID lookups, automatic one-to-one and many-to-many output relations,
-    custom resolvers, other relation-filter paths, and ordering retain
-    separate behavior. See [forward-FK filter scope](filtering.md#forward-fk-filter-scope)
+    custom resolvers, M2M/O2O filter paths, and ordering retain separate
+    behavior. See [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
+    [reverse-FK filter scope](filtering.md#reverse-fk-filter-scope)
     and [relation input scope](permission-scoped-schema.md). Do not infer a
     tenant-wide guarantee from these bounded paths.
 

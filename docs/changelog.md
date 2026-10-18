@@ -19,7 +19,15 @@ All notable changes to this library are documented here. The format is based on
   visible source row match; each hop in a forward-FK chain is checked.
   Real absent-FK NULL matches, unrelated Boolean branches, and direct source
   FK-ID predicates retain their existing meanings. This does not scope
-  reverse-FK, M2M, O2O, custom filter bodies, or ordering.
+  M2M, O2O, custom filter bodies, or ordering.
+
+- Scope public reverse-FK filters to the child type's request-specific
+  `get_queryset`. One visible child must satisfy each grouped predicate;
+  separate `and` branches retain independent visible witnesses, and `not`
+  complements the matching-parent set. Direct reverse-child IDs are scoped,
+  unlike direct forward source FK IDs. Default and named output accessors now
+  resolve declarations using their ORM query names without reopening a
+  declared or pruned relation. M2M/O2O and custom filters remain separate.
 
 - Apply the destination type's `get_queryset` hook to automatic forward-FK
   and reverse-FK output reads. Hidden nullable FK targets now resolve to

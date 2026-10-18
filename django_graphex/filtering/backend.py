@@ -10,10 +10,20 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from django.db.models import Exists, ForeignKey, OuterRef, Q
+from django.db.models import (
+    BooleanField,
+    Case,
+    Exists,
+    ForeignKey,
+    ManyToOneRel,
+    OuterRef,
+    Q,
+    Value,
+    When,
+)
 from graphql import GraphQLError, Undefined, get_named_type
 
-from .translate import _is_pk_lookups, _relation_target, to_q
+from .translate import _is_pk_lookups, _leaf_q, _relation_target, to_q
 
 if TYPE_CHECKING:
     from django.db.models import Model, QuerySet
@@ -117,6 +127,131 @@ class _ForwardFkFilterScope:
             **{f"{path}__pk__in": visible.values("pk")}
         )
         return condition, child_scope
+
+    def reverse_is_scoped(self, model: type[Model], name: str) -> bool:
+        """Identify a reverse-FK destination hook without evaluating it.
+
+        Args:
+            model: Model owning the reverse relation.
+            name: Reverse relation's ORM query name.
+
+        Returns:
+            Whether the active schema's child type overrides its row scope.
+        """
+        from django_graphex.core.compat import _gdx_graphene_type
+
+        from .native_schema import _traversed_type
+
+        field = model._meta.get_field(name)
+        if not isinstance(field, ManyToOneRel) or self.node_type is None:
+            return False
+        child_type = _traversed_type(self.node_type, field.get_accessor_name())
+        if child_type is None:
+            raise GraphQLError(
+                f"The filter relation {model._meta.label}.{name} has no "
+                "destination type in the active schema."
+            )
+        from django_graphex.utils import has_object_type_queryset_override
+
+        return has_object_type_queryset_override(_gdx_graphene_type(child_type))
+
+    def reverse_filter(
+        self, model: type[Model], name: str, value: Any, prefix: str
+    ) -> Q | None:
+        """Filter a reverse-FK using one visible child as its SQL witness.
+
+        A multi-valued join cannot combine visibility and a child predicate
+        under negation: Django may compile them as separate existential tests.
+        Correlating both against the same child preserves that row identity.
+
+        Args:
+            model: Model owning the reverse relation.
+            name: Reverse relation's ORM query name.
+            value: Nested child fields or direct child-ID lookups.
+            prefix: ORM path from the root source to this model.
+
+        Returns:
+            A parent-row condition, or None when this relation has no hook.
+
+        Raises:
+            GraphQLError: If the hook changes the destination model or alias.
+        """
+        from django_graphex.core.compat import _gdx_graphene_type
+        from django_graphex.utils import apply_object_type_get_queryset
+
+        from .native_schema import _traversed_type
+
+        if not self.reverse_is_scoped(model, name):
+            return None
+        field = model._meta.get_field(name)
+        related = field.related_model
+        child_type = _traversed_type(self.node_type, field.get_accessor_name())
+        child_scope = type(self)(self.info, self.alias, child_type)
+        if _is_pk_lookups(value):
+            child_q = _leaf_q("", related._meta.pk.name, value)
+        else:
+            child_q, _ = to_q(value, related, _scope=child_scope)
+        if not child_q:
+            return Q()
+
+        output_type = _gdx_graphene_type(child_type)
+        destination = related._default_manager.db_manager(self.alias).all()
+        visible = apply_object_type_get_queryset(destination, output_type, self.info)
+        if (
+            visible.model._meta.concrete_model is not related._meta.concrete_model
+            or visible.db != self.alias
+        ):
+            raise GraphQLError(
+                f"{output_type.__name__}.get_queryset must retain the "
+                "destination model and database alias for a relation filter."
+            )
+        if not _is_pk_lookups(value) and _has_independent_many_and(value, related):
+            child_q = _independent_many_q(value, visible, scope=child_scope)
+        linked = visible.filter(**{field.field.attname: OuterRef(f"{prefix}pk")})
+        matching = Q(Exists(linked.filter(child_q)))
+        if _matches_missing_child(child_q):
+            matching |= ~Q(Exists(linked))
+        return matching
+
+
+def _matches_missing_child(condition: Q) -> bool:
+    """Evaluate a child condition against a missing reverse-join row.
+
+    This reproduces the nullable-join branch without querying or materializing
+    a child. Explicit SQL-null tests match absence; ordinary values do not.
+
+    Args:
+        condition: Predicate compiled for the child model.
+
+    Returns:
+        Whether the condition accepts an absent child row.
+    """
+    values = []
+    for child in condition.children:
+        if isinstance(child, Q):
+            values.append(_matches_missing_child(child))
+        elif isinstance(child, tuple):
+            values.append(child[0].endswith("__isnull") and child[1] is True)
+        elif isinstance(child, Case) and len(child.cases) == 1:
+            branch = child.cases[0]
+            values.append(
+                isinstance(child.output_field, BooleanField)
+                and isinstance(child.default, Value)
+                and child.default.value is False
+                and isinstance(branch, When)
+                and isinstance(branch.condition, Q)
+                and isinstance(branch.result, Value)
+                and branch.result.value is True
+                and _matches_missing_child(branch.condition)
+            )
+        else:
+            values.append(False)
+    answer = (
+        (any(values) if condition.connector == Q.OR else all(values))
+        if values
+        else True
+    )
+    return not answer if condition.negated else answer
 
 
 def apply_filter_backend(
@@ -233,6 +368,9 @@ def _independent_many_q(
             related = _relation_target(queryset.model, key)
             if (
                 related is not None
+                and not (
+                    scope is not None and scope.reverse_is_scoped(queryset.model, key)
+                )
                 and not _is_pk_lookups(value)
                 and _has_independent_many_and(value, related)
             ):

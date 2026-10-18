@@ -250,6 +250,11 @@ def to_q(
             touched_to_many = True
 
         related = _relation_target(model, key)
+        if related is not None and _scope is not None:
+            reverse_q = _scope.reverse_filter(model, key, value, prefix)
+            if reverse_q is not None:
+                result &= reverse_q
+                continue
         if related is not None and not _is_pk_lookups(value):
             # Relation children keep their own combinator scope reset: a relation
             # node is a fresh filter node against the related model.

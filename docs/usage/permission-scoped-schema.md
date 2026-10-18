@@ -450,8 +450,9 @@ owner's permission, grant the target model's read permission and check any
 registered target row hook's tenant policy. The same SDL now returns `null`
 for denied targets; do not interpret that as proof the target row is absent.
 This does not enable row-level security for other relations or arbitrary ORM
-joins. Public nested forward-FK filters have their own destination-hook rule;
-see [forward-FK filter scope](filtering.md#forward-fk-filter-scope).
+joins. Public forward-FK and reverse-FK filters have bounded destination-hook
+rules; see [forward-FK filter scope](filtering.md#forward-fk-filter-scope) and
+[reverse-FK filter scope](filtering.md#reverse-fk-filter-scope).
 Ordinary unpruned public schemas and explicitly typed GFK unions retain their
 existing behavior.
 
@@ -489,8 +490,10 @@ input, so a full-permission caller keeps the whole filter surface.
 Generated mutation FK/M2M **ID links** have a separate row-level check: when
 the destination public type overrides `get_queryset`, a hidden ID is refused
 like a nonexistent one before the parent is written. Automatic FK/reverse-FK
-output reads and nested forward-FK filters now have their own bounded scope
-rules, but other relation joins are not globally scoped. See
+output reads and forward-FK/reverse-FK filters now have their own bounded scope
+rules, but other relation joins are not globally scoped. A reverse filter
+declared by its ORM query name remains unavailable when its published output
+accessor is removed or replaced by an explicit resolver. See
 [mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
 
 !!! warning "The `@filter_field` body is still yours to scope"

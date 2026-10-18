@@ -355,11 +355,44 @@ they do not retry the filter without the scope. No destination rows are loaded
 into Python for this check: the ORM composes the hook's queryset as a
 same-database subquery.
 
-This is not a global relation policy. Reverse-FK, many-to-many and one-to-one
-filter paths, custom `@filter_field` bodies, ordering, and direct FK-ID
-lookups retain their separate contracts. See
+This is not a global relation policy. Many-to-many and one-to-one filter
+paths, custom `@filter_field` bodies, ordering, and direct source FK-ID
+lookups retain their separate contracts. Reverse-FK filters have the bounded
+rule below. See
 [relation output scope](types.md#relation-scope-hatch) and
 [permission-scoped schemas](permission-scoped-schema.md).
+
+### Reverse-FK filters use a visible child witness { #reverse-fk-filter-scope }
+
+A filter through an automatically published reverse foreign key also applies
+the child type's `get_queryset` for the current request. For example,
+`posts(filter: { comments: { label: { exact: "approved" } } })` matches a post
+only when **one visible comment** has that label. A hidden comment cannot make
+its post match even when a visible sibling has a different label. Direct
+reverse-child ID lookups traverse the child table, so they are scoped too;
+unlike direct forward-FK IDs, they are not source-owned columns.
+
+The visibility test and child predicate share one correlated SQL witness. A
+`not` around that branch complements the entire matching-parent set: a visible
+nonmatching sibling cannot cancel a visible matching child. Separate explicit
+`and` branches may still match different visible children, while predicates
+inside one `comments` object must match the same visible child. An absent or
+hidden-only child set retains the ordinary reverse-relation NULL behavior;
+this also holds for a nested nullable forward-FK predicate such as
+`comments: { owner: { name: { exact: null } } }`, even when the owner type has
+its own `get_queryset` hook. Empty relation objects are no-ops. The hook runs
+on the source queryset's database alias, and a failure rejects the request
+rather than retrying without the scope. No destination ID list is loaded into Python or queried once per
+parent.
+
+Filter declarations use Django's ORM reverse query name. The projection guard
+now resolves a default `*_set` output accessor, or a `related_name` distinct
+from `related_query_name`, to the same automatically published child type.
+These query-name paths were formerly refused even when the automatic accessor
+was published. This does **not** reopen a relation replaced by a declared
+resolver such as `DjangoFilterListField`, or one removed from a permission-
+scoped schema; both still lose their filter path. M2M, O2O, custom filter
+bodies and ordering remain separate contracts.
 
 ## Logical operators: `and` / `or` / `not`
 

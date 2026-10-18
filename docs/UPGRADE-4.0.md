@@ -62,9 +62,21 @@ match, review those filters and destination hooks.
 
 Direct source FK-ID filters such as `author: { exact: 7 }` keep their existing
 contract; a hidden target ID may still match the source row. An omitted filter
-and real nullable-FK matches also keep their meanings. Reverse-FK, M2M, O2O,
+and real nullable-FK matches also keep their meanings. M2M, O2O,
 custom filter bodies and ordering are not changed by this filter rule. See
 [forward-FK filter scope](usage/filtering.md#forward-fk-filter-scope).
+
+### Review filters that traverse a reverse FK
+
+Nested reverse-FK predicates now use the child type's `get_queryset` for the
+current request. A hidden child can no longer make its visible parent match;
+direct reverse-child ID lookups are scoped as well. `not` complements the
+visible matching-child set, while separate `and` branches can use different
+visible children. An absent or hidden-only child set retains the ordinary NULL
+lookup behavior. Review callers that previously used hidden child fields or
+IDs to select parents. An automatic reverse output accessor remains required:
+an explicitly declared or permission-pruned relation still has no filter path.
+See [reverse-FK filter scope](usage/filtering.md#reverse-fk-filter-scope).
 
 ### Check custom integration code
 
