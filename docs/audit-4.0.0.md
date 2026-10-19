@@ -268,7 +268,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | N3 | negative-limited | Core MaxIntrospectionDepthRule rejected one bounded nested introspection query; custom MAX_QUERY_DEPTH is a different guard, and no universal DoS proof follows. | Nested introspection query → core depth rule rejects bounded case, not all DoS. | `tests/test_depth_limit.py` |
 | N4 | contract | The GFK field-type cache is process-global Django class metadata; saying all caches are request-scoped is inaccurate. | GFK target-type lookup → cached in process-global Django class metadata. | `django_graphex/utils.py` |
 | N5 | negative-limited | regex safety is bounded only; no universal conclusion. | One bounded regex probe → cannot establish universal input safety. | `odd/tasks/audit-400-remediation.md` |
-| N6 | negative-limited | Twenty-three tracked-test docstring findings were corrected, but seven ignored-profile DOC002 findings remain locally; original ignored preimages and a whole-CI-clean verdict are unavailable. | Tracked docstrings pass → seven ignored-profile DOC002 findings remain locally. | `scripts/check_docstrings.py` |
+| N6 | negative-limited | The current local strict scan reports zero after correction of 23 tracked-test findings and seven ignored-profile DOC002 findings; original ignored preimages remain unknown, the ignored scripts are absent from a clean checkout, and no CI-clean verdict is proved. | Historical 23 tracked and seven ignored findings → current local scan zero, not CI proof. | `scripts/check_docstrings.py` |
 
 ## Decisions still required
 
@@ -336,10 +336,10 @@ because approving one does not silently approve another.
   The proof applies to the guarded finite inputs, not to every host file,
   physical index state, or power-loss mode. No package was published and no
   real PostgreSQL integration database was run.
-- The whole local docstring scanner still finds **seven DOC002** findings
-  in ignored profiling files; 23 tracked-test findings were corrected.
-  The ignored files are not automatically part of clean-checkout CI, so
-  neither “all CI green” nor “all local files clean” follows.
+- The current local strict scan reports zero after correction of 23 tracked
+  and seven ignored DOC002 findings in local profiling files. The original ignored preimages
+  remain unknown, and those scripts are absent from a clean checkout. No CI run
+  or whole-CI-clean verdict follows from this current local result.
 - The test-owned multipart/ASGI spool correction had a file-closed witness;
   no `ResourceWarning` was observed and no production endpoint leak was
   inferred. An actual client handler has different request ownership.

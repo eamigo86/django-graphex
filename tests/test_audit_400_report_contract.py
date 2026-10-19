@@ -187,6 +187,26 @@ def test_report_discloses_original_tdd_limit_without_rewriting_history() -> None
     assert "same-byte" in limits and "later" in limits
 
 
+def test_local_docstring_status_distinguishes_current_scan_from_history() -> None:
+    """Keep the local R09b result separate from earlier scans and CI claims.
+
+    A current clean local scan cannot establish clean-checkout CI behavior.
+    """
+    report = _report()
+    n6 = {row[0]: row for row in _dispositions(report)}["N6"]
+    assert n6[1] == "negative-limited"
+    assert "current local strict scan reports zero" in n6[2]
+    assert "23 tracked" in n6[2] and "seven ignored" in n6[2]
+    assert "original ignored preimages" in n6[2]
+    assert "clean checkout" in n6[2] and "CI" in n6[2]
+
+    limits = _section(report, "Verification and provenance limits")
+    assert "current local strict scan reports zero" in limits
+    assert "23 tracked" in limits and "seven ignored" in limits
+    assert "original ignored preimages" in limits
+    assert "clean checkout" in limits and "CI" in limits
+
+
 def test_examples_and_decision_queue_do_not_turn_boundaries_into_fixes() -> None:
     """Require concrete outcomes and explicit unresolved policy ownership.
 
