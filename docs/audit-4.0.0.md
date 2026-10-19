@@ -195,7 +195,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | M-S5 | bounded-fixed | GET cache-key components are length-framed so adjacent values cannot collide inside one identity partition; cross-identity policy is separate. | Cache-key parts ab+c versus a+bc → framed distinctly within one identity. | `tests/test_views_cache_key_framing.py` |
 | M-S6 | contract | shortcut required_perms raises TypeError; lowercase field works; untagged public documented. | Shortcut required_perms → TypeError; lower-case field keyword works. | `tests/test_permission_keyword_boundaries.py` |
 | M-D1 | partial | external current native 3.3 witness shows sequential stale backend instance overwrites separately updated bio; not a threaded/PostgreSQL race. update_fields policy deferred for auto_now/custom save behavior. | Stale model instance saves bio after separate title update → full save can overwrite title. | `docs/usage/mutations.md` |
-| M-D2 | partial | Stable/model-routed CREATE and existing-state UPDATE use their write alias for nested rollback; instance-dependent CREATE routing and cross-DB atomicity remain open. | Model-routed nested CREATE fails → same-alias writes roll back; instance-routed CREATE open. | `tests/test_routed_nested_atomic.py` |
+| M-D2 | partial | The included Django backend routes a populated unsaved parent for nested CREATE and pins native nested writes to that alias; divergent M2M through routing is checked before writes and again before linking after a generated ID, rolling back local writes on later divergence. UPDATE keeps its existing alias. Custom backends, cross-DB atomicity, and changing router answers between check and link remain separate. | Explicit foreign through route → no DML; generated-ID foreign route → selected-alias writes roll back with no foreign through DML. | `tests/test_routed_nested_atomic.py` |
 | M-D3 | partial | Decimal output avoids Float precision loss; SQLite reload rounding and input coercion remain separate. | Large Decimal output → exact text; SQLite reload precision is separate. | `tests/core/test_decimal_output.py` |
 | M-D4 | partial | public mutation rejects NaN/±Infinity/1e1000 structurally/no save; exact 1E+999999999 untested. | NaN, Infinity or 1e1000 mutation input → no save; extreme 1E+999999999 unrun. | `docs/usage/mutations.md` |
 | M-D5 | contract | Public model JSONField input string '123' stays a string through DB/output; separate JSONString intentionally decodes JSON text to integer 123. | Raw JSONField string 123 → string after reload; JSONString JSON text decodes an integer. | `tests/test_explicit_null_and_json_input.py` |
@@ -282,7 +282,7 @@ because approving one does not silently approve another.
 2. **Mutation semantics:** A1 native `ok: false` sibling rollback,
    cross-database writes and lost updates; M-D1 partial-save
    `update_fields`, custom `save()`, `auto_now`, and derived fields;
-   R05c instance-dependent CREATE routing; wider A10 `full_clean()` and
+   R05c custom-backend nested CREATE routing; wider A10 `full_clean()` and
    upsert/uniqueness behavior all need separate compatibility decisions.
    Stable/model-routed same-alias nested rollback is not distributed
    atomicity.

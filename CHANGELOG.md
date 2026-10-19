@@ -82,13 +82,15 @@
   filters, and the wire payload retain their existing behavior; this does
   not resolve DateTime snapshot precision.
 
-- Select the nested create/update transaction boundary before related writes.
-  Creates use the model router with `instance=None`; updates use the existing
-  parent's database alias. A later child failure rolls back earlier writes
-  when parent and children stay on that alias. A router using the populated instance
-  may choose a different create alias, so rollback is not guaranteed
-  there. Default-database behavior is unchanged; transactions do not span
-  different database aliases.
+- Route nested creates using one populated, unsaved parent instance with the
+  included Django backend, then pin native parent and child writes to that
+  selected alias in one transaction. A later child failure rolls back earlier
+  same-alias writes and commit callbacks. Updates retain the existing parent's
+  alias; direct non-nested creates and custom serializer backend create calls
+  keep their prior contracts. A divergent M2M through route fails before the
+  first write, or before linking after a generated ID while rolling back local
+  writes. Cross-database transactions and routers changing answers between
+  the check and link operation are not coordinated.
 
 - Queue automatic subscription save and delete notifications on the database
   alias that performed the write. Routed secondary writes now wait for their

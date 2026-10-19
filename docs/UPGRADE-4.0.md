@@ -16,6 +16,21 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+For nested creates using the included Django backend, a database router now
+receives a populated but unsaved parent instance before any related write.
+It may therefore choose an alias from a supplied scalar such as `region` or
+from a model default. Native parent and child saves share that alias and one
+transaction; a late child failure rolls back those writes and commit callbacks.
+Check routers that previously expected `instance=None` on nested create.
+Direct creates without nested work and custom serializer backend create calls
+retain their prior behavior. If an M2M through router explicitly selects a
+different alias, native nested CREATE returns a field error before any write.
+A router that chooses differently only after a generated ID triggers a second
+check before linking; earlier writes on the selected alias roll back and no
+foreign through write is attempted. Routers should keep the through model on
+the parent's alias. Transactions across aliases and arbitrary stateful router
+changes between checks and Django's link operation are not coordinated.
+
 The built-in HTTP views now reject a schema without `graphql_schema` and the
 combination `graphiql=True, batch=True` even under `python -O`. They retain
 their existing `AssertionError` type and messages; only these two constructor

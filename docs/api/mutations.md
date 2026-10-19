@@ -121,6 +121,12 @@ written before the parent and their pk injected; reverse FK/O2O and M2M children
 are written after and linked to it. A reverse child (FK **or** O2O) supplied by
 pk is rejected when it currently belongs to a different parent. Any validation
 failure rolls the whole transaction back.
+With the included Django backend, a nested create routes one populated unsaved
+parent and pins native child writes to that alias. A custom serializer backend
+still receives `instance=None` on create. A divergent M2M through route is
+refused before any write, or before linking after a generated parent ID with
+selected-alias writes rolled back. There is no cross-database atomicity or
+guarantee for a router that changes its answer between checks and linking.
 See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
 
 **Parameters:**

@@ -5,11 +5,13 @@
 in the same create/update call. This mixin centralizes that logic (the two hosts
 previously carried duplicate, buggy copies) and makes it:
 
-* atomic when routing stays on the boundary alias -- creates select it with
-  instance=None before the parent is populated; an instance-dependent router
-  may choose another alias for the populated instance, so rollback of those
-  writes is not guaranteed. Updates use the existing instance's database
-  alias. Parent and child writes must route consistently for rollback,
+* atomic when routing stays on the boundary alias -- nested creates using the
+  shipped Pydantic backend route a populated unsaved parent once, then pin
+  native parent and child saves to that alias. A divergent M2M through route
+  is rejected before writes or, if it depends on a generated ID, before
+  linking with local writes rolled back. Updates use the existing instance's
+  database alias. Custom backend overrides keep their prior create contract,
+  and cross-database writes are not coordinated,
 * relation-aware -- forward FK/O2O children are saved before the parent and
   their pk injected; reverse FK/O2O and M2M children are saved after the parent
   and linked to it, all decided by Django's relation introspection,
@@ -364,11 +366,14 @@ class NestedFieldsMixin:
         its validation/error handling is used); reverse and M2M children
         are written last and linked to the saved parent. The transaction uses
         a selected boundary alias, so a failure rolls back writes on that
-        alias. On create, router selection uses instance=None before the
-        parent is populated. If an instance-dependent router chooses another
-        alias for the populated instance, rollback is not guaranteed. On
-        update, the existing instance's database alias selects the boundary.
-        This does not coordinate writes across different databases.
+        alias. A nested create using the shipped Pydantic backend prepares one
+        populated unsaved parent and routes with that instance before the
+        first write; its native child saves use the same alias. Divergent M2M
+        through routes are checked before writes and again before linking
+        after an ID may have been generated. Custom backend overrides retain
+        their existing call contract and are not pinned by this path. An
+        update uses the existing instance's database alias.
+        Transactions do not coordinate writes across different databases.
 
         Subscription broadcasts and commit-time delivery: model saves inside
         the "transaction.atomic()" block trigger "post_save" / "post_delete"
@@ -437,14 +442,49 @@ class NestedFieldsMixin:
         has_nested_work = any(
             field in data and data[field] not in (None, [], {}) for field in nested
         )
+        # Only the shipped backend can accept an unsaved instance without
+        # changing the public SerializerBackend contract. Build it once so
+        # defaults and instance-dependent routers see the same create object.
+        from .core.backend import PydanticBackend
+
+        native_create = (
+            has_nested_work
+            and instance is None
+            and type(cls._meta.backend) is PydanticBackend
+        )
+        prepared = cls._meta.model() if native_create else None
+        if prepared is not None:
+            scalar_data = cls._unwrap_enums(dict(data))
+            for model_field in cls._meta.model._meta.concrete_fields:
+                if model_field.name in scalar_data and model_field.name not in nested:
+                    setattr(
+                        prepared,
+                        model_field.attname,
+                        scalar_data[model_field.name],
+                    )
+        routed_instance = prepared if prepared is not None else instance
         using = (
-            instance._state.db if instance is not None else None
-        ) or router.db_for_write(cls._meta.model, instance=instance)
+            routed_instance._state.db if routed_instance is not None else None
+        ) or router.db_for_write(cls._meta.model, instance=routed_instance)
+        if prepared is not None:
+            prepared._state.db = using
         boundary = transaction.atomic(using=using) if has_nested_work else nullcontext()
 
         try:
+            if native_create and prepared is not None:
+                for field in nested:
+                    if field not in data or data[field] in (None, [], {}):
+                        continue
+                    kind, relation = cls._relation_kind(field)
+                    if kind == "m2m":
+                        cls._check_native_m2m_through_route(
+                            field, relation, prepared, using
+                        )
             with boundary:
-                cls._validate_destination_links(data, instance, nested, info)
+                route_kwargs = {"using": using} if native_create else {}
+                cls._validate_destination_links(
+                    data, instance, nested, info, **route_kwargs
+                )
                 deferred: list[tuple[str, Any, str, Any, Any]] = []
                 for field, child_model in nested.items():
                     if field not in data:
@@ -491,7 +531,9 @@ class NestedFieldsMixin:
                         if item_pk is not None and str(item_pk) != str(current_pk):
                             data[field] = item_pk  # link only, no child write
                             continue
-                        child = cls._persist_child(field, child_model, item, info)
+                        child = cls._persist_child(
+                            field, child_model, item, info, **route_kwargs
+                        )
                         data[field] = child.pk
                     else:
                         # Reverse/M2M children need the parent pk: defer them.
@@ -512,7 +554,7 @@ class NestedFieldsMixin:
                     root,
                     info,
                     data,
-                    instance=instance,
+                    instance=prepared if prepared is not None else instance,
                     partial=instance is not None,
                     serializer_kwargs=serializer_kwargs,
                 )
@@ -521,7 +563,14 @@ class NestedFieldsMixin:
 
                 for field, child_model, kind, relation, sub_data in deferred:
                     cls._attach_children(
-                        obj, field, child_model, kind, relation, sub_data, info
+                        obj,
+                        field,
+                        child_model,
+                        kind,
+                        relation,
+                        sub_data,
+                        info,
+                        **route_kwargs,
                     )
 
                 return True, obj
@@ -535,6 +584,7 @@ class NestedFieldsMixin:
         instance: Model | None,
         nested: dict[str, Any],
         info: GraphQLResolveInfo,
+        using: str | None = None,
     ) -> None:
         """Reject ID links outside the request's destination output scope.
 
@@ -550,6 +600,7 @@ class NestedFieldsMixin:
             instance: The parent being updated, or None for a create.
             nested: Declared nested relation fields.
             info: Request resolve info carrying the schema's Registry pair.
+            using: Already-selected transaction alias for a native nested create.
 
         Raises:
             _NestedError: If a requested link is hidden or nonexistent.
@@ -566,8 +617,10 @@ class NestedFieldsMixin:
         else:
             registry = cls._meta.registry
         alias = (
-            instance._state.db if instance is not None else None
-        ) or router.db_for_write(cls._meta.model, instance=instance)
+            using
+            or (instance._state.db if instance is not None else None)
+            or router.db_for_write(cls._meta.model, instance=instance)
+        )
 
         for relation in cls._meta.model._meta.get_fields():
             field = relation.name
@@ -664,6 +717,47 @@ class NestedFieldsMixin:
 
     # -- relation introspection ------------------------------------------------
 
+    @staticmethod
+    def _check_native_m2m_through_route(
+        field: str,
+        relation: Any,
+        parent: Model,
+        using: str | None,
+    ) -> None:
+        """Keep a native nested CREATE's through writes on its chosen alias.
+
+        Django's many-related manager independently routes its through model
+        with the parent as a hint. Check the same choice before the first write
+        and again immediately before linking, because a generated parent key
+        may change an instance-dependent router's answer.
+
+        Args:
+            field: Nested M2M field or reverse accessor name.
+            relation: Django M2M field or reverse relation.
+            parent: Prepared or saved parent used as the router hint.
+            using: Alias selected for the native CREATE transaction.
+
+        Raises:
+            _NestedError: If the through manager would use another database.
+        """
+        through = (
+            relation.remote_field.through
+            if isinstance(relation, ManyToManyField)
+            else relation.through
+        )
+        if router.db_for_write(through, instance=parent) != using:
+            raise _NestedError(
+                [
+                    ErrorType(
+                        field=field,
+                        messages=[
+                            "The nested relation cannot be written with this "
+                            "routing configuration."
+                        ],
+                    )
+                ]
+            )
+
     @classmethod
     def _relation_kind(cls, field_name: str) -> tuple[str | None, Any]:
         """Classify the model relation backing a nested field.
@@ -726,6 +820,7 @@ class NestedFieldsMixin:
         relation: Any,
         sub_data: Any,
         info: GraphQLResolveInfo,
+        using: str | None = None,
     ) -> None:
         """Persist and link reverse/M2M children after the parent is saved.
 
@@ -737,6 +832,7 @@ class NestedFieldsMixin:
             relation: The Django relation object.
             sub_data: The nested payload (dict or list).
             info: GraphQL resolve info for the current request.
+            using: Selected alias for native nested child lookups and writes.
 
         Raises:
             _NestedError: If a child is hidden by a write host, belongs to
@@ -775,7 +871,12 @@ class NestedFieldsMixin:
                 # Through the shared lookup helper, so a pk the field cannot
                 # parse is "no row" here too instead of a raw ORM error.
                 existing = (
-                    get_Object_or_None(child_model, pk=child_pk)
+                    get_Object_or_None(
+                        child_model._default_manager.db_manager(using)
+                        if using
+                        else child_model,
+                        pk=child_pk,
+                    )
                     if child_pk is not None
                     else None
                 )
@@ -786,7 +887,13 @@ class NestedFieldsMixin:
                     # the row exists. Deciding scope first makes every
                     # hidden row answer the same not-found, whether or not
                     # it happens to have an owner.
-                    cls._reject_hidden_row(field, child_model, child_pk, info)
+                    cls._reject_hidden_row(
+                        field,
+                        child_model,
+                        child_pk,
+                        info,
+                        **({"using": using} if using is not None else {}),
+                    )
                     current_owner_id = getattr(existing, f"{fk_name}_id", None)
                     if current_owner_id is not None and current_owner_id != parent.pk:
                         parent_model_name = parent.__class__.__name__
@@ -840,6 +947,7 @@ class NestedFieldsMixin:
                     save_kwargs={fk_name: parent},
                     instance=existing,
                     scope_checked=existing is not None,
+                    **({"using": using} if using is not None else {}),
                 )
         elif kind == "m2m":
             items = sub_data if isinstance(sub_data, list) else [sub_data]
@@ -863,7 +971,12 @@ class NestedFieldsMixin:
                 # reaches the linkage query as a raw ORM error.
                 item_pk = cls._child_pk(child_model, item)
                 existing = (
-                    get_Object_or_None(child_model, pk=item_pk)
+                    get_Object_or_None(
+                        child_model._default_manager.db_manager(using)
+                        if using
+                        else child_model,
+                        pk=item_pk,
+                    )
                     if item_pk is not None
                     else None
                 )
@@ -876,14 +989,26 @@ class NestedFieldsMixin:
                     # so the writer must still apply their scope to the row it is
                     # about to write.
                     linked = cls._persist_child(
-                        field, child_model, item, info, instance=existing
+                        field,
+                        child_model,
+                        item,
+                        info,
+                        instance=existing,
+                        **({"using": using} if using is not None else {}),
                     )
                 children.append(linked)
+            if using is not None:
+                cls._check_native_m2m_through_route(field, relation, parent, using)
             manager.add(*children)  # additive: never removes
 
     @classmethod
     def _reject_hidden_row(
-        cls, field: str, model: Any, pk: Any, info: GraphQLResolveInfo
+        cls,
+        field: str,
+        model: Any,
+        pk: Any,
+        info: GraphQLResolveInfo,
+        using: str | None = None,
     ) -> None:
         """Refuse a nested pk the child's own write hosts cannot see.
 
@@ -907,12 +1032,18 @@ class NestedFieldsMixin:
             model: The child's Django model class.
             pk: The primary key named by the nested payload.
             info: GraphQL resolve info for the current request.
+            using: Selected alias for the native nested child scope lookup.
 
         Raises:
             _NestedError: If any host serving "update" hides the row.
         """
         for host in hosts_serving(cls._meta.registry, model, "update"):
-            scoped = host.get_queryset(model._default_manager, info)
+            manager = (
+                model._default_manager.db_manager(using)
+                if using
+                else model._default_manager
+            )
+            scoped = host.get_queryset(manager, info)
             if get_Object_or_None(scoped, pk=pk) is None:
                 raise _NestedError(
                     cls._prefix_errors(field, not_found_error(model, pk))
@@ -928,6 +1059,7 @@ class NestedFieldsMixin:
         save_kwargs: dict[str, Any] | None = None,
         instance: Model | None = _UNRESOLVED,
         scope_checked: bool = False,
+        using: str | None = None,
     ) -> Model:
         """Upsert a single nested child, raising on validation failure.
 
@@ -963,6 +1095,7 @@ class NestedFieldsMixin:
                 caller just ran and passed; a caller that resolved the row
                 WITHOUT checking its scope leaves this False and the check runs
                 here, which is why the many-to-many branch does exactly that.
+            using: Selected alias for the native child lookup and save.
 
         Returns:
             The saved child instance.
@@ -977,10 +1110,23 @@ class NestedFieldsMixin:
         hosts = hosts_for_nested(cls._meta.registry, model)
         pk = cls._child_pk(model, item)
         if instance is _UNRESOLVED:
-            instance = get_Object_or_None(model, pk=pk) if pk is not None else None
+            instance = (
+                get_Object_or_None(
+                    model._default_manager.db_manager(using) if using else model,
+                    pk=pk,
+                )
+                if pk is not None
+                else None
+            )
 
         if instance is not None and not scope_checked:
-            cls._reject_hidden_row(field, model, pk, info)
+            cls._reject_hidden_row(
+                field,
+                model,
+                pk,
+                info,
+                **({"using": using} if using is not None else {}),
+            )
 
         # SECURITY: the child's OWN permissions, which the parent's single
         # "authorize" call never consulted. "authorize" raises "GraphQLError"
@@ -1003,13 +1149,22 @@ class NestedFieldsMixin:
                 # as it reads a direct one.
                 authorize(info, action, **supported_kwargs(authorize, extras))
 
+        if instance is None and using is not None:
+            from .core.backend import PydanticBackend
+
+            if type(child_backend) is PydanticBackend:
+                instance = model()
+                instance._state.db = using
+
         ok, result = child_backend.save_object(
             cls,
             None,
             info,
             item,
             instance=instance,
-            partial=instance is not None,
+            partial=pk is not None
+            and instance is not None
+            and not instance._state.adding,
             save_kwargs=save_kwargs,
         )
         if not ok:

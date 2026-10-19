@@ -640,16 +640,24 @@ Here's a complete example showing all features:
 related objects alongside the parent. The same engine backs both
 `DjangoModelMutation` and `DjangoModelType`.
 
-- **Atomic when routing stays on one alias** — when nested work is present,
-  the transaction boundary opens before the first related write. For a create,
-  its alias is selected with `router.db_for_write(parent_model, instance=None)`;
-  for an update, it uses the existing parent's database alias. A later child
-  validation failure rolls back writes made on that boundary alias, including
-  a routed secondary database when parent and children consistently use it.
-  A router that chooses by the populated instance can select another alias
-  for the create itself; rollback of those writes is **not guaranteed**.
-  Configure consistent parent/child routing when they must roll back together.
-  Transactions do not span multiple database aliases.
+- **Atomic on the selected alias with the included Django backend** — when
+  nested work is present, a create prepares one populated, unsaved parent
+  before the first write. The router receives that instance, so a rule such
+  as `instance.region == "east"` can select the secondary alias. Native
+  parent and child saves use that alias within one transaction; a later child
+  validation failure rolls back earlier same-alias writes and suppresses their
+  commit callbacks. An update keeps the existing parent's database alias.
+  The routing hint is populated from supplied scalar fields and model defaults
+  before backend validation; validation and model construction are not replayed.
+  A create without nested work retains its direct-save behavior. Custom
+  serializer backends keep their existing `save_object(instance=None)` create
+  contract. For M2M links, an explicitly divergent through-model route is
+  rejected before the first write. If the route diverges only after a generated
+  parent ID, a second check rejects it before linking and rolls back preceding
+  selected-alias writes and commit callbacks. Route through models to the
+  parent's alias; transactions do **not** coordinate database aliases, and a
+  stateful router that changes between the check and Django's link operation
+  is outside this bounded guarantee.
 - **Relation-aware** — the relation is introspected from the model:
 
     | Relation | Order | Behavior |
