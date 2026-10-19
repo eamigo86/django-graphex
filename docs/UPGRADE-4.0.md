@@ -169,6 +169,14 @@ permissions, custom filter bodies and ordering are unchanged. See
    `create_source_event_stream()` results. Preserve per-event authorization,
    serialization, and teardown rather than replacing the transport driver
    with a stock subscription call.
+   Full-payload native DateTime snapshots now retain microseconds: exact
+   DateTime filters match the captured instant, including equivalent aware
+   offsets, and selected DateTime output fields serialize without an error.
+   A previously dropped matching event may now arrive. Existing notifications
+   already truncated to milliseconds cannot recover their original precision;
+   id-only payloads, arbitrary JSON strings and custom output resolvers are
+   not converted by this change. See
+   [subscription filters](usage/subscriptions.md#filtering-notifications).
 4. **Cost and query behavior:** keep the built-in cost/depth validation and
    request-only SQL controls in your regression suite, alongside synchronous
    queryset and mutation transaction tests. The 3.3 migration does not

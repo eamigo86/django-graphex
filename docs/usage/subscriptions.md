@@ -754,6 +754,15 @@ Filters are evaluated **per connection at delivery time**:
   values supplied as strings keep their existing string comparison, while
   malformed or non-finite values retain the prior fallback behavior. The
   engine does not reread a possibly changed row to resolve this equality.
+- A typed `DateTime` exact filter compares the captured full-payload ISO value
+  as a DateTime, without millisecond rounding or a later row lookup. All six
+  microsecond digits survive transport; equivalent timezone-aware offsets
+  match the same instant, while different microseconds do not. Naive values
+  are not assigned a timezone, and this does not change other scalar filters.
+  For example, an event captured at `2026-10-18T12:00:00.123456+00:00`
+  matches `exact: "2026-10-18T17:30:00.123456+05:30"` and delivers that
+  captured DateTime through the existing output scalar. An older notification
+  already truncated to milliseconds cannot regain its lost digits.
 - **The other three lookups** fall back to a single-row database check.
 - Combine them:
   `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
@@ -815,6 +824,9 @@ Filters are evaluated **per connection at delivery time**:
     exactly `X`?" about any declared field, one guess at a time. That is fine
     for a value with a large space (a password hash) and **not** fine for one
     with a small space (a boolean flag, a status enum, a short token).
+    A declared DateTime field is also an exact-match oracle at its captured
+    microsecond precision; this precision fix does not make client filters an
+    authorization control.
 
     Keep sensitive columns out of that surface with `only_fields` /
     `exclude_fields` on the subscription's `Meta` — they gate the event payload
@@ -891,6 +903,16 @@ class UserSubscription(Subscription):
     `payload_mode = "full"` on a model carrying either column raised
     `TypeError: Object of type FieldFile is not JSON serializable` on **every**
     save.
+
+!!! note "DateTime event snapshots"
+
+    Full-payload native DateTime fields remain JSON-safe ISO strings on the
+    channel layer, but preserve their captured microseconds. Only the native
+    DateTime output boundary reconstructs a typed value for the existing
+    scalar; arbitrary JSON strings and custom output fields are not parsed.
+    Automatic signal events capture before commit and deliver after commit;
+    manual `broadcast()` still sends immediately. Neither path rereads a
+    changed or deleted row to decide full-payload DateTime equality.
 
 !!! warning "id-only is the default"
 

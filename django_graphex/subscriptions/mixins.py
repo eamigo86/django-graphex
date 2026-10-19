@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,42 @@ def _matches_decimal_snapshot(snapshot: Any, expected: Decimal) -> bool:
     except InvalidOperation:
         return False
     return captured.is_finite() and captured == expected
+
+
+def _matches_datetime_snapshot(snapshot: Any, expected: datetime) -> bool:
+    """Compare an ISO wire value with an exact typed DateTime filter.
+
+    Args:
+        snapshot: The JSON-safe value captured at event time.
+        expected: The parsed DateTime filter value.
+
+    Returns:
+        Whether both values denote the same instant without rounding.
+    """
+    if not isinstance(snapshot, str):
+        return False
+    try:
+        captured = datetime.fromisoformat(snapshot)
+    except ValueError:
+        return False
+    return captured == expected
+
+
+class _LosslessDateTimeJSONEncoder(DjangoJSONEncoder):
+    """Keep DateTime microseconds while retaining Django's other JSON rules."""
+
+    def default(self, value: Any) -> Any:
+        """Encode DateTime without Django's millisecond truncation.
+
+        Args:
+            value: The value to encode.
+
+        Returns:
+            An ISO DateTime or Django's existing representation.
+        """
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return super().default(value)
 
 
 def safe_group_name(name: str) -> str:
@@ -83,9 +120,16 @@ def split_filters(
     remaining: dict[str, Any] = {}
     for key, value in filters.items():
         if "__" not in key and isinstance(data, dict) and key in data:
-            if str(data[key]) != str(value) and not (
-                isinstance(value, Decimal)
-                and _matches_decimal_snapshot(data[key], value)
+            if (
+                str(data[key]) != str(value)
+                and not (
+                    isinstance(value, Decimal)
+                    and _matches_decimal_snapshot(data[key], value)
+                )
+                and not (
+                    isinstance(value, datetime)
+                    and _matches_datetime_snapshot(data[key], value)
+                )
             ):
                 return None
         else:
@@ -100,7 +144,8 @@ def serialize_instance(
     """Serialize "instance" once into a JSON-safe mapping.
 
     The payload travels over the channel layer (msgpack/JSON), so values are
-    normalized through "DjangoJSONEncoder" to keep dates/decimals safe.
+    normalized through Django's JSON rules to keep dates/decimals safe.
+    DateTime values retain all six microsecond digits when present.
 
     Args:
         backend: The subscription's serializer backend.
@@ -110,4 +155,4 @@ def serialize_instance(
         A JSON-safe mapping of the serialized instance.
     """
     data = backend.to_representation(instance)
-    return json.loads(json.dumps(data, cls=DjangoJSONEncoder))
+    return json.loads(json.dumps(data, cls=_LosslessDateTimeJSONEncoder))

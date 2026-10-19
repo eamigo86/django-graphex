@@ -20,17 +20,22 @@ be imported safely in any context.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Callable
 
 __all__ = ["make_snake_resolver"]
 
 
-def make_snake_resolver(snake: str) -> Callable[..., Any]:
+def make_snake_resolver(
+    snake: str, *, native_datetime: bool = False
+) -> Callable[..., Any]:
     """Return a resolver closure that reads "snake" from a flat snake-keyed dict.
 
     Args:
         snake: The snake_case field name as it appears in the serialized
             subscription payload (e.g. "is_active", "date_joined").
+        native_datetime: Reconstruct a native model DateTime from its ISO wire
+            value before the existing GraphQL output scalar serializes it.
 
     Returns:
         A two-argument resolver "(root, info) -> value" compatible with the
@@ -40,8 +45,17 @@ def make_snake_resolver(snake: str) -> Callable[..., Any]:
         and falls back to "getattr(root, snake, None)" for non-dict roots (direct
         object access in tests or non-serialized usage).
     """
-    resolver = lambda root, _info, *, _name=snake: (  # noqa: E731
-        root.get(_name) if isinstance(root, dict) else getattr(root, _name, None)
-    )
+
+    def resolver(root: Any, _info: Any, *, _name: str = snake) -> Any:
+        value = (
+            root.get(_name) if isinstance(root, dict) else getattr(root, _name, None)
+        )
+        if native_datetime and isinstance(root, dict) and isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return value
+        return value
+
     resolver._gdx_pure_projection = True  # type: ignore[attr-defined]
     return resolver

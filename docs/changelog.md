@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Preserve microseconds in native full-payload subscription DateTime event
+  snapshots. Typed exact DateTime filters now compare the captured instant,
+  including equivalent aware offsets, and native DateTime event fields use the
+  existing output scalar without a later row lookup. SSE and WebSocket share
+  the corrected delivery path; nullable and other scalar fields, id-only
+  payloads, and custom resolver contracts are unchanged. Previously dropped
+  equal events can now arrive; older truncated snapshots cannot recover lost
+  precision.
+
 - Scope automatic declared and reverse M2M output lists with the destination
   type's request-specific `get_queryset`. A visible parent retains its row,
   while hidden linked targets leave `results` and the pre-pagination
@@ -91,8 +100,8 @@ All notable changes to this library are documented here. The format is based on
   matches a full-payload `"1.00"` on create and delete without a row lookup.
   Valid high-precision model values also match without an arbitrary 256-character
   cutoff. String-valued server scopes, malformed/non-finite values, other scalar
-  filters, and the wire payload retain their existing behavior; this does
-  not resolve DateTime snapshot precision.
+  filters, and the Decimal wire payload retain their existing behavior.
+  Native DateTime snapshots have the separate lossless rule above.
 
 - Route nested creates using one populated, unsaved parent instance with the
   included Django backend, then pin native parent and child writes to that

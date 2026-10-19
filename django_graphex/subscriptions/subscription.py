@@ -601,6 +601,7 @@ class Subscription(NativeObjectType):
             from django.db import models as _dj_models
             from graphql import GraphQLID as _GraphQLID
             from graphql import GraphQLList as _GraphQLList
+            from graphql import get_named_type
 
             from ..core.base import get_shared_output_registry
             from ..core.output_compiler import (
@@ -608,6 +609,7 @@ class Subscription(NativeObjectType):
                 _to_camel_case,
                 compile_output_fields,
             )
+            from ..core.scalars import GdxDateTime
             from ..registry import get_global_registry
 
             # 1) Scalars via the SHARED output registry — the SAME builder the
@@ -648,9 +650,12 @@ class Subscription(NativeObjectType):
             # ``to_representation`` serializes: concrete + M2M) and render every
             # RELATION as its DELIVERABLE pk shape, keyed by ``field.name`` (the
             # exact key the flat payload writes).
+            datetime_names: set[str] = set()
             for field in cls._meta.backend._output_fields():
                 name = field.name
                 wire = _to_camel_case(name)
+                if isinstance(field, _dj_models.DateTimeField):
+                    datetime_names.add(name)
                 if isinstance(field, _dj_models.ManyToManyField):
                     # M2M -> [pk scalar]; payload carries a list of pks under
                     # key ``field.name``.
@@ -682,7 +687,13 @@ class Subscription(NativeObjectType):
                 rewrapped[wire] = _GraphQLField(
                     field.type,
                     args=field.args,
-                    resolve=make_snake_resolver(snake),
+                    resolve=make_snake_resolver(
+                        snake,
+                        native_datetime=(
+                            snake in datetime_names
+                            and get_named_type(field.type) is GdxDateTime
+                        ),
+                    ),
                     description=field.description,
                     deprecation_reason=field.deprecation_reason,
                 )

@@ -71,9 +71,12 @@ needed to use the report.
   `tests/test_permission_relation_bypass.py`.
 - For finite typed subscription filters, `Decimal("1.0")` matches an
   event-time JSON-safe snapshot of `"1.00"`, including valid high-precision
-  model values. The match does not fetch a later row. DateTime microseconds,
-  delete-time snapshot semantics, and String-valued scopes are distinct
-  contracts. See `tests/subscriptions/test_decimal_snapshot_filter.py`.
+  model values. Native full-payload DateTime snapshots retain microseconds;
+  exact typed DateTime filters compare the captured instant, and the native
+  DateTime output field serializes it without fetching a later row. Id-only
+  delete visibility and Float generalization remain distinct policies. See
+  `tests/subscriptions/test_decimal_snapshot_filter.py` and
+  `tests/subscriptions/test_datetime_snapshots.py`.
 
 ### Mutations, transport, and cache
 
@@ -148,7 +151,7 @@ problems even when a nearby assertion is contradicted.
 | N4 | Every utility cache is request-scoped. | GFK target-type lookup uses process-global Django class metadata, not a fresh request cache. | Broader cache ownership remains subject to specific inspection. |
 | Q8 | Named mutation flag and other named methods are dead code. | `MUTATION_ERRORS_FLAG` is reached by a live view path, so a name-only dead-code search is insufficient. | Other alleged dead symbols remain unproved pending qualified caller and compatibility review. |
 | Q1 | Project dependency declarations mismatch on graphql-core. | `pyproject.toml`, `uv.lock`, `tox.ini`, and CI agree on 3.3; ambient 3.2.13 is unsupported stale local state. | Fresh CI and environment repair were unrun; broad environment cleanliness remains unproved. |
-| M-U3 | Finite Float subscription filters never match. | That blanket Float claim is **not verified**; the accepted numeric witness is Decimal `1.0` matching snapshot `1.00`. | Float generalization and DateTime/delete precision remain undecided; a broader match policy remains open. |
+| M-U3 | Finite Float subscription filters never match. | That blanket Float claim is **not verified**; the bounded numeric witness is Decimal `1.0` matching snapshot `1.00`; native full-snapshot DateTime has a separate exact-instant correction. | Float generalization remains open, as does id-only delete scope; no blanket scalar-match policy is implied. |
 
 SD1 and SD2 were **confirmed** scope boundaries, not false positives.
 The approved FK/reverse-FK/OneToOne/M2M automatic output and
@@ -219,7 +222,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | M-O2 | bounded-fixed | warm-hit lock split; no general concurrency guarantee. | Warm cache hit beside cold fill → hit need not wait for unrelated cold fill. | `tests/test_permission_cache_lock_split.py` |
 | M-U1 | partial | Real-ASGI startup now cleans a group joined before cancellation returns; the same failed-Source/same-channel retry works. Distributed-backend cleanup remains best-effort. | ASGI startup cancellation after group join → cleanup; same failed Source retry succeeds. | `tests/subscriptions/test_startup_cleanup.py` |
 | M-U2 | decision-deferred | delete visibility/scope policy; do not remove checks to force match. | Delete event with id-only scope → visibility policy remains undecided. | `docs/usage/subscriptions.md` |
-| M-U3 | partial | Finite Decimal exact filters compare numeric event snapshots, including 1.0 versus 1.00 and valid 257-character values; DateTime/delete precision policy remains open. | Decimal 1.0 event filter versus snapshot 1.00 → matches; DateTime policy open. | `tests/subscriptions/test_decimal_snapshot_filter.py` |
+| M-U3 | partial | Finite Decimal exact filters compare numeric event snapshots, including 1.0 versus 1.00 and valid 257-character values. Native full-snapshot DateTime equality and output are separately corrected; Float and id-only delete scope remain open. | Decimal 1.0 versus snapshot 1.00, and DateTime .123456 event versus exact typed instant → match. | `tests/subscriptions/test_decimal_snapshot_filter.py` |
 | M-U4 | contract | Automatic post-save/post-delete signals schedule commit-time sends, while bulk/update paths emit no model signals and manual binding broadcast is immediate; use a fresh post-commit instance when timing matters. | save() → after-commit send; bulk_update() → no signal; manual binding send → immediate. | `docs/usage/subscriptions.md` |
 | M-U5 | bounded-fixed | Native async directive formatting waits for resolver values and preserves borrowed Future ownership; synchronous HTTP still returns its controlled JSON 500 rather than gaining async support. | Async directive resolver → awaited; borrowed Future not cancelled by formatter. | `tests/test_async_directive_middleware.py` |
 | M-U6 | partial | The directive guide clarifies naive `@date` values in Django's active timezone and bounded case formatting; null/date/acronym transformations remain separate. | Naive @date value → active Django timezone, even when USE_TZ is false. | `docs/directives.md` |
@@ -287,7 +290,7 @@ because approving one does not silently approve another.
    Stable/model-routed same-alias nested rollback is not distributed
    atomicity.
 3. **Subscriptions and transport:** M-U2 id-only delete visibility and
-   non-PK scope, R02b DateTime snapshot precision/deletion, M-U3 Float
+   non-PK scope, R02b legacy truncated DateTime notification compatibility, M-U3 Float
    generalization, M-U4 bulk/M2M signal policy, L-S1 heartbeat/principal
    cap, L-S2 `connection_init` auth hook, and L-S3 empty offered
    subprotocol handshake/close code are distinct decisions. Same failed

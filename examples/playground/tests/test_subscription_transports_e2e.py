@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -42,7 +43,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 _POST_SUB_QUERY = (
-    "subscription { postSubscription(action: ALL_ACTIONS) { id title status } }"
+    "subscription { postSubscription(action: ALL_ACTIONS) { id title status created } }"
 )
 
 
@@ -164,7 +165,7 @@ async def test_ws_subscription_delivers_post_create(author: Author) -> None:
             status=Post.Status.PUBLISHED,
         )
 
-    await _create_post()
+    post = await _create_post()
 
     msg = await communicator.receive_json_from(timeout=3.0)
     assert msg["type"] == "next"
@@ -172,6 +173,7 @@ async def test_ws_subscription_delivers_post_create(author: Author) -> None:
     data = msg["payload"]["data"]["postSubscription"]
     assert data["title"] == "Live update"
     assert data["status"] == "PUBLISHED"
+    assert datetime.fromisoformat(data["created"]) == post.created
     assert msg["payload"].get("errors") in (None, [])
 
     await communicator.disconnect()
@@ -337,7 +339,7 @@ async def test_sse_subscription_delivers_post_create(author: Author) -> None:
             status=Post.Status.PUBLISHED,
         )
 
-    await _create_post()
+    post = await _create_post()
 
     aiter = _sse_frames(response).__aiter__()
     first = await asyncio.wait_for(aiter.__anext__(), timeout=3.0)
@@ -348,6 +350,7 @@ async def test_sse_subscription_delivers_post_create(author: Author) -> None:
     data = payload["data"]["postSubscription"]
     assert data["title"] == "SSE live update"
     assert data["status"] == "PUBLISHED"
+    assert datetime.fromisoformat(data["created"]) == post.created
     assert payload.get("errors") in (None, [])
 
     # Teardown: close the source so the generator's finally runs group_discard.
