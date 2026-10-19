@@ -909,6 +909,11 @@ The easiest way to try them is the built-in browser client at
 
 Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws`):
 
+Keep the `-s graphql-transport-ws` option: the server rejects a WebSocket
+handshake without that offered subprotocol before it can read
+`connection_init`. It logs the required offer, while a browser may report only
+a generic connection failure (the pre-accept rejection is normally HTTP 403).
+
 ```json
 → {"type": "connection_init"}
 ← {"type": "connection_ack"}

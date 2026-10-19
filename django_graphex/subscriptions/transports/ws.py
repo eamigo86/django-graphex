@@ -121,6 +121,7 @@ def _as_error(exc: BaseException) -> Any:
 
 # graphql-transport-ws close codes.
 _CODE_BAD_REQUEST = 4400
+_CODE_SUBPROTOCOL_NOT_ACCEPTABLE = 4406
 _CODE_UNAUTHORIZED = 4401
 _CODE_CONNECTION_INIT_TIMEOUT = 4408
 _CODE_SUBSCRIBER_ALREADY_EXISTS = 4409
@@ -308,16 +309,24 @@ def subscription_ws_consumer(
         """graphql-transport-ws consumer multiplexing N subscriptions per socket."""
 
         async def connect(self) -> None:
-            """Accept the socket on the graphql-transport-ws subprotocol.
+            """Negotiate graphql-transport-ws or reject before accepting.
 
-            The accept advertises the negotiated subprotocol. A
-            "connectionInitWaitTimeout" watchdog is armed: if no
-            "connection_init" arrives in time the socket is closed with 4408.
+            An absent offer is denied before registration or watchdog setup.
+            For accepted sockets, the connectionInitWaitTimeout watchdog
+            closes with 4408 when no connection_init arrives in time.
             """
             self._acked = False
             self._operations: dict[str, asyncio.Task] = {}
             self._sources: dict[str, "ChannelLayerSource"] = {}
             self._closing = False
+            if _SUBPROTOCOL not in self.scope.get("subprotocols", ()):
+                logger.warning(
+                    "WebSocket connection rejected: client must offer the "
+                    "'graphql-transport-ws' subprotocol."
+                )
+                await self.close(code=_CODE_SUBPROTOCOL_NOT_ACCEPTABLE)
+                return
+
             # Register so callers/tests can observe the live per-id registry.
             _LIVE_CONSUMERS[id(self.scope)] = self
 

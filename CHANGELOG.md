@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Reject subscription WebSocket handshakes before acceptance when the client
+  does not offer the exact `graphql-transport-ws` subprotocol. Accepted clients
+  may offer it among alternatives. The server logs an actionable diagnostic;
+  pre-accept rejection is normally HTTP 403 on the wire, so browsers may show
+  only a generic connection failure. Configure the client's subprotocol offer;
+  no authentication, SSE, or HTTP behavior changed.
+
 - Preserve microseconds in native full-payload subscription DateTime event
   snapshots. Typed exact DateTime filters now compare the captured instant,
   including equivalent aware offsets, and native DateTime event fields use the

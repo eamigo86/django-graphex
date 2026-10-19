@@ -28,12 +28,12 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 41,
+    "bounded-fixed": 42,
     "partial": 26,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 11,
+    "decision-deferred": 10,
 }
 
 
@@ -97,7 +97,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "41 does not mean 41 fully closed issues" in report
+    assert "42 does not mean 42 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
@@ -235,7 +235,6 @@ def test_examples_and_decision_queue_do_not_turn_boundaries_into_fixes() -> None
         "SD6",
         "M-D1",
         "L-C9",
-        "L-S3",
         "Q10",
     ):
         assert fragment in decisions

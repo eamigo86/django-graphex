@@ -639,8 +639,31 @@ Error surfacing splits at the moment the stream is committed:
 
 The consumer speaks
 [`graphql-transport-ws`](https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md) —
-your client must request that subprotocol when opening the socket. One socket
-multiplexes any number of operations, each identified by a client-chosen `id`:
+your client must offer that exact subprotocol when opening the socket. For a
+browser WebSocket client, pass it as the constructor's second argument:
+
+```javascript
+const socket = new WebSocket("wss://example.com/ws/graphql/", "graphql-transport-ws");
+```
+
+That selects the transport protocol; the client must still implement its
+`connection_init`, `subscribe`, and other message frames. A client offering
+other names as alternatives is accepted only if `graphql-transport-ws` is among
+them. With no matching offer, the server rejects the handshake **before**
+accepting the socket or starting subscription work and logs:
+
+```text
+WebSocket connection rejected: client must offer the 'graphql-transport-ws' subprotocol.
+```
+
+Configure the client's WebSocket subprotocol offer to resolve this error; a
+GraphQL `connection_init` frame cannot fix a failed handshake. The rejection
+uses ASGI close code `4406`, but a pre-accept close is normally sent on the
+wire as HTTP 403. Browser APIs may show only a generic connection error or
+`1006`, not the server log, a GraphQL JSON error, or a guaranteed `4406`/reason.
+
+Once connected, one socket multiplexes any number of operations, each
+identified by a client-chosen `id`:
 
 | # | Direction | Message |
 |---|-----------|---------|
