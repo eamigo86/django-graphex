@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Add optional async `on_connect(scope, payload)` authentication to the
+  subscription WebSocket consumer. An authenticated callback result replaces
+  the socket user before ACK, schema resolution, and permission checks;
+  malformed payloads close with `4400`, denied credentials with `4403`, and a
+  stalled callback with `4408`. Without the hook, existing session identity
+  and ignored initialization payloads are unchanged. Projects provide their
+  own credential verifier; HTTP, SSE, and persistent sessions are unchanged.
+
 - Reject subscription WebSocket handshakes before acceptance when the client
   does not offer the exact `graphql-transport-ws` subprotocol. Accepted clients
   may offer it among alternatives. The server logs an actionable diagnostic;

@@ -28,12 +28,12 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 42,
+    "bounded-fixed": 43,
     "partial": 26,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 10,
+    "decision-deferred": 9,
 }
 
 
@@ -97,7 +97,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "42 does not mean 42 fully closed issues" in report
+    assert "43 does not mean 43 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
@@ -134,6 +134,9 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert "MAX_REQUEST_BODY_SIZE" in rows["L-C5"][2]
     assert "DOCUMENT_CACHE_MAXSIZE" in rows["L-C5"][2]
     assert "negative" in rows["L-C5"][3] and "zero" in rows["L-C5"][3]
+    assert rows["L-S2"][1] == "bounded-fixed"
+    assert "optional" in rows["L-S2"][2]
+    assert "session fallback" in rows["L-S2"][2]
 
 
 def test_registry_and_factory_examples_state_the_actual_unit() -> None:
@@ -226,6 +229,7 @@ def test_examples_and_decision_queue_do_not_turn_boundaries_into_fixes() -> None
     ):
         assert fragment in examples
     decisions = _section(report, "Decisions still required")
+    assert "L-S2 `connection_init` auth hook remain distinct decisions" not in decisions
     for fragment in (
         "R02b",
         "R05c",

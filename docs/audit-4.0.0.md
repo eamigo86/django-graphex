@@ -12,14 +12,14 @@ below describe bounded evidence, not universal guarantees.
 
 | Outcome | IDs | Meaning |
 |---|---:|---|
-| Bounded fix | 42 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
+| Bounded fix | 43 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
 | Partial or residual | 26 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
 | Contract or premise clarification | 9 | The reported expectation differs from the documented/current contract; no blanket runtime fix is implied. |
 | Recommendation | 7 | Maintainability or coverage work, not seven extra runtime bugs. |
 | Limited negative check | 6 | A proposed reassuring claim has only bounded evidence or is imprecisely worded; these are not six fixes. |
-| Decision deferred | 10 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
+| Decision deferred | 9 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
 
-Thus **42 does not mean 42 fully closed issues**. The 26 partial rows contain
+Thus **43 does not mean 43 fully closed issues**. The 26 partial rows contain
 additional decisions, and accepted work units do not automatically close their
 parent areas. This report preserves the report's IDs and order exactly once in
 the primary table. The status is the *primary disposition* of a multi-part ID,
@@ -249,7 +249,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | L-M3 | partial | A direct GraphQLSchema enum-cache race was corrected; public exposure was not established. | Two threads request same enum compilation → one protected cache creation. | `tests/core/test_enum_cache_concurrency.py` |
 | L-M4 | partial | A direct GraphQLSchema list-creation race was corrected; public exposure was not established. | Two threads request same list construction → one protected registry creation. | `tests/core/test_registry_creation_concurrency.py` |
 | L-S1 | decision-deferred | heartbeat/per-principal caps are absent-feature/product policy, not an existing behavioral contract. | Idle SSE stream without heartbeat → no new heartbeat or per-principal cap added. | `docs/usage/subscriptions.md` |
-| L-S2 | decision-deferred | connection_init/token on_connect hook is new authentication/protocol policy, not an established contract. | connection_init token → no new on_connect authentication hook added. | `docs/usage/subscriptions.md` |
+| L-S2 | bounded-fixed | An optional async on_connect callback can authenticate the connection_init payload before ACK and replace the socket user for schema and permission checks. Missing, anonymous, or invalid credentials close generically without session fallback; no hook preserves the former scope-user behavior. JWT verification, session persistence, HTTP/SSE authentication, and mid-socket refresh remain outside this fix. | Authenticated token callback → ACK and one effective user; rejected token → close 4403 without ACK or subscription. | `tests/subscriptions/test_ws_on_connect.py` |
 | L-S3 | bounded-fixed | The approved WebSocket guard rejects a missing, empty, or wrong-only subprotocol offer before acceptance; the required offer may appear among alternatives. The server logs the required protocol. Pre-accept rejection is normally wire HTTP 403, not a guaranteed browser-visible close code or GraphQL error. Broader subscription policies remain open. | Real-ASGI empty/missing/wrong-only offers → rejected before registry/watchdog; exact offer among alternatives → accepted. | `tests/subscriptions/test_ws_subprotocol.py` |
 | L-S4 | bounded-fixed | WS operation cleanup and slot release precede the server `complete` frame, so immediate same-ID reuse is not mistaken for a duplicate; other lifecycle cases remain. | WS operation completes then reuses same ID → slot released before complete frame. | `tests/subscriptions/test_ws_completion_reuse.py` |
 | Q1 | contract | pyproject/uv/tox/CI require graphql-core 3.3 consistently; root 3.2.13 is stale unsupported env, not refreshed; no tox config mismatch. | pyproject/uv/tox/CI require core 3.3 → ambient 3.2.13 remains unsupported. | `tests/test_tox_dependency_contract.py` |
@@ -292,7 +292,9 @@ because approving one does not silently approve another.
 3. **Subscriptions and transport:** M-U2 id-only delete visibility and
    non-PK scope, R02b legacy truncated DateTime notification compatibility, M-U3 Float
    generalization, M-U4 bulk/M2M signal policy, L-S1 heartbeat/principal
-   cap and L-S2 `connection_init` auth hook remain distinct decisions. Same
+   cap remain distinct decisions. The optional L-S2 `connection_init` hook is
+   now available, but credential verification and refresh are application
+   responsibilities. Same
    failed Source retry was corrected, but backend cleanup remains best-effort.
 4. **HTTP, cache, and resource limits:** A2 retained AST/cache bytes and
    aggregate memory, A11 aggregate response quota, M-S2 other defaults and

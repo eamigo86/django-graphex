@@ -913,6 +913,11 @@ Keep the `-s graphql-transport-ws` option: the server rejects a WebSocket
 handshake without that offered subprotocol before it can read
 `connection_init`. It logs the required offer, while a browser may report only
 a generic connection failure (the pre-accept rejection is normally HTTP 403).
+This Playground deliberately uses the default session-based consumer: it does
+not configure the optional `on_connect` credential hook. Its empty
+`connection_init` payload remains valid. Applications that opt in to that hook
+must provide their own token verifier and send the corresponding initialization
+payload; a denied callback closes the accepted socket with `4403`.
 
 ```json
 → {"type": "connection_init"}

@@ -845,9 +845,13 @@ to the worker, but event-loop thread-local state is not a portable contract.
     - **A labeled schema** — the pruner needs the `DjangoGraphQLSchema` labels,
       same as the HTTP endpoint.
     - **A real user on the connection** — SSE reads `request.user`; WebSocket
-      reads `scope["user"]`, so the WS routing MUST be wrapped in Channels'
-      `AuthMiddlewareStack` (or an equivalent that populates `scope["user"]`).
-      Otherwise the provider sees `AnonymousUser`.
+      reads `scope["user"]`. For session authentication, wrap WS routing in
+      Channels' `AuthMiddlewareStack` (or an equivalent). Alternatively, pass
+      an async `on_connect(scope, payload)` callback to
+      `subscription_ws_consumer`; its authenticated return value replaces the
+      scope user before ACK and schema resolution. An invalid callback result
+      never falls back to a different session user. Without either source of
+      identity, the provider sees `AnonymousUser`.
 
 !!! note "Per-socket resolution and staleness"
 

@@ -11,10 +11,12 @@ Protocol (graphql-transport-ws, primary subprotocol only; the legacy
 "graphql-ws" shim is DEFERRED):
 
   * Handshake — "connection_init" -> "connection_ack". The "connection_init"
-    IS the auth boundary: the authenticated socket carries the user in
-    "self.scope['user']" (no detached per-operation token). The server waits at
-    most "init_timeout" seconds ("connectionInitWaitTimeout") for the first
-    "connection_init"; on timeout it closes with 4408. A SECOND
+    IS the auth boundary: by default, the authenticated socket carries the user
+    in "self.scope['user']" and ignores the initialization payload. An optional
+    "on_connect" callback can verify that payload and replace the scope user
+    before acknowledgement. The server waits at most "init_timeout" seconds
+    ("connectionInitWaitTimeout") for authentication to complete; on timeout it
+    closes with 4408. A SECOND
     "connection_init" closes with 4429 (Too many initialisation requests). A
     "subscribe" BEFORE the ack closes with 4401 (Unauthorized).
   * Operations — each "subscribe{id, payload:{query, variables, operationName}}"
@@ -68,6 +70,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
@@ -90,7 +93,7 @@ from . import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Callable, Mapping
+    from collections.abc import Awaitable, Callable
 
     from graphql import DocumentNode, GraphQLSchema
 
@@ -121,6 +124,7 @@ def _as_error(exc: BaseException) -> Any:
 
 # graphql-transport-ws close codes.
 _CODE_BAD_REQUEST = 4400
+_CODE_FORBIDDEN = 4403
 _CODE_SUBPROTOCOL_NOT_ACCEPTABLE = 4406
 _CODE_UNAUTHORIZED = 4401
 _CODE_CONNECTION_INIT_TIMEOUT = 4408
@@ -262,6 +266,7 @@ def subscription_ws_consumer(
     schema: "GraphQLSchema | None" = None,
     schema_provider: "Callable[[Any], GraphQLSchema] | None" = None,
     init_timeout: float | None = None,
+    on_connect: "Callable[[Mapping[str, Any], Mapping[str, Any]], Awaitable[Any]] | None" = None,
 ) -> type:
     """Build the graphql-transport-ws consumer class bound to "schema".
 
@@ -286,6 +291,10 @@ def subscription_ws_consumer(
             closing with 4408. "None" reads
             "graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT"
             (default 3.0). A test may pass a tiny value to avoid waiting.
+        on_connect: Optional async credential callback invoked with the Channels
+            scope and initialization payload. Its authenticated user replaces
+            the scope user for this socket. Without it, initialization retains
+            its existing behavior, including ignored payloads.
 
     Returns:
         A Channels consumer class (an "AsyncJsonWebsocketConsumer" subclass).
@@ -319,6 +328,7 @@ def subscription_ws_consumer(
             self._operations: dict[str, asyncio.Task] = {}
             self._sources: dict[str, "ChannelLayerSource"] = {}
             self._closing = False
+            self._init_task: asyncio.Task[None] | None = None
             if _SUBPROTOCOL not in self.scope.get("subprotocols", ()):
                 logger.warning(
                     "WebSocket connection rejected: client must offer the "
@@ -396,7 +406,7 @@ def subscription_ws_consumer(
 
             msg_type = content.get("type")
             if msg_type == "connection_init":
-                await self._on_connection_init()
+                await self._on_connection_init(content)
             elif msg_type == "ping":
                 await self._on_ping(content)
             elif msg_type == "pong":
@@ -410,14 +420,72 @@ def subscription_ws_consumer(
                 # Unknown / unsupported message type.
                 await self._close(_CODE_BAD_REQUEST)
 
-        async def _on_connection_init(self) -> None:
-            """Answer the first "connection_init" with "connection_ack".
+        async def _on_connection_init(
+            self, content: dict[str, Any] | None = None
+        ) -> None:
+            """Authenticate, when configured, before the first acknowledgement.
 
             A SECOND "connection_init" is a protocol violation -> 4429.
+
+            Args:
+                content: The decoded initialization frame. The default path
+                    ignores its payload as it always has.
             """
-            if self._acked:
+            if self._acked or (on_connect is not None and self._init_task is not None):
                 await self._close(_CODE_TOO_MANY_INIT_REQUESTS)
                 return
+            if on_connect is not None:
+                payload = (content or {}).get("payload")
+                if payload is None:
+                    payload = {}
+                if not isinstance(payload, Mapping):
+                    await self._close(_CODE_BAD_REQUEST)
+                    return
+                self._init_task = asyncio.create_task(
+                    self._authenticate_connection(payload)
+                )
+                self._init_task.add_done_callback(self._on_init_done)
+                return
+            self._acked = True
+            timer = getattr(self, "_init_timer", None)
+            if timer is not None and not timer.done():
+                timer.cancel()
+            await self.send_json({"type": "connection_ack"})
+
+        def _on_init_done(self, task: asyncio.Task[None]) -> None:
+            """Retrieve terminal task errors without revealing credentials.
+
+            Args:
+                task: The completed authentication task.
+            """
+            if not task.cancelled():
+                task.exception()
+
+        async def _authenticate_connection(self, payload: Mapping[str, Any]) -> None:
+            """Apply the callback's authoritative user before acknowledging.
+
+            Args:
+                payload: The normalized initialization payload.
+
+            Raises:
+                asyncio.CancelledError: When the socket closes or times out.
+            """
+            callback = on_connect
+            if callback is None:
+                return
+            try:
+                user = await callback(self.scope, payload)
+                authorized = bool(getattr(user, "is_authenticated", False))
+            except Exception:  # noqa: BLE001 - credential failures are opaque
+                authorized = False
+                user = None
+            if self._closing:
+                return
+            if not authorized:
+                logger.warning("WebSocket connection authentication failed.")
+                await self._close(_CODE_FORBIDDEN)
+                return
+            self.scope["user"] = user
             self._acked = True
             timer = getattr(self, "_init_timer", None)
             if timer is not None and not timer.done():
@@ -826,6 +894,9 @@ def subscription_ws_consumer(
             timer = getattr(self, "_init_timer", None)
             if timer is not None and not timer.done():
                 timer.cancel()
+            init_task = getattr(self, "_init_task", None)
+            if init_task is not None and not init_task.done():
+                init_task.cancel()
             for op_id in list(self._operations):
                 await self._cancel_operation(op_id)
             # Defensive sweep: any source whose task was already gone but whose
@@ -875,6 +946,17 @@ def subscription_ws_consumer(
             if self._closing:
                 return
             self._closing = True
+            current = asyncio.current_task()
+            timer = getattr(self, "_init_timer", None)
+            if timer is not None and timer is not current and not timer.done():
+                timer.cancel()
+            init_task = getattr(self, "_init_task", None)
+            if (
+                init_task is not None
+                and init_task is not current
+                and not init_task.done()
+            ):
+                init_task.cancel()
             # Active teardown BEFORE delegating to the server: cancel every
             # operation task + group_discard its groups (mirrors disconnect).
             for op_id in list(self._operations):

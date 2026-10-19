@@ -662,12 +662,69 @@ uses ASGI close code `4406`, but a pre-accept close is normally sent on the
 wire as HTTP 403. Browser APIs may show only a generic connection error or
 `1006`, not the server log, a GraphQL JSON error, or a guaranteed `4406`/reason.
 
+#### Optional connection authentication
+
+By default, `connection_init` ignores its payload and uses the user supplied by
+Channels middleware in `scope["user"]`. Existing session-based clients, including
+the Playground, need no change. To authenticate an initialization credential,
+opt in with an **async** `on_connect(scope, payload)` callback:
+
+```python
+from collections.abc import Mapping
+from typing import Any
+
+from django.contrib.auth.base_user import AbstractBaseUser
+
+from django_graphex.subscriptions.transports.ws import subscription_ws_consumer
+from myapp.auth import verify_token  # Project-defined async credential verifier.
+from myapp.schema import schema
+
+async def authenticate_socket(
+    scope: Mapping[str, Any], payload: Mapping[str, Any]
+) -> AbstractBaseUser | None:
+    """Authenticate the socket through the project's credential service.
+
+    Args:
+        scope: The Channels connection scope, including any session identity.
+        payload: The normalized initialization payload containing credentials.
+
+    Returns:
+        The authenticated user for this socket, or None for rejected credentials.
+    """
+    token = payload.get("token")
+    # The project-defined async verifier may also raise for invalid credentials.
+    return await verify_token(token)
+
+consumer = subscription_ws_consumer(
+    schema=schema.graphql_schema,
+    on_connect=authenticate_socket,
+)
+```
+
+The client sends `{"type": "connection_init", "payload": {"token": "…"}}`
+after opening the socket with the `graphql-transport-ws` subprotocol. The
+callback runs before `connection_ack`, schema resolution, or subscription work.
+Its returned authenticated user replaces any session user **for this socket**;
+both permission checks and `schema_provider` see that one identity. It does not
+log a Django session in or alter HTTP/SSE authentication. The application owns
+credential format, verification, expiry, and reconnect behavior; the transport
+does not supply JWT validation or mid-connection refresh.
+
+With a callback, an absent or null payload becomes `{}`, while a non-object
+payload closes the already accepted socket with `4400` before callback
+invocation. Missing, anonymous, or rejected user credentials close with `4403`
+and a generic server diagnostic; no ACK, schema resolution, or fallback to a
+previous session identity occurs. The initialization deadline remains active
+while the callback runs: a stalled callback closes with `4408`; a second
+`connection_init` closes with `4429`, and a `subscribe` before ACK with `4401`.
+Do not place tokens in client-visible errors or application logs.
+
 Once connected, one socket multiplexes any number of operations, each
 identified by a client-chosen `id`:
 
 | # | Direction | Message |
 |---|-----------|---------|
-| 1 | client → server | `{"type": "connection_init"}` — must be the first message (the auth boundary) |
+| 1 | client → server | `{"type": "connection_init"}` — default scope-user auth, or optional `on_connect` payload verification |
 | 2 | server → client | `{"type": "connection_ack"}` |
 | 3 | client → server | `{"type": "subscribe", "id": "1", "payload": {"query": "subscription { … }"}}` |
 | 4 | server → client | `{"type": "next", "id": "1", "payload": {"data": {…}}}` — one frame per delivered event |
@@ -1067,7 +1124,9 @@ setting) was removed. Authentication is now the transport's own request/scope:
 - **SSE** authenticates the **HTTP request** (`request.user` / session /
   middleware) before the engine joins any group.
 - **WebSocket** authenticates the **connection scope** at `connection_init`
-  (the auth boundary) before any subscription is accepted.
+  (the auth boundary) before any subscription is accepted. An optional
+  `on_connect` callback can replace that user after validating the init
+  payload; no callback preserves the existing session behavior.
 
 The subscription's `authorize_subscription` / `permission_classes` hooks run
 **before** any `group_add`, so a denial short-circuits before the source is
