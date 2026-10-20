@@ -26,11 +26,11 @@ Verify all supplied audit claims on the supported runtime, fix demonstrated defe
 
 **BP-LS2-ONCONNECT-001** (approval22923/proposal22915): optional async `on_connect(scope,payload)` returns this socket's authoritative authenticated user before ACK/schema/subscribe; no fallback to old session on rejection. Missing/null payload→{}, malformed configured payload4400, denial/no-user/exception4403 generically, deadline retained. Default None unchanged. No JWT/backend/dependency, HTTP/SSE, persisted session or live refresh/reauth policy change.
 
-**BP-LS1-SSE-CONTROLS-001** (human23051/proposal23038): independently opt-in SSE heartbeat and authenticated-account cap, both OFF; separate enabled=False settings and values15seconds/5. Idle comments, shared atomic renewable Redis leases, sixth429 before source, unavailable admission503, anonymous unchanged/noIPbucket. Optional dependency/lifecycle/crash limits documented; no WS/auth/default policy change.
+**BP-LS1-SSE-CONTROLS-001** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
 
-**L-S1 live validation authority** (human23232): only disposable local official Redis/client downloads and owned private service; no existing project env/ambient credentials/services/DB/canonical changes. Prior unresolved live gate may be tested now, not treated as passed. Retain full prior wording at `ls1-live-redis-preparation/tracker-preedit.md` (48,988B; SHA256 `f727e381cb17b828845fcb32ae51aa5b06efdf5b1b68016a259cff038cbb0bc5`).
+**L-S1 live validation authority** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
 
-**L-S1 local delivery** (human23303): 2,346-line local-only size exception; no PR/push/tag/publication. Exact pre-close history: `ls1-live-redis-closeout/local-commit/tracker-precommit.md` (49,442B; SHA256 `fc65aeb1b13a50cf64f01bf7b1aeef92b37553505bc53902c482b06091b50e6a`).
+**L-S1 local delivery** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
 
 **Quality:** Hint changed/public signatures; Google Args/Returns/Raises, no repeated types/backticks. Tests/docs/changelog with behavior. Pure branch, combined, nonempty patch coverage each >=95.01%; patch otherwise N/A. No exclusion/skip/padding/addopts reset. Check Ruff/format/mypy/docstrings/docs/focal/full/diff; report all failures/skips. No artifact build.
 
@@ -49,7 +49,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 
 | Task | Route | Outcome and acceptance evidence | State |
 |---|---|---|---|
-| T00 | D, bootstrap | Record complete report traceability, local branch/runtime constraints and proof; mirror full file in Engram; tracking-only conventional commit. Structural readback only; runtime test N/A because no runtime/source behavior changed. | [x] |
+| T00 | D, bootstrap | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | T01 | D | Q2 scoped completion; archive. | [x] |
 | T02a | D | C3 scoped completion; archive. | [x] |
 | T02b | D | C2 scoped completion; refs 92b1358f,7bec9571; archive. | [x] |
@@ -117,7 +117,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | T14d | D, accepted19885 | M-T1 scoped completion; archive. | [x] |
 | T14e | D, accepted20126 | L-C12/N6 scoped completion; refs c8bb0dd; archive. | [x] |
 | T14f | D, accepted20271; human20198 | L-E1/N6 scoped completion; refs 0c5e320; archive. | [x] |
-| T14g | D; human20732/root20769; accepted20835 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
+| T14g | D; human20732/root20769; accepted20835 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | T14h | D; human20843; accepted20879 | L-M3 scoped completion; old RED/setup failures and public-schema gap retained; refs 14720eab,4f5161a,15845,13078; archive. | [x] |
 | T14i | D; human20887/root20919; accepted20982 | L-M4 scoped completion; old witness failures and public-schema gap retained; refs 13b2e6b4,15857,13078; archive. | [x] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
@@ -134,43 +134,43 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | T17 | D | Complete independent disposition of every ledger ID, verify section-9 negative claims, run full quality/coverage gates, list all final false positives with evidence and reasons, and report remaining design decisions or unavailable checks. | [ ] |
 
 | R01 | D; human21002; unchecked | L-S4/R01a, M-U1/R01b, L-S3/R01c, optional L-S2/R01d and approved single-instance L-S1/R01e accepted in bounded scopes. Broader WS/SSE/HA policies and T08 remain open. | [ ] |
-| R01a | D; human21002; accepted21102 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R01b | D; human21002; accepted21184 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R01c-I | D; approval22823; accepted22902; ef598a7 | L-S3 exact-offer guard/tests/docs accepted. Full scope, TDD/coverage and historical proof qualifications preserved in the L-S2 pre-edit archive below. | [x] |
-| R01c-V | D; accepted22902 | Independent10/root1; full5777/7skip/10warn, branches4313/4518, combined16055/16446, patches5/5 and1588/1618. Exact checks, initial failures, provenance gaps and UNKNOWNs: L-S2 pre-edit archive. | [x] |
-| R01c-C | Inline; accepted22902; ef598a7/33885c0 | Eight functional bytes/modes and finite controls matched post-commit; no full rerun. Exact identities/rollback/proofs/limits: L-S2 pre-edit archive. | [x] |
+| R01a | D; human21002; accepted21102 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01b | D; human21002; accepted21184 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01c-I | D; approval22823; accepted22902; ef598a7 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01c-V | D; accepted22902 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01c-C | Inline; accepted22902; ef598a7/33885c0 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R02 | D; human21002; unchecked | Subscription data delivery M-U2/M-U3/M-U4: separate contract, real-path witnesses, then compatible scoped work units. | [ ] |
-| R02a | D; human21002; accepted21577 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R02b | D; accepted22668;33ff878/08c9725 | Native DateTime precision/equality/output only. Exact tests/coverage, proof gaps, failures and UNKNOWNs preserved in the L-S2 pre-edit archive; no wider scalar/audit closure. | [x] |
+| R02a | D; human21002; accepted21577 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R02b | D; accepted22668;33ff878/08c9725 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R03 | D; human21002; unchecked | Directives/scalars: M-U5/M-U6, M-D4/M-D5/M-D6, L-C10/L-C11/L-C13; preserve established SDL/input contracts or defer incompatible policy. | [ ] |
-| R03a | D; human21002; accepted21311 | Nativeasyncdirective correction finald1b7622/lazy031299c; eagerc610b leakedownedwork and NOTaccepted. BorrowedFuture ownership/HTTPJSON500/noasyncHTTP preserved. Original91ignoredreportpreimages UNKNOWN. Fullproof/failedhistory/limits in M2M output preparation preimage and obs21311; wider R03 open. | [x] |
+| R03a | D; human21002; accepted21311 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R04 | D; human21002; unchecked | Minor HTTP/pagination/cursor L-C1–6/L-C8/L-C9 and A13 residual; distinguish accepted bounded slices from remaining malformed-input cases. | [ ] |
 | R05 | D; human21002/22248; unchecked | Mutations A1/M-D1/M-D2/A10 residuals; R05c populated-parent singlealiasCREATE approved for includedDjango only. Other ok:false/lost-update/crossDB/custombackend policy gaps remain. | [ ] |
-| R05a | D; human21002; accepted21526 | M-D2 save/delete signal alias only `bf1163e`; TDD4, independent21521/root15 PASS; full5603/7skip/10warn, patch8/8. R05b/cross-DB separate. Exact warning-control chronology, failures/UNKNOWNs: `r05b-routed-nested-atomic/tracker-preedit.md` SHA `229d1488`, `r05a-routed-subscription-commit/`. | [x] |
-| R05b | D; human21002; accepted21547 scoped | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R05c | D; human22248/22326/22349; accepted22414 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
+| R05a | D; human21002; accepted21526 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R05b | D; human21002; accepted21547 scoped | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R05c | D; human22248/22326/22349; accepted22414 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R06 | D; human21002/21642/21718/21820/21939/22033/22081/22151 | R06a–g accepted bounded outputs/filters. Custom/global policy, L-E3 beyond SITE-B and L-C12 MTI deferred/unproven. | [ ] |
-| R06a | D; human21642; accepted21711; BP-SD1-READ-SCOPE-001 | 73a85ab: automatic FK/reverse-FK outputs. Exact TDD/full/coverage/accessor correction/failed attempts/UNKNOWNs/exclusions in M2M output preparation preimage and obs21711. | [x] |
-| R06b | D; human21718; accepted21796; BP-SD2-FK-FILTER-001 | 603a117: forward-FK filters/IDs/NULL/Boolean. Exact TDD/full5662/coverage, rejected empty/NOT candidate, failures/UNKNOWNs/exclusions retained in OneToOne output preparation preimage and obs21796. | [x] |
-| R06c | D; human21820; accepted21929; BP-SD2-REVERSE-FK-FILTER-001 | 98ee545: reverse-FK witnesses/IDs/Boolean/null/A12/projection. Full5681/7skip/10warn; unit65/67/cumulative1444/1471. Exact TDD/coverage/nested-NULL correction/docs/failed attempts/UNKNOWNs/exclusions in OneToOne output preparation preimage and obs21929. | [x] |
-| R06d | D; human21939; accepted21993; BP-SD2-M2M-FILTER-001 | 39dc696/8ab9ada: declared/reverse M2M visible-target filter scope/IDs/A12. Full5704/7skip/10warn; unit43/45/cumulative1485/1514. Exact TDD/freshness/failed attempts/ignored7DOC002/UNKNOWNs/exclusions and postcommit proof in OneToOne output preparation preimage, obs21993/22006. | [x] |
-| R06e | D; human22033; accepted22059; BP-SD2-FORWARD-O2O-FILTER-001 | 0f64533/0665c24: forward OneToOne FIELDfilters/IDs/NULL/reverse. Exact TDD/full5710/coverage/freshness/failures/UNKNOWNs and postcommit parity in M2M output preparation preimage, obs22059/22079. | [x] |
-| R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R06g | D; accepted22219;0ee46b9/4cbb458 | Scoped automatic M2M members/counts only. Alias correction, TDD/coverage, failed history and UNKNOWNs preserved in L-S2 pre-edit archive. | [x] |
+| R06a | D; human21642; accepted21711; BP-SD1-READ-SCOPE-001 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R06b | D; human21718; accepted21796; BP-SD2-FK-FILTER-001 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R06c | D; human21820; accepted21929; BP-SD2-REVERSE-FK-FILTER-001 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R06d | D; human21939; accepted21993; BP-SD2-M2M-FILTER-001 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R06e | D; human22033; accepted22059; BP-SD2-FORWARD-O2O-FILTER-001 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R06g | D; accepted22219;0ee46b9/4cbb458 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
 | R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader SDL/input shapes; verify separately from accepted L-M2–4 internal fixes. | [ ] |
-| R08a | D; human21002; accepted21363 | Warning-only M-D10 at7a1dfe3/e9a9477; SDL/coercion/rawdicts unchanged, no shapeconversion. Initial independent21357 helper/global-input PARTIAL remains despitefunctionalPASS. Exact TDD/full/coverage/root32/limits in M2M output preparation preimage and obs21363; wider claim open. | [x] |
+| R08a | D; human21002; accepted21363 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
-| R09a | D; human21002; accepted21497 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R09b | D; approved22685; accepted22777; f931cb9/e740fb6 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R09c | D; human21002; accepted21591 | Q3 test-owned upload/spool hygiene only e1f29e9; no production leak/ResourceWarning claim. Exact TDD/checks/failures/UNKNOWNs: reverse-filter preparation preimage, obs21591, `q3-upload-resource-ownership/`. Q3/T16/N6/audit open. | [x] |
+| R09a | D; human21002; accepted21497 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R09b | D; approved22685; accepted22777; f931cb9/e740fb6 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R09c | D; human21002; accepted21591 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R10 | D; human21002; unchecked | Recommendation/negative-proof Q5–10, P1 and N1–5; classify evidence and reasons, not automatic code changes. | [ ] |
-| R10a | D; human21002; accepted21610 | Current-boundary docs at5eb905d after rejected73b8f4e; docs-only, no runtime policy. Exact correction TDD/checks/reused full/failed attempts/UNKNOWNs: reverse-filter preparation preimage, obs21610, `r10a-cache-miss-correction/`. | [x] |
-| R11 | D writer/verification, inline tracking; accepted21639; HISTORY_PARTIAL | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
+| R10a | D; human21002; accepted21610 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R11 | D writer/verification, inline tracking; accepted21639; HISTORY_PARTIAL | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 
-| R01d-I | D; approved22923/22957; accepted23010;98956fa | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R01d-V | D; accepted23010 | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
-| R01d-C | Inline; accepted23010;98956fa | Accepted bounded slice only; exact scope, checks, commits, failures/provenance/UNKNOWN qualifications retained byte-for-byte in L-S1 pre-edit archive below. No broader closure. | [x] |
+| R01d-I | D; approved22923/22957; accepted23010;98956fa | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01d-V | D; accepted23010 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01d-C | Inline; accepted23010;98956fa | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 
 **L-S2 pre-edit archive:** `ls2-on-connect-preparation/tracker-preedit.md` preserves the exact49,554-byte prior tracker (SHA256 `9360137064090d9edf454e11599a4969a019a2dc1a9d6fb4706238bdfc783220`), including every shortened R01c/R09b acceptance qualification and historical archive chain. Lossless locators keep the complete mirror below50,000 bytes; no scope/history is revoked or broadened.
 
@@ -325,15 +325,27 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **L-S1 pre-edit archive:** `ls1-sse-controls-preparation/tracker-preedit.md` (49,872B; SHA256 `9137aad354de300ba849e4aa611e9b78ad2316fe2da918ef3ee1cdd1046edc41`) preserves every shortened accepted task row (T14g, R01a, R01b, R02a, R05b, R05c, R06f, R09a, R09b, R11, R01d-I, R01d-V, R01d-C), all approvals, exact proof/commit/rollback scopes, historical failures and UNKNOWNs. No scope or acceptance change.
 
-| R01e-I | D; human23051/23232; accepted23298;7ec2264 | OFF/15s/5 SSE controls/shared leases, docs/changelogs/Playground and real-Redis suite delivered. F1–F3 permanent RED/GREEN corrected; live10/eight-process5grants3refusals PASS. Single-instance scope only. | [x] |
-| R01e-V | D, independent + parent; accepted23298 | Bound full5825/7skip/10warn EXCLUDES separatelive10; independent/parent live10PASS. Branch4396/4604, combined16387/16777, unit201/202, cumulative1838/1871; contract9/quality/docs/Playground17/strictdocstrings0 PASS. No HA/partition guarantee. | [x] |
-| R01e-C | Inline; human23303 local size exception;7ec2264 | 16paths/2,346authoredlines committed locally; verified disk/modes/staged+committedblob parity. `ls1-live-redis-closeout/local-commit/feature-postcommit-parity.json` SHA4ebf8223…. Full tracker/mirror readback; no PR/push/tag/publication. | [x] |
+| R01e-I | D; human23051/23232; accepted23298;7ec2264 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01e-V | D, independent + parent; accepted23298 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+| R01e-C | Inline; human23303 local size exception;7ec2264 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
+
+**M-U2 pre-edit archive:** `mu2-delete-preparation/tracker-preedit.md` (49,798B; SHA256 `b94a205412107a67e434ebe8152f890dfa862924afd4d7e5aef90572e19bcab4`) preserves exact previous tracker, shortened rows, approvals/proof/failures/UNKNOWNs. Earlier preparation capacity assertions (51,365B/50,651B) aborted before tracker writes; no acceptance changed. Relative external locators use existing audit proof root.
+
+**BP-MU2-DELETE-MATCH-001** (human23326): private immutable signal-time projected scalar values verify DELETE plain equality separately from public id_only data; server scope wins, missing/unsupported/unverifiable filters fail closed. No lookup interpreter/output widening/non-delete policy change. Native13-case witness: `mu2-delete-investigation/witness-20261019/REPORT.md` SHA9a8cc40d…. Strict TDD/docs/branch+combined+nonempty unit/cumulative diff>=95.01%; baseline1d26aa6/cumulative5a155a0.
+
+| R02c-I | D writer; human23326; accepted23371 | Private projected scalar DELETE matching, unchanged public PK-only data, server scope and conservative unsupported/missing/deferred handling. Corrected deferred-instance regression and Meta table; RED/GREEN with historical proof qualifications below. | [x] |
+| R02c-V | D independent + parent; accepted23371 | Full5849/7skip/10warn; branches4414/4622, combined16437/16827; unit34/34+18/18, direct cumulative1871/1904+837/862. Quality/docs/Playground/static benchmark PASS; parent24PASS/protected parity. Exact proof below. | [x] |
+| R02c-C | Inline; human23374 local size exception;1ee78e2 | Approved474-line/10path behavior/tests/docs committed locally with exact disk/staged/Git blob and mode parity. Tracker/full mirror synchronized; closeout proof in `mu2-delete-local-commit/`. No PR/push/tag/publication; RDD OFF. | [x] |
+
+**M-U2 final proof:** accepted23371; independent `mu2-delete-independent/CORRECTION/REPORT.md` SHA256 `51e7b4657e1c5b9dfcfa6cd91065c6daa638dd06e00a4373eabc6f1c65256ace`; clarification23367 confirms current required checks PASS. Parent24PASS USED. Exact coverage/TDD/preimages/retrospective replay/failures and historical UNKNOWNs remain byte-for-byte in `mu2-delete-local-commit/tracker-before-closure.md` (49,825B; SHA `2bc2f147a267864a9d604211c856749625d0278047eb8455b6156e142a32d832`). Original first-RED bytes/full preimages remain UNKNOWN, not repaired by later passes. No full rerun after identical-byte commit. Feature parity `feature-postcommit-parity.json` SHA `66024497e9f7abfdbe9e8a5bf29854ca721f0ac3eb760f9522108111d1769373` in that proof directory.
+
+**M-U2 local delivery** (human23374): size:exception474 authored lines/10functional paths, local commits only. Pre-close tracker/protected controls and original preflight ref delta are retained in `mu2-delete-local-commit/`; no release authority.
 
 ## Progress and next action
 
 **Recovery:** Complete pre-compaction/acceptance history is byte-for-byte in the R02a pre-edit archive above. Earlier locators and full hashes remain there, including R03a, R01b, retry correction, R01a, initial remaining-pass and T14i preimages; no history or qualification is discarded.
 
-**Next:** L-S1/R01e closed locally at `7ec2264`;98checked work rows (not98bugs),15principal areas OPEN. Closure revision/parity: `ls1-live-redis-closeout/local-commit/`. Final independent proof `ls1-live-redis-independent/DOC_SYNC/VERIFICATION_REPORT.md` SHA265608b2…; ROOT_LIVE_FINAL10PASS USED. No full rerun after identical-byte commit. Broader audit disposition/integrated report pending; no PR/push/tag/publication or HA claim. Historical failures/provenance/UNKNOWNs retained.
+**Next:** Approved M-U2 closed locally at1ee78e2;101checked work rows (not101bugs),15principal areas OPEN. Next R02 M-U3/M-U4 residuals need separate witnesses/contracts. Broader audit report pending; no PR/push/tag/publication or new policy authority.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
