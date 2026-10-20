@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Match exact finite native Float subscription filters against finite float
+  event snapshots by numeric equality. Full-payload signed zeros now match in
+  either direction, including direct legacy `split_filters` calls with two
+  actual floats. Previously dropped matching events may arrive. Raw strings,
+  mixed types, Boolean/null, non-finite fallback, missing fields, other
+  lookups, and indexed group routing keep their existing behavior.
+
 - Match automatic delete notifications against signal-time projected scalar
   equalities even with id-only public payloads. Server-forced scope still wins
   over conflicting client filters, and private values never become GraphQL

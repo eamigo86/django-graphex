@@ -838,6 +838,15 @@ Filters are evaluated **per connection at delivery time**:
 - **`exact`** is decided in memory against the serialized payload — no extra
   query. This is the fast path the whole serialize-once engine is built around,
   so prefer it for scoping.
+- A native `Float` exact filter matches an event snapshot when both values are
+  actual finite floats with exactly equal numeric values. In particular,
+  `-0.0` and `0.0` now match in either direction. This also changes the
+  low-level `split_filters` result for a legacy dictionary containing those
+  two float values. It does not parse numeric strings, use an epsilon, change
+  Boolean/null matching, or normalize indexed group keys. Non-finite values
+  retain the previous string-comparison behavior. A full-payload field must
+  be present in the snapshot for this in-memory comparison; missing fields and
+  other lookups retain their database-check behavior.
 - A typed `Decimal` exact filter compares finite numeric values from the
   event-time JSON snapshot, so `1.0` matches a serialized `"1.00"`. This also
   works for valid high-precision values, including snapshots longer than 256

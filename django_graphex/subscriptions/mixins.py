@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -105,8 +106,9 @@ def split_filters(
     Plain-equality keys (no "__" lookup) whose field is present in the serialized
     "data" are compared in memory. Existing equal string forms still match
     (including 7 and "7"); a typed Decimal filter also matches a finite,
-    numerically equal JSON-safe string snapshot. A mismatch short-circuits the
-    whole notification without consulting the current database row.
+    numerically equal JSON-safe string snapshot. Two actual finite floats also
+    use exact numeric equality, including opposite signed zeros. A mismatch
+    short-circuits the notification without consulting the current database row.
 
     Args:
         data: The serialized instance mapping carried by the notification.
@@ -129,6 +131,13 @@ def split_filters(
                 and not (
                     isinstance(value, datetime)
                     and _matches_datetime_snapshot(data[key], value)
+                )
+                and not (
+                    type(data[key]) is float
+                    and type(value) is float
+                    and math.isfinite(data[key])
+                    and math.isfinite(value)
+                    and data[key] == value
                 )
             ):
                 return None

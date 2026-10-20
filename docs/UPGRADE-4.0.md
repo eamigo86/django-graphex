@@ -175,7 +175,13 @@ permissions, custom filter bodies and ordering are unchanged. See
    A previously dropped matching event may now arrive. Existing notifications
    already truncated to milliseconds cannot recover their original precision;
    id-only payloads, arbitrary JSON strings and custom output resolvers are
-   not converted by this change. See
+   not converted by this change. Exact finite Float pairs also now match by
+   numeric equality, so a previously dropped full-payload event with snapshot
+   `-0.0` and filter `0.0` (or the reverse) may arrive. This includes legacy
+   direct calls to `split_filters` with two actual floats; clients that used
+   signed zero to suppress delivery should use an explicit application-level
+   condition. Strings, mixed types, non-finite values, and indexed group-key
+   routing retain their prior behavior. See
    [subscription filters](usage/subscriptions.md#filtering-notifications).
 4. **Cost and query behavior:** keep the built-in cost/depth validation and
    request-only SQL controls in your regression suite, alongside synchronous
