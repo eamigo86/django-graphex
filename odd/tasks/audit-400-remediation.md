@@ -216,8 +216,8 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D2 | 125 | Nested atomic and binding on_commit database-alias subclaims. R05b stable/model routing accepted; populated-parent CREATE guarantee for includedDjango approved22248/R05c pending. No broader cross-DB/custombackend closure. | T05/T08/R05b/R05c |
 | M-D3 | 126 | Approved breaking Decimal output precision fix T03c; SQLite reload rounding/input policy separate; refs 9007199254740993,9007199254740994,d278321,4cc048b; archive. | T03c/T03 |
 | M-D4 | 127 | **Partly verified, still open:** scalar accepts nonfinite values; actual public model mutations reject NaN, Infinity, -Infinity and 1e1000 with structured field errors and zero save calls, not an unhandled Django exception. Exact report exponent 1E+999999999 remains untested because bounded processing was not established; no whole-row false-positive verdict. | T03 |
-| M-D5 | 128 | JSON scalar allegedly parses a JSON-looking string into a different JSON type. | T15 |
-| M-D6 | 129 | JSONRaw allegedly preserves Undefined in lists and accepts infinity-producing exponent; two subcases. | T15 |
+| M-D5 | 128 | Raw JSON-string coercion is a qualified false positive (24047); wider JSON policy not closed. | T15 |
+| M-D6 | 129 | Approved list-null slice fixed R03i/accepted24132; absent object keys omitted. Nonfinite exponent/whole ID remain open. | T15/R03i |
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
@@ -362,9 +362,9 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03g-V | D; accepted23933. | [x] |
 | R03g-C | Inline; accepted23933; 324 authored lines, no PR. | [x] |
 
-**R03g:** Exact full proof/limits and archive chain are lossless in the pre-edit archive below. Native RED6/same-byte GREEN6 were recorded, but original RED test/source preimages and first-edit time were not retained; fresh bound-HEAD causality does not reconstruct history. 5,931 pass/7 skip/10 warn; raw branch 4,437/4,644=95.542636%, combined 16,515/16,903=97.704549%, direct 8/8 and cumulative 859/884 exits. Only approved directive case slice closed; M-U6 partial, RDD OFF.
+**R03g:** Accepted23933 directive-case slice only. Exact proof, original RED-preimage/first-edit UNKNOWNs, counts and archive chain retained in the R03i preclosure archive below; M-U6 partial.
 
-**Current audit state:** 126 checked/25 overlap-unchecked;100 claim IDs,15 principal OPEN,41 pending/limited ID records(not41bugs)+7 recommendations. R03h closes only the approved numeric-null slice; final whole-ID disposition remains for T17.
+**Current audit state:** 129 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 41 pending/limited ID records (not 41 bugs)+7 recommendations. R03i closes only approved list-null behavior; M-D6 nonfinite/whole-ID disposition remains open.
 
 **R03h pre-edit archive:** `mu6-number-null-preparation/tracker-preedit.md` (49,892 B; SHA-256 `03bccbb505315e47ccb9555d2fb8e75d115b39d3f93d8cca091278cf3e26fbee`; mode 0644) retains exact pre-compaction R03d/e/f/g wording, approvals, proof, failures, UNKNOWNs, limitations and all older archive chains. Shortening completed history changes no acceptance or residual claim.
 
@@ -376,13 +376,27 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | D independent+parent; accepted24012. Fresh native matrix127rows/focal87; retained full5953pass/7skip/10warn, writerfocal191/related269, quality/docs43/Playground61/static5 audited,NOT rerun. Raw4439/4646=95.544554%,combined97.705228%;direct4/4lines2/2exits,cumulative861/886=97.178330%. Parent22PASS. | [x] |
 | R03h-C | Inline local feature `e84090e6411e95b4a5a9b2378ee8c8d07164cb52`,10paths453authoredlines; advisory overrun retains tests/docs, no PR authority. Exact accepted disk/staged/Git blobs+modes. RDD OFF; no PR/push/tag/pub/build/timing. | [x] |
 
-**R03h closeout:** Acceptance24012 under human23947/BP-MU6-NUMERIC-NULL-001. Exact 47,001B preclosure tracker archived at `mu6-number-null-closeout/tracker-preclosure.md` (SHA-256 `720803c7baa222898bd8d0e0571d28637320c23f34dc91daec882f2e67a70f0f`,mode0644). Writer `mu6-number-null-implementation/manifest.json` SHA1b01358f…; independent `mu6-number-null-independent/manifest.json` SHAb6d37abc1dae33abb9fb0f87805bdaffab2da2830ac28acdf7f330dfc6af44f0; parent `mu6-number-null-closeout/parent-spot.json` SHAd3a395ab…(22PASS,779finite source/candidate paths+Git guards). Sourceea396ad5…/newtestcf612300…/mode0644. Original RED test862f3acf…/source74bff17f… and ordered first-edit/identical-byte GREEN records were retained contemporaneously and verified. Exact historical writer argv/full environment unavailable after its compaction; no reconstruction claimed, fresh independent/parent commands captured exactly. All required retained outcomes/log hashes/runtime assertions validated. Actual5960 unique JUnit cases vs aggregate5983(+23 unexplained),zero errors/failures. Cumulative actual hits1958/1966 vs branch-sensitive1933/1966;actual exits861/886. Direct2/2 exits belong to Currency; Number ternary has no separate XML branch instrumentation. SDL changed only Number/Currency descriptions, not names/arguments/types/locations; no full-byte identity claim. Writer legacy assertion/static parser/inventory attempts, parent preparation header correction, final private-helper docstring clarification and verifier frozen-AST harness failure remain preserved; final source verified after correction. Seven skips(5PG,optional multiselect,retiredGraphene),10 existing warnings. Independent fresh matrix/focal; full/quality/docs/Playground/static proof audited,not rerun independently. Playground has no null-output example to change(61PASS); five benchmark queries use no numeric directives, canonical results/DB untouched. Finite14tags/protected branch unchanged; 101 independent JSON hashes vs writer selected67 are distinct inventories; DB checks lstat-only; CodeGraph directory-mtime watcher qualification retained. No livePG/Redis/CI/wheel/timing/remote/publication. Rollback only ten feature paths against parent3cacd9f, keep tracker/prior fixes/proof.
+**R03h closeout:** Accepted24012/human23947; featuree84090e, numeric-null slice only. Exact proof, failures, UNKNOWNs, counts, rollback and archive chain retained in the R03i preclosure archive below; M-U6 partial.
+
+**R03i pre-edit archive:** `md6-list-null-preparation/tracker-preedit.md` (48,986 B; SHA-256 `0e01e991fabde34ec4d818649e913ad8ef94a31b558ae48b03c818ee7cde1819`, mode 0644) is the exact prior tracker, preserving every earlier scope, failure, UNKNOWN, qualification, proof and archive pointer. Its identity is in `md6-list-null-preparation/preedit-manifest.json`.
+
+**BP-MD6-MISSING-LIST-NULL-001 (human24091):** An omitted variable inside a raw JSON literal list becomes Python `None` / GraphQL `null` in the same slot/order; an absent variable under an object literal key still omits the key. Supplied values/defaults, explicit null, nested shapes and ordinary typed lists remain unchanged. Direct missing-variable arguments, JSONString, nonfinite numbers, SDL/schema, settings, dependencies and other scalars are excluded. M-D6's nonfinite subcase and whole ID remain open. No remote/release/build/DB/timing/official-benchmark authority.
+
+| Task | Route, outcome and acceptance checks | State |
+|---|---|---|
+| R03i-I | D writer; human24091/BP-MD6-MISSING-LIST-NULL-001, accepted24132. List-null slots only, other contracts retained. Original RED1 -> first edit -> identical-test GREEN1 validated. Feature `4a0760664ee6806a1fa8c07211a5501256bd65ef`. | [x] |
+| R03i-V | D independent+parent, accepted24132. Fresh focal86/matrix16/static5; parent13PASS. Audited full5966PASS/7skip/10warn, quality/docs43/Playground61, NOT rerun. Raw4441/4648=95.546472%, combined16526/16914=97.706042%; direct5/5 lines,2/2 loop exits. Qualifications in closure below. | [x] |
+| R03i-C | Parent local feature `4a0760664ee6806a1fa8c07211a5501256bd65ef`, seven paths/241 authored lines. Exact disk/Git bytes/modes match accepted proof. RDD OFF; independent ordinary checks, no review/PR/push/tag/publication. | [x] |
+
+**R03i preclosure archive:** `md6-list-null-closeout/tracker-preclosure.md` (49,736 B; SHA-256 `7c77c69cb8d6d3ef09db0630ecdf1fcac4e0fdd72cb636089392e438311db20f`, mode 0644) preserves every shortened prior scope, failure, UNKNOWN and archive pointer exactly.
+
+**R03i closeout:** Full acceptance24132, proof identities, checks, failures, qualifications and rollback are retained in `md6-list-null-closeout/closure.md` (SHA-256 `2c48172e3d42b6cc64d645a6f87ea18d556f1cf78aa16855a2785ba10fce8a71`). Only the approved list-null slice is closed; M-D6 nonfinite/whole ID remain open.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** R03h is locally complete. Investigate M-D5 JSON-string coercion read-only next, distinguishing text such as "123" from numeric 123; consult before any incompatible scalar policy. Wider audit residuals and final ID disposition remain open. No PR/push/tag/publication.
+**Next:** R03i list-null slice complete locally. Explain M-D6 non-finite raw JSON input policy and obtain separate approval before changing it; output/JSONString policies remain separate. Wider audit/final-ID disposition open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
