@@ -468,18 +468,11 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
     mirroring graphene's "GenericScalar.parse_literal" semantics. Nested
     "VariableNode" references resolve against "variable_values".
 
-    When a nested "VariableNode" has no available value ("variable_values" is
-    None, as it is at validation time, OR the name is absent), the graphql
-    "Undefined" sentinel is returned instead of raising — matching graphql-core's
-    own "value_from_ast" and graphene's "GenericScalar". This is REQUIRED: for a
-    "$var" nested inside an inline object/list literal, graphql-core's
-    "ValuesOfCorrectTypeRule" invokes "parse_literal" at VALIDATION time with NO
-    variables; raising there would reject a valid document. At execution time the
-    real variables are supplied and substitution happens.
-
-    Inside an object literal such a field is OMITTED from the resulting dict
-    (again matching "value_from_ast"), so the "Undefined" sentinel — which is
-    not JSON-serializable — never reaches a resolver.
+    An unavailable nested variable returns graphql "Undefined" rather than
+    raising, so validation without variable values does not reject a valid
+    document. Inside a list, that sentinel becomes None to preserve the list
+    slot as JSON null. Inside an object, its field is omitted instead. A
+    top-level unavailable variable still returns "Undefined" to its caller.
 
     Args:
         ast: The GraphQL literal AST node to convert.
@@ -504,7 +497,11 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
     if isinstance(ast, NullValueNode):
         return None
     if isinstance(ast, ListValueNode):
-        return [_json_raw_parse_literal(item, variable_values) for item in ast.values]
+        values = []
+        for item in ast.values:
+            value = _json_raw_parse_literal(item, variable_values)
+            values.append(None if value is Undefined else value)
+        return values
     if isinstance(ast, ObjectValueNode):
         # An unavailable variable OMITS its field (graphql-core's own
         # ``value_from_ast`` does the same), so the ``Undefined`` sentinel never

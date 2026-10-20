@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve positions in raw `JSON` list literals when an optional variable is
+  omitted: the missing member now resolves to `null` instead of leaking an
+  unserializable sentinel. Missing object-literal keys remain omitted;
+  supplied values, defaults, explicit null, and ordinary typed lists are
+  unchanged. This does not change `JSONString`, top-level missing-argument
+  behavior, or the separate non-finite numeric policy.
+
 - Preserve GraphQL null values through `@number` and `@currency` instead of
   formatting absent values as zero. Required fields now use normal GraphQL
   nullability errors and bubbling. Format validation, width/precision caps,

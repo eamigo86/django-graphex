@@ -1948,6 +1948,30 @@ mutation CreateProduct($specs: JSON) {
 Omitting `specs` leaves the column untouched; passing `specs: null` writes SQL
 `NULL` — the usual omit-vs-null semantics, unchanged.
 
+Inside an **inline raw `JSON` literal**, an optional variable omitted from the
+request has container-specific behavior. A missing list member becomes `null`
+in its original position; a missing object member is omitted instead. A
+supplied value, a variable default, and an explicit `null` keep their normal
+meanings. For example:
+
+```graphql
+mutation CreateProduct($tag: JSON) {
+  productCreate(newProduct: {
+    name: "Laptop"
+    specs: { tags: ["a", $tag, "b"], optional: $tag }
+  }) {
+    product { specs }
+    ok
+  }
+}
+# variables: {}
+# specs: { "tags": ["a", null, "b"] }  (optional key omitted)
+```
+
+This rule applies to raw `JSON` literal containers, not to a missing variable
+used as the entire argument. `JSONString` remains a separate string-encoded
+scalar. Non-finite numeric JSON policy is unchanged.
+
 !!! tip "Custom JSON fields: the `JSONField()` descriptor and `as_str=`"
 
     For a hand-declared (non-model) field, the

@@ -29,11 +29,11 @@ EXPECTED_IDS = tuple(
 )
 EXPECTED_COUNTS = {
     "bounded-fixed": 43,
-    "partial": 28,
+    "partial": 29,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 7,
+    "decision-deferred": 6,
 }
 
 

@@ -206,7 +206,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | M-D3 | partial | Decimal output avoids Float precision loss; SQLite reload rounding and input coercion remain separate. | Large Decimal output → exact text; SQLite reload precision is separate. | `tests/core/test_decimal_output.py` |
 | M-D4 | partial | public mutation rejects NaN/±Infinity/1e1000 structurally/no save; exact 1E+999999999 untested. | NaN, Infinity or 1e1000 mutation input → no save; extreme 1E+999999999 unrun. | `docs/usage/mutations.md` |
 | M-D5 | contract | Public model JSONField input string '123' stays a string through DB/output; separate JSONString intentionally decodes JSON text to integer 123. | Raw JSONField string 123 → string after reload; JSONString JSON text decodes an integer. | `tests/test_explicit_null_and_json_input.py` |
-| M-D6 | decision-deferred | Undefined list/infinity errors require new scalar policy. | Undefined inside a JSON list → desired error policy is not yet selected. | `docs/usage/mutations.md` |
+| M-D6 | partial | An omitted variable inside a raw JSON list becomes null in its original slot; a missing object key remains omitted. The separate non-finite exponent policy remains deferred. | Inline `[1, $v, 3]` with no `$v` → `[1, null, 3]`; object `{key: $v}` omits `key`. | `tests/test_json_raw_missing_list_null.py` |
 | M-D7 | bounded-fixed | incompatible same-name choices rejected; reordered equivalent kept. | Same enum name with incompatible choices → rejected; equivalent reordering remains. | `tests/core/test_choices_enum_name_collisions.py` |
 | M-D8 | bounded-fixed | reserved-name construction fixed; inherited-hook history qualified. | Model field with reserved name → covered type construction now succeeds. | `tests/core/test_reserved_model_fields.py` |
 | M-D9 | bounded-fixed | interface implementor name honored; general type rename unapproved. | Named interface implementor → chosen type name appears; global renaming remains open. | `tests/test_model_type_list_type_name.py` |
@@ -311,7 +311,8 @@ because approving one does not silently approve another.
    `MAX_UPLOAD_SIZE` behavior does not promise a multipart file quota.
 5. **Inputs, scalars, pagination, and SDL:** M-D4 extreme
    `1E+999999999` was intentionally not run without a bounded witness;
-   M-D6 JSONRaw Undefined/non-finite policy, M-D10 Literal/dict/set/Union
+   M-D6 JSONRaw non-finite policy (the missing-list-variable null slice is
+   corrected separately), M-D10 Literal/dict/set/Union
    conversion, M-F3 empty Boolean identities, L-C1 malformed-ID null/error
    policy, L-C9 universal NULL ordering, L-C10 fragment-spread/inline
    directive behavior, L-C11 non-finite directive errors, M-U6 remaining
