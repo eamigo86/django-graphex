@@ -16,6 +16,17 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Review null values under numeric formatting directives
+
+`@number` and `@currency` now preserve a resolver's `None` as GraphQL `null`
+instead of rendering `"0.00"` or `"$0.00"` on otherwise formatted fields.
+If the field is non-null, GraphQL reports the ordinary nullability error and
+bubbles to the nearest nullable parent. Review clients that treated a
+formatted zero as evidence of a missing value. Return an explicit zero from
+the resolver when zero is intended, or use `@default` deliberately where a
+fallback is appropriate. Existing format validation and width/precision caps
+still apply; `Int` and `Float` fields continue to pass through raw values.
+
 ### Review case-conversion directive output values
 
 `@camel_case`, `@snake_case`, and `@kebab_case` now recognize words separated

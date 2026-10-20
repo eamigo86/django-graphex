@@ -61,6 +61,11 @@ for example, `order_total` yields `orderTotal`, `order_total`, and
 
 ### Number Formatting
 
+When a source value is null, `@number` and `@currency` preserve GraphQL
+`null` rather than displaying a formatted zero. Required fields follow
+normal GraphQL nullability errors and bubbling. Numeric zero and other
+falsy but coercible values still format as before.
+
 === "Format View Count"
 
     ```graphql

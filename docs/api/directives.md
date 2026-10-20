@@ -422,6 +422,10 @@ query {
 Format numbers using Python format strings. Format specs whose width or
 precision exceeds 100 are rejected with a field error (prevents memory
 exhaustion from client-supplied oversized specs).
+For a null resolver value, the directive returns GraphQL `null` after the
+width/precision cap and applicable format validation. On a non-null field,
+normal GraphQL error propagation applies. `Int` and `Float` fields continue
+to return their raw values rather than formatting them.
 
 ```python
 @number(as: ".2f")
@@ -448,6 +452,9 @@ query {
 ### CurrencyGraphQLDirective
 
 Format numbers as currency.
+A null resolver value remains GraphQL `null`; non-null fields follow normal
+GraphQL nullability propagation. Falsy but coercible values still format as
+zero with the selected symbol.
 
 ```python
 @currency(symbol: "$")

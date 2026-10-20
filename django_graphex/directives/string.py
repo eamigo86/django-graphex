@@ -229,11 +229,11 @@ def _directive_kebab_case(value: str) -> str:
 def _serializes_string(info: GraphQLResolveInfo) -> bool:
     """Report whether the field can serialize a formatted string.
 
-    "@number" and "@currency" always produce a formatted string, which the
-    "Int" and "Float" fields they are documented for can never serialize:
-    graphql-core rejects the value and the field nulls with an opaque coercion
-    error. Detecting that lets the directives hand the raw numeric value back
-    instead of destroying the response.
+    For non-null values, "@number" and "@currency" produce formatted strings
+    on fields that can serialize them. "Int" and "Float" fields cannot
+    serialize those strings: graphql-core would reject the value and null the
+    field with an opaque coercion error. Detecting those field types lets the
+    directives return the raw numeric value instead. Null values remain null.
 
     Args:
         info: The GraphQL resolve info for the field.
@@ -375,7 +375,8 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
     The result is a string, so the directive only applies on fields that can
     serialize one. On an "Int" or "Float" field the raw value is returned
     unchanged instead: handing those a formatted string nulls the field with an
-    opaque graphql-core coercion error.
+    opaque graphql-core coercion error. A null value remains null after the
+    format spec has been validated.
     """
 
     @staticmethod
@@ -400,7 +401,7 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
         root: Any,
         info: GraphQLResolveInfo,
         **kwargs: Any,
-    ) -> str:
+    ) -> Any:
         """Resolve the number formatting directive.
 
         Args:
@@ -412,8 +413,8 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
             **kwargs: Additional resolver keyword arguments.
 
         Returns:
-            The value formatted with the given Python format spec, or the value
-            unchanged when the field cannot serialize a string.
+            The value formatted with the given Python format spec, None for a
+            null value, or the raw value when the field cannot serialize a string.
 
         Raises:
             GraphQLError: When the format spec's width or precision exceeds
@@ -442,9 +443,10 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
             ) from exc
         # Apply the format spec; blame the SPEC on failure.
         try:
-            return format(float_value, spec)
+            formatted = format(float_value, spec)
         except (ValueError, TypeError) as exc:
             raise GraphQLError(f"Invalid @number format spec {spec!r}: {exc}") from exc
+        return None if value is None else formatted
 
 
 class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
@@ -456,7 +458,7 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
     The result is a string, so the directive only applies on fields that can
     serialize one. On an "Int" or "Float" field the raw value is returned
     unchanged instead: handing those a formatted string nulls the field with an
-    opaque graphql-core coercion error.
+    opaque graphql-core coercion error. A null value remains null.
     """
 
     @staticmethod
@@ -480,7 +482,7 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
         root: Any,
         info: GraphQLResolveInfo,
         **kwargs: Any,
-    ) -> str:
+    ) -> Any:
         """Resolve the currency formatting directive.
 
         Args:
@@ -492,8 +494,8 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
             **kwargs: Additional resolver keyword arguments.
 
         Returns:
-            The value formatted as currency prefixed with the symbol, or the
-            value unchanged when the field cannot serialize a string.
+            The value formatted as currency prefixed with the symbol, None for
+            a null value, or the raw value when the field cannot serialize a string.
 
         Raises:
             GraphQLError: When the value cannot be interpreted as a number.
@@ -501,6 +503,8 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
         if not _serializes_string(info):
             return value
         symbol = args.get("symbol") or "$"
+        if value is None:
+            return None
         try:
             return symbol + format(float(value or 0), ",.2f")
         except (ValueError, TypeError) as exc:

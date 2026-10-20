@@ -346,6 +346,12 @@ Format numeric values with precision and style:
     field when you want the formatting to apply. The format-spec
     width/precision cap still applies on every field type.
 
+    A resolver's `None` stays GraphQL `null` under either directive. On a
+    non-null field, GraphQL reports the usual nullability error and bubbles
+    to the nearest nullable parent. The `@number` cap still applies to null
+    values, and an invalid format spec still errors on a field where
+    formatting applies.
+
 ### Basic Number Formatting
 
 The `as` argument accepts any Python numeric format spec. Format specs with
@@ -925,7 +931,7 @@ Directives handle errors gracefully:
     query {
       post {
         invalidDate @date(format: "YYYY-MM-DD")     # Returns "INVALID FORMAT STRING"
-        nullValue @currency                         # Returns "$0.00" (String field)
+        nullValue @currency                         # Returns null (nullable field)
         emptyString @default(to: "fallback")        # Returns "fallback"
         emptyList @default(to: "fallback")          # Returns [] — never replaced
       }
@@ -947,7 +953,8 @@ an unhandled 500 or an opaque `errors[]` entry):
 
 !!! info "Null and empty values"
     `@base64` returns `None` on an empty/null input. On a `String` field
-    `@currency` returns `"$0.00"` for a `None` or falsy-but-coercible value.
+    `@number` and `@currency` return `null` for a `None` value; falsy but
+    coercible values such as `0`, `False`, and `""` still format as zero.
     `@floor`, `@ceil`, `@round`, and `@abs` return `None` when the field value
     is `None`, and so does every string directive (`@uppercase`, `@slugify`,
     `@truncate`, …) — a null column is never rendered as the literal text

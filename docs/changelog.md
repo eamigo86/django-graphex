@@ -14,6 +14,11 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Preserve GraphQL null values through `@number` and `@currency` instead of
+  formatting absent values as zero. Required fields now use normal GraphQL
+  nullability errors and bubbling. Format validation, width/precision caps,
+  raw numeric field passthrough, and non-null falsy value handling remain.
+
 - Normalize output values of `@camel_case`, `@snake_case`, and `@kebab_case`
   across spaces, underscores, hyphens, camel/Pascal boundaries, and acronym
   blocks. `orderTotal` now becomes `order_total` or `order-total`, and

@@ -593,20 +593,18 @@ def test_base64_directive_empty_value_returns_none() -> None:
 
 
 def test_number_directive_formats_value() -> None:
-    """ ""@number(as:...)" must format with a Python format spec and coerce a None value to 0.
+    """Format numbers with the spec while preserving a null value.
 
     If this breaks, numeric formatting could fail on genuine values or
-    crash instead of treating a null value as zero.
+    expose an absent value as zero.
     """
     info = _info(GraphQLString)
     # Formats with a Python format spec (line 185).
     assert NumberGraphQLDirective.resolve(3.14159, {"as": ".2f"}, None, None, info) == (
         "3.14"
     )
-    # None coerces to 0.
-    assert (
-        NumberGraphQLDirective.resolve(None, {"as": ".1f"}, None, None, info) == "0.0"
-    )
+    # Null remains null after format validation.
+    assert NumberGraphQLDirective.resolve(None, {"as": ".1f"}, None, None, info) is None
 
 
 def test_currency_directive_default_and_custom_symbol() -> None:
