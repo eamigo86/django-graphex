@@ -136,10 +136,23 @@ DJANGO_GRAPHEX = {
     # MAX_BATCH_SIZE since 1.2.1. A `subscribe` past the cap gets the transport's
     # own `error` frame naming the limit; the socket and every subscription
     # already running on it survive, and a slot frees itself when its operation
-    # ends (client `complete`, stream end, or disconnect). SSE is unaffected — one
-    # request carries exactly one subscription. `None` restores the old unbounded
-    # behaviour.
+    # ends (client `complete`, stream end, or disconnect). This is a WebSocket
+    # per-socket cap; the independent SSE account cap below is off by default.
+    # `None` restores the old unbounded WebSocket behaviour.
     #   "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
+    #
+    # Optional SSE controls (both OFF by default). A heartbeat sends idle
+    # comments every 15 seconds; it does not need Redis. The separate cap
+    # admits at most five concurrent streams per authenticated account across
+    # workers. Enabling that cap requires a shared Redis URL and the optional
+    # Redis Python client; keep its credentials out of this file. A full
+    # account gets HTTP 429, and unavailable admission gets HTTP 503, both
+    # before a source starts. See docs/usage/subscriptions.md for lease limits.
+    #   "SSE_HEARTBEAT_ENABLED": True,
+    #   "SSE_HEARTBEAT_INTERVAL": 15,
+    #   "SSE_CONNECTION_LIMIT_ENABLED": True,
+    #   "SSE_MAX_CONNECTIONS_PER_USER": 5,
+    #   "SSE_CONNECTION_REDIS_URL": os.environ["SSE_CONNECTION_REDIS_URL"],
     # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #

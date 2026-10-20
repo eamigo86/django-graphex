@@ -1034,11 +1034,23 @@ endpoint is protected another way.
 concurrent operations. A `subscribe` past the cap is answered with the
 transport's own `error` frame naming the limit; **the socket and every
 subscription already running on it survive**, and a slot frees itself the moment
-its operation ends (client `complete`, stream end, or disconnect). The SSE
-transport is unaffected — one request carries exactly one subscription. Set it
-to `None` for the old unbounded behaviour.
+its operation ends (client `complete`, stream end, or disconnect). This is
+**per WebSocket**, not per account; set it to `None` for the old unbounded
+WebSocket behaviour.
 
-Both are pinned by `tests/test_shipped_defaults.py` and
+**Optional SSE controls (both off by default).**
+`SSE_HEARTBEAT_ENABLED=True` sends an idle comment every
+`SSE_HEARTBEAT_INTERVAL=15` seconds without restarting the source. The separate
+`SSE_CONNECTION_LIMIT_ENABLED=True` cap uses a shared Redis URL to admit at most
+`SSE_MAX_CONNECTIONS_PER_USER=5` concurrent streams for an authenticated
+account across workers. A sixth request gets HTTP 429 before subscribing;
+unavailable admission gets HTTP 503. Anonymous SSE and WebSocket behavior do
+not change. Uncomment the example settings in `config/settings.py` only when a
+shared Redis backend is available; see the
+[subscription guide](../../docs/usage/subscriptions.md#sse-connection-controls)
+for lease expiry, cleanup, and failover limitations.
+
+These defaults are pinned by `tests/test_shipped_defaults.py` and
 `tests/test_subscription_transports_e2e.py`, so this section cannot drift from
 the defaults without the suite saying so.
 

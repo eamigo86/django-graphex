@@ -13,6 +13,7 @@ merged into this package's own settings dict — there is no separate namespace)
 from __future__ import annotations
 
 from difflib import get_close_matches
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
@@ -195,6 +196,12 @@ DEFAULTS = {
     # Set to None to allow any number (pre-cap behavior, not recommended for
     # public endpoints — use only when you control all clients).
     "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
+    # SSE controls are independent and inert until explicitly enabled.
+    "SSE_HEARTBEAT_ENABLED": False,
+    "SSE_HEARTBEAT_INTERVAL": 15,
+    "SSE_CONNECTION_LIMIT_ENABLED": False,
+    "SSE_MAX_CONNECTIONS_PER_USER": 5,
+    "SSE_CONNECTION_REDIS_URL": None,
 }
 
 
@@ -223,6 +230,41 @@ LIMIT_MINIMUMS = {
 SETTING_CHOICES = {
     "CACHE_INVALIDATION_SCOPE": frozenset({"global", "identity"}),
 }
+
+_SSE_BOOLEAN_SETTINGS = frozenset(
+    {"SSE_HEARTBEAT_ENABLED", "SSE_CONNECTION_LIMIT_ENABLED"}
+)
+
+
+def _validate_sse_setting(value: Any, attr: str, namespace: str) -> None:
+    """Reject malformed SSE controls before the streaming response is opened.
+
+    Args:
+        value: The configured value.
+        attr: The SSE setting key.
+        namespace: The containing Django setting namespace.
+
+    Raises:
+        ImproperlyConfigured: If the value cannot safely drive this control.
+    """
+    valid = True
+    if attr in _SSE_BOOLEAN_SETTINGS:
+        valid = isinstance(value, bool)
+    elif attr == "SSE_HEARTBEAT_INTERVAL":
+        valid = (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and isfinite(value)
+            and value > 0
+        )
+    elif attr == "SSE_MAX_CONNECTIONS_PER_USER":
+        valid = not isinstance(value, bool) and isinstance(value, int) and value > 0
+    elif attr == "SSE_CONNECTION_REDIS_URL":
+        valid = value is None or (
+            isinstance(value, str) and value.startswith(("redis://", "rediss://"))
+        )
+    if not valid:
+        raise ImproperlyConfigured(f"{namespace}['{attr}'] has an invalid value.")
 
 
 class _BaseAPISettings:
@@ -299,6 +341,8 @@ class _BaseAPISettings:
             )
         if attr in SETTING_CHOICES:
             _validate_choice(value, attr, self.setting_name)
+        if attr.startswith("SSE_"):
+            _validate_sse_setting(value, attr, self.setting_name)
         setattr(self, attr, value)
         return value
 

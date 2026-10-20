@@ -69,6 +69,28 @@ def test_the_subscription_cap_ships_on() -> None:
     assert graphql_api_settings.MAX_SUBSCRIPTIONS_PER_CONNECTION == 50
 
 
+def test_optional_sse_controls_ship_off() -> None:
+    """The example inherits both disabled SSE controls and their value defaults.
+
+    Configuration examples do not silently activate either control.
+    """
+    from django.conf import settings
+
+    for key in (
+        "SSE_HEARTBEAT_ENABLED",
+        "SSE_HEARTBEAT_INTERVAL",
+        "SSE_CONNECTION_LIMIT_ENABLED",
+        "SSE_MAX_CONNECTIONS_PER_USER",
+        "SSE_CONNECTION_REDIS_URL",
+    ):
+        assert key not in settings.DJANGO_GRAPHEX
+    assert graphql_api_settings.SSE_HEARTBEAT_ENABLED is False
+    assert graphql_api_settings.SSE_HEARTBEAT_INTERVAL == 15
+    assert graphql_api_settings.SSE_CONNECTION_LIMIT_ENABLED is False
+    assert graphql_api_settings.SSE_MAX_CONNECTIONS_PER_USER == 5
+    assert graphql_api_settings.SSE_CONNECTION_REDIS_URL is None
+
+
 def test_response_cache_starts_disabled_with_global_invalidation() -> None:
     """The example opts out of caching and names the safe 3.1 invalidation mode.
 

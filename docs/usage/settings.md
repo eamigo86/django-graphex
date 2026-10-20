@@ -17,6 +17,11 @@ DJANGO_GRAPHEX = {
     "ATOMIC_MUTATIONS": False,       # wrap each mutation in transaction.atomic()
     "MAX_VALIDATION_ERRORS": None,   # cap validation errors returned (None = no cap)
     "SUBSCRIPTION_CONNECTION_INIT_TIMEOUT": 3.0,  # graphql-transport-ws connection_init wait (s)
+    "SSE_HEARTBEAT_ENABLED": False,  # optional idle SSE comments
+    "SSE_HEARTBEAT_INTERVAL": 15,  # seconds when enabled
+    "SSE_CONNECTION_LIMIT_ENABLED": False,  # optional shared account cap
+    "SSE_MAX_CONNECTIONS_PER_USER": 5,  # when enabled
+    "SSE_CONNECTION_REDIS_URL": None,  # shared Redis URL when cap enabled
 
     # --- Pagination -------------------------------------------------------- #
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
@@ -217,7 +222,12 @@ the set of documents your clients send is finite, since nothing is ever evicted.
 | Setting | Default | Description |
 |---|---|---|
 | `SUBSCRIPTION_PAYLOAD_MODE` | `"id_only"` | When `"id_only"`, change notifications carry only `{"id": <pk>}`; `"full"` serializes the full instance through the subscription's backend. Per-subscription override: `Meta.payload_mode`. See [Subscriptions](subscriptions.md). |
-| `MAX_SUBSCRIPTIONS_PER_CONNECTION` | `50` | Maximum number of **concurrent** operations one `graphql-transport-ws` socket may hold. Every live operation joins its own channel-layer group, so an unbounded socket is a cheap amplification vector. A `subscribe` past the cap is answered with the transport's own `error` frame naming the limit — the socket and every subscription already running on it survive — and a slot frees itself as soon as an operation ends. Set to `None` to allow any number (use only when all clients are trusted). The SSE transport needs no equivalent: one request carries exactly one subscription. See [Subscriptions → Per-connection subscription cap](subscriptions.md#per-connection-subscription-cap). |
+| `MAX_SUBSCRIPTIONS_PER_CONNECTION` | `50` | Maximum number of concurrent operations on **one WebSocket**. A rejected operation does not close the socket. This is not an account-wide cap; see [Subscriptions → Per-connection subscription cap](subscriptions.md#per-connection-subscription-cap). |
+| `SSE_HEARTBEAT_ENABLED` | `False` | Opt in to idle SSE comment frames. Does not change subscription events or require Redis. |
+| `SSE_HEARTBEAT_INTERVAL` | `15` | Positive finite number of seconds between idle comments while the heartbeat is enabled. |
+| `SSE_CONNECTION_LIMIT_ENABLED` | `False` | Opt in to a shared Redis-backed concurrent SSE stream cap for authenticated accounts only. |
+| `SSE_MAX_CONNECTIONS_PER_USER` | `5` | Positive integer account cap when enabled. A full account receives HTTP 429 before source startup. |
+| `SSE_CONNECTION_REDIS_URL` | `None` | `redis://` or `rediss://` URL of the shared admission backend. Required when the account cap is enabled; unavailable admission returns HTTP 503. See [SSE connection controls](subscriptions.md#sse-connection-controls) for cleanup, expiry, and failover limits. |
 
 ## HTTP / view hardening
 

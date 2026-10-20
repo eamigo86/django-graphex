@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Add independently opt-in SSE idle heartbeat comments (15-second setting)
+  and a shared Redis-backed concurrent stream cap for authenticated accounts
+  (five-stream setting). Both remain off by default. A full account receives
+  HTTP 429, unavailable admission HTTP 503, and a lost midstream lease a
+  generic SSE error and completion; anonymous, WebSocket, and authentication
+  behavior is unchanged. Redis lease expiry and failover are documented limits.
+
 - Add optional async `on_connect(scope, payload)` authentication to the
   subscription WebSocket consumer. An authenticated callback result replaces
   the socket user before ACK, schema resolution, and permission checks;

@@ -29,11 +29,11 @@ EXPECTED_IDS = tuple(
 )
 EXPECTED_COUNTS = {
     "bounded-fixed": 43,
-    "partial": 26,
+    "partial": 27,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 9,
+    "decision-deferred": 8,
 }
 
 
@@ -137,6 +137,27 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert rows["L-S2"][1] == "bounded-fixed"
     assert "optional" in rows["L-S2"][2]
     assert "session fallback" in rows["L-S2"][2]
+
+
+def test_live_redis_proof_is_separate_from_failover_decision() -> None:
+    """Keep completed single-instance proof distinct from open failover policy.
+
+    A live coordinator result must not erase the distributed-systems limit.
+    """
+    report = _report()
+    row = {item[0]: item for item in _dispositions(report)}["L-S1"]
+    assert row[1] == "partial"
+    assert "live Redis integration remains unproved" not in row[2]
+    assert "single Redis instance" in row[2]
+    assert "eight processes" in row[2]
+    assert "five grants" in row[2] and "three refusals" in row[2]
+    assert "failover" in row[2] and "not" in row[2]
+    assert row[4] == "`integration/live_redis/test_sse_live_redis.py`"
+
+    decisions = _section(report, "Decisions still required")
+    assert "live Redis/failover proof" not in decisions
+    assert "single-instance live Redis validation is complete" in decisions
+    assert "failover and partition behavior remain unproved" in decisions
 
 
 def test_registry_and_factory_examples_state_the_actual_unit() -> None:

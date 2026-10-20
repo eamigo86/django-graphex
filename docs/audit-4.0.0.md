@@ -13,13 +13,13 @@ below describe bounded evidence, not universal guarantees.
 | Outcome | IDs | Meaning |
 |---|---:|---|
 | Bounded fix | 43 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
-| Partial or residual | 26 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
+| Partial or residual | 27 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
 | Contract or premise clarification | 9 | The reported expectation differs from the documented/current contract; no blanket runtime fix is implied. |
 | Recommendation | 7 | Maintainability or coverage work, not seven extra runtime bugs. |
 | Limited negative check | 6 | A proposed reassuring claim has only bounded evidence or is imprecisely worded; these are not six fixes. |
-| Decision deferred | 9 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
+| Decision deferred | 8 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
 
-Thus **43 does not mean 43 fully closed issues**. The 26 partial rows contain
+Thus **43 does not mean 43 fully closed issues**. The 27 partial rows contain
 additional decisions, and accepted work units do not automatically close their
 parent areas. This report preserves the report's IDs and order exactly once in
 the primary table. The status is the *primary disposition* of a multi-part ID,
@@ -248,7 +248,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | L-M2 | partial | A bounded internal live-field identity/lifetime case was corrected; public schema impact and Graphene behavior were not established. | Internal live field reused across schemas → covered identity/lifetime case corrected. | `tests/core/test_native_field_identity_lifetime.py` |
 | L-M3 | partial | A direct GraphQLSchema enum-cache race was corrected; public exposure was not established. | Two threads request same enum compilation → one protected cache creation. | `tests/core/test_enum_cache_concurrency.py` |
 | L-M4 | partial | A direct GraphQLSchema list-creation race was corrected; public exposure was not established. | Two threads request same list construction → one protected registry creation. | `tests/core/test_registry_creation_concurrency.py` |
-| L-S1 | decision-deferred | heartbeat/per-principal caps are absent-feature/product policy, not an existing behavioral contract. | Idle SSE stream without heartbeat → no new heartbeat or per-principal cap added. | `docs/usage/subscriptions.md` |
+| L-S1 | partial | Approved, independently opt-in SSE heartbeat and authenticated-account Redis lease cap are implemented with defaults off (15 seconds/five streams). Contract tests cover heartbeat, sixth-request HTTP 429, backend HTTP 503, cleanup and expired renewal. An explicit ten-case suite against a single Redis instance (Redis 8.10.2/redis-py 8.1.0) executes real Lua and eight processes sharing one account, with five grants and three refusals, plus public SSE and lifecycle checks. Failover and partition behavior are not proved; Redis failover is not a strict global-count guarantee. | Idle SSE with heartbeat enabled → comment without source restart; sixth account stream → 429 before source startup; lost lease → generic SSE error then complete. | `integration/live_redis/test_sse_live_redis.py` |
 | L-S2 | bounded-fixed | An optional async on_connect callback can authenticate the connection_init payload before ACK and replace the socket user for schema and permission checks. Missing, anonymous, or invalid credentials close generically without session fallback; no hook preserves the former scope-user behavior. JWT verification, session persistence, HTTP/SSE authentication, and mid-socket refresh remain outside this fix. | Authenticated token callback → ACK and one effective user; rejected token → close 4403 without ACK or subscription. | `tests/subscriptions/test_ws_on_connect.py` |
 | L-S3 | bounded-fixed | The approved WebSocket guard rejects a missing, empty, or wrong-only subprotocol offer before acceptance; the required offer may appear among alternatives. The server logs the required protocol. Pre-accept rejection is normally wire HTTP 403, not a guaranteed browser-visible close code or GraphQL error. Broader subscription policies remain open. | Real-ASGI empty/missing/wrong-only offers → rejected before registry/watchdog; exact offer among alternatives → accepted. | `tests/subscriptions/test_ws_subprotocol.py` |
 | L-S4 | bounded-fixed | WS operation cleanup and slot release precede the server `complete` frame, so immediate same-ID reuse is not mistaken for a duplicate; other lifecycle cases remain. | WS operation completes then reuses same ID → slot released before complete frame. | `tests/subscriptions/test_ws_completion_reuse.py` |
@@ -291,8 +291,9 @@ because approving one does not silently approve another.
    atomicity.
 3. **Subscriptions and transport:** M-U2 id-only delete visibility and
    non-PK scope, R02b legacy truncated DateTime notification compatibility, M-U3 Float
-   generalization, M-U4 bulk/M2M signal policy, L-S1 heartbeat/principal
-   cap remain distinct decisions. The optional L-S2 `connection_init` hook is
+   generalization, and M-U4 bulk/M2M signal policy remain distinct work.
+   The single-instance live Redis validation is complete, while failover and partition behavior remain unproved
+   for opt-in L-S1 controls. The optional L-S2 `connection_init` hook is
    now available, but credential verification and refresh are application
    responsibilities. Same
    failed Source retry was corrected, but backend cleanup remains best-effort.

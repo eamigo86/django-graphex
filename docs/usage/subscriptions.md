@@ -583,6 +583,10 @@ event: complete
 data: 
 ```
 
+The optional idle heartbeat sends `: heartbeat` SSE comments without restarting
+the subscription source or changing any `next`/`complete` frame. It is **off by
+default**. See [SSE connection controls](#sse-connection-controls).
+
 !!! info "Posting the document form-encoded needs `X-Requested-With`"
 
     The endpoint also accepts `query` as `application/x-www-form-urlencoded` or
@@ -634,6 +638,14 @@ Error surfacing splits at the moment the stream is committed:
   `200 text/event-stream` response as a single `next` frame carrying
   `{"errors": [...]}` followed by the `complete` frame — never an HTTP 4xx,
   because a status code cannot change once the streaming response has begun.
+- **Optional account cap** — a full authenticated-account limit returns plain
+  **HTTP 429** before source startup; an unavailable admission backend returns
+  **HTTP 503** before returning a streaming response, including when ownership
+  cannot be confirmed after source startup (that source is closed). Existing
+  streams are not interrupted by a rejected request. If a running stream later
+  loses its Redis lease, its
+  already-committed 200 response emits a generic `next` error and `complete`;
+  it cannot change to HTTP 503.
 
 ### WebSocket: the wire protocol
 
@@ -1157,9 +1169,60 @@ disconnect — so a client that stays under the cap never notices it.
     subscriptions per socket. Use it only when every client is trusted and you
     bound connections elsewhere (gateway/proxy rate limiting).
 
-The SSE transport needs no equivalent: one `text/event-stream` request carries
-exactly one subscription, so its concurrency is bounded by your server's
-connection limits rather than by an in-process registry.
+The WebSocket cap is **per socket**, not per account. SSE has an independent,
+optional **per-authenticated-account** cap below. One SSE request still carries
+exactly one subscription.
+
+### SSE connection controls
+
+Both SSE controls are independent and **disabled by default**. The heartbeat
+value defaults to 15 seconds and the account-cap value defaults to five, but
+neither value enables its control. To enable either one:
+
+```python
+import os
+
+DJANGO_GRAPHEX = {
+    "SSE_HEARTBEAT_ENABLED": True,
+    "SSE_HEARTBEAT_INTERVAL": 15,  # seconds; positive finite number
+    "SSE_CONNECTION_LIMIT_ENABLED": True,
+    "SSE_MAX_CONNECTIONS_PER_USER": 5,  # positive integer
+    "SSE_CONNECTION_REDIS_URL": os.environ["SSE_CONNECTION_REDIS_URL"],
+}
+```
+
+Enable only the keys you need; heartbeat does **not** require Redis. The cap
+requires one reachable Redis deployment shared by all SSE workers and the
+optional Python `redis` client (the `subscriptions` extra brings it through
+`channels-redis`). Set a `redis://` or `rediss://` URL only when enabling the
+cap; keep credentials outside source control. A missing client, URL, or
+unavailable Redis instance fails new authenticated admissions with HTTP 503.
+Redis connect and command calls request two-second **per-socket** timeouts.
+This is not a two-second end-to-end deadline: Redis client retries and URL
+query options can extend the total wait or override the requested timeouts.
+Keep operator-supplied retry and timeout options bounded for the deployment.
+Anonymous requests bypass this cap without an IP-based bucket. The cap does
+not alter WebSocket operations or authentication policy.
+
+Admission, renewal, and release use atomic Redis operations keyed by a stable
+account identity and a unique stream token. The sixth concurrent stream under
+the example cap receives HTTP 429 **before** subscribing; the first five
+continue. Each active stream renews its own lease even when heartbeat is off;
+ownership is checked after startup, when body consumption begins, and before
+delivering a result whenever renewal is due. Already expired tokens are not
+recreated. A cancelled admission settles before token-specific cleanup, though
+backend failure can still defer cleanup until expiry.
+Normal completion, disconnect, source-start failure, and response close release
+the token. A crash or failed release relies on a 45-second lease expiry; a
+renewal that sees an expired token stops the stream instead of recreating its
+slot. A delayed consumer may therefore lose a lease and need to reconnect.
+Redis failover and network partitions can weaken a strict global count: this
+is an availability guard, not a distributed consensus guarantee. Keep the
+server/gateway connection limit as a separate safeguard.
+
+Maintainers can run the explicit real-Redis SSE integration suite using the
+isolated setup in `integration/live_redis/README.md`. It is separate from the
+default test suite, which does not require a Redis service.
 
 ### GraphQL execution middleware
 
