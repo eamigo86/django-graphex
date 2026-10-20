@@ -16,6 +16,31 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Move transformation directives from fragments to fields
+
+The library's transformation directives now declare only the GraphQL `FIELD`
+location. A query placing `@uppercase` or another library transform on a
+fragment spread or inline fragment fails validation before resolver execution;
+it no longer succeeds while silently leaving the value unchanged. Move the
+directive to each selected field that should be transformed:
+
+```graphql
+# Before: invalid fragment-spread placement.
+query { ...Words @uppercase }
+fragment Words on Query { text }
+```
+
+```graphql
+# After: valid field placement inside the same fragment.
+query { ...Words }
+fragment Words on Query { text @uppercase }
+```
+
+Fields inside inline fragments work the same way. Standard `@skip` and
+`@include` keep their fragment and field locations and behavior. This change
+does not make transformations inherit from a fragment or restrict locations
+declared by third-party raw GraphQL directives.
+
 ### Review null values under numeric formatting directives
 
 `@number` and `@currency` now preserve a resolver's `None` as GraphQL `null`

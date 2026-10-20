@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Declare library transformation directives on GraphQL fields only. Placing
+  them on fragment spreads or inline fragments now fails validation instead
+  of silently doing nothing; place transforms on fields inside fragments.
+  Standard `@skip`/`@include`, raw third-party directive locations, and
+  field-transform execution remain unchanged.
+
 - Reject non-finite numbers in raw `JSON` inputs, including nested variable
   values and overflowing float literals, with a GraphQL input error before
   resolver execution. Finite values, numeric strings, missing-variable

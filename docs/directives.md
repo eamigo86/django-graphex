@@ -767,12 +767,41 @@ query Mask($n: Int!) {
 }
 ```
 
+### Transformation directive locations
+
+Library transformation directives, including custom subclasses of
+`BaseExtraGraphQLDirective`, apply to **fields only** (`FIELD`). Placing one on a
+fragment spread (`FRAGMENT_SPREAD`) or inline fragment (`INLINE_FRAGMENT`) now
+produces a GraphQL validation error before any resolver runs. Put the transform
+on each field whose value should change; a field inside a named or inline
+fragment is still a field and works normally.
+
+Before (now invalid):
+
+```graphql
+query { ...Words @uppercase }
+fragment Words on Query { text }
+```
+
+After (valid):
+
+```graphql
+query { ...Words }
+fragment Words on Query { text @uppercase }
+```
+
+This does not change the GraphQL specification's `@skip` and `@include`
+directives: they can still control field and fragment selection. A third-party
+raw `GraphQLDirective` retains the locations its author declares; this
+field-only rule is for library transformation directives, not a new fragment
+inheritance engine.
+
 !!! note "How it works (and two gotchas)"
 
     - These are **execution / value-transform** directives. They run on
-      `FIELD`, `FRAGMENT_SPREAD` and `INLINE_FRAGMENT` locations and post-process
-      whatever the resolver returned — they are *not* schema/SDL type-system
-      directives and do not change resolution logic.
+      `FIELD` locations and post-process the selected field's resolved value.
+      They are *not* schema/SDL type-system directives and do not change
+      resolution logic.
     - Both steps are required: the directive must be in the schema's
       `directives=` list **and** the middleware must be enabled. Instantiating the
       directive also self-registers it so the middleware can find it by name.

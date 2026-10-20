@@ -23,23 +23,17 @@ class BaseExtraGraphQLDirective(GraphQLDirective):
     """
 
     def __init__(self) -> None:
-        """Build the directive and register it on the global registry.
+        """Build a field-only transform and register it globally.
 
-        The directive is placed on "FIELD", "FRAGMENT_SPREAD" and
-        "INLINE_FRAGMENT" locations, uses the class docstring as its GraphQL
-        description, and registers itself under its snake_cased name so the
-        execution layer can look it up.
+        The directive uses the class docstring as its GraphQL description and
+        registers itself under its snake-cased name for field execution.
         """
         registry = get_global_registry()
         super().__init__(
             name=self.get_name(),
             description=self.__doc__,
             args=self.get_args(),
-            locations=[
-                DirectiveLocation.FIELD,
-                DirectiveLocation.FRAGMENT_SPREAD,
-                DirectiveLocation.INLINE_FRAGMENT,
-            ],
+            locations=[DirectiveLocation.FIELD],
         )
         registry.register_directive(self.get_name(), self)
 
