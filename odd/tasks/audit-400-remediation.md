@@ -12,25 +12,25 @@ Verify all supplied audit claims on the supported runtime, fix demonstrated defe
 
 ## Working contract
 
-**Remaining-pass authority (human21002):** Investigate and fix independently compatible remaining audit claims continuously. Defer incompatible changes, new product/security policies, and blocked items to a final decision queue while continuing safe work; no blanket policy approval, remote operation, release, or publication. Inventory21009 was 40 bounded accepted slices, 13 partial/residual, two documented limitations, 45 remaining before R01a; 71 checked work units do not mean 71 fixed claims.
+**Remaining-pass authority (human21002):** Continue independently compatible audit work; defer incompatible/new policies and blockers without blanket approval or remote/release authority. Exact prior scope, inventory counts and qualifications remain in `mu6-text-time-preparation/tracker-preedit.md`.
 
 **Strict TDD:** AGENTS.md requires supported-runtime RED→same GREEN→REFACTOR; report prose is not RED. Runner `.venv/bin/python -m pytest`, focal `--no-cov`, full `-q`. Root graphql-core3.2.13 is unsupported (`pyproject.toml` requires 3.3); retained native3.3 overlay path/proof in T01/T08b. Use repo+overlay PYTHONPATH and PYTHONDONTWRITEBYTECODE=1; assert module/distribution/candidate each unit. No env refresh, mixed ABI or unsupported-result credit.
 
 **Safety:** Use bounded witnesses, never blindly run report payloads or large DoS loads. Protect benchmark DBs, canonical JSON, root env, 16 original C/A IDs and 14 existing tags. Disposable pytest assets allowed; no new tags. Record each claim’s source/runtime, evidence/disposition/checks/reason. Report marks are untrusted; no-change alone proves no false positive.
 
-**Public API gate:** Explain examples/migration impact and obtain individual approval before incompatible changes. All prior approved policies and their exact scopes remain unchanged and are preserved byte-for-byte in `ls3-subprotocol-preparation/tracker-preedit.md` (49,450 bytes; SHA256 `56b9462a9021ceb476422c81e5703b22afc86e6e7fff2f7a69aab2a2cac91354`), together with the existing accepted task rows/archive chains. This lossless locator replaces only the repeated approval inventory to keep the full recovery mirror below its 50,000-byte storage limit; it does not broaden or revoke any policy. The newly approved L-S3 scope is stated separately below. Strict TDD/docs/coverage >95%; no tags/publication.
+**Public API gate:** Explain examples/migration impact and obtain individual explicit approval before incompatible changes. Prior policy inventories, scope, evidence and qualifications remain exact in `mu6-text-time-preparation/tracker-preedit.md`; no prior approval is broadened or revoked. No tags/publication.
 
-**BP-R05C-INSTANCE-CREATE-ATOMIC-001** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
+**BP-R05C-INSTANCE-CREATE-ATOMIC-001** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-**BP-LS3-SUBPROTOCOL-001** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
+**BP-LS3-SUBPROTOCOL-001** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-**BP-LS2-ONCONNECT-001** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
+**BP-LS2-ONCONNECT-001** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-**BP-LS1-SSE-CONTROLS-001** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
+**BP-LS1-SSE-CONTROLS-001** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-**L-S1 live validation authority** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
+**L-S1 live validation authority** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-**L-S1 local delivery** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
+**L-S1 local delivery** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
 **Quality:** Hint changed/public signatures; Google Args/Returns/Raises, no repeated types/backticks. Tests/docs/changelog with behavior. Pure branch, combined, nonempty patch coverage each >=95.01%; patch otherwise N/A. No exclusion/skip/padding/addopts reset. Check Ruff/format/mypy/docstrings/docs/focal/full/diff; report all failures/skips. No artifact build.
 
@@ -353,21 +353,31 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **M-U3 accepted proof:** Exact approved scope, commits, checks, failures/UNKNOWNs and archive chains preserved byte-for-byte in `mu6-date-null-preparation/tracker-preedit.md`; no broader authority or closure.
 
-**M-U6 pre-edit archive:** `mu6-date-null-preparation/tracker-preedit.md` preserves exact 49,731B tracker, SHA`87e080330c786e2dca752890b21621f265da612cb9bae2bf4245f4e714d1b2ac`, including shortened prior policies/proof/limits and all archive chains.
+**M-U6 pre-edit archive:** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-**BP-MU6-DATE-NULL-001** (human23502): only @date(value=None) passes None through, including normal GraphQL NonNull error/bubbling (root may annul data). No other directive, invalid/non-null input, parsing/timezone/localtime/date-only or SDL-type policy change. Strict TDD/docs/branch+combined+nonempty patch>=95.01%; baseline86e99af,cumulative5a155a0. Native diagnostic proof `mu6-date-null-investigation/run-record-v3.json` SHA1ff9198a… is not permanent RED; original setup/serializer and limited preimage/protection qualifications retained.
+**BP-MU6-DATE-NULL-001** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
 
-| R03b-I | D writer; human23502; accepted23550 | Null-only guard + native String/Date/DateTime nullable/root+nested NonNull regressions/docs; permanent RED7fail/3pass, same-byte GREEN10pass; final10PASS. Other directive policies unchanged. | [x] |
-| R03b-V | D independent + parent; accepted23550 | Full5868pass/7skip/10warn; branches4416/4624,combined16442/16832; unit2/2,cumulative839/864 raw exits. Related142,Playground61,quality/docs43pages/static5ops PASS; parent10PASS/full frozen bindings. Preservation qualified below. | [x] |
-| R03b-C | Inline; accepted23550;1f97d24 | Nine-path/239-line behavior/tests/docs commit verified against accepted disk/staged/Git bytes+modes. Full mirror synchronized. Rollback only this unit. No size exception; RDD OFF; no PR/push/tags/publish. | [x] |
+| R03b-I | D | Accepted bounded scope; exact commits/proof/history/limits in M-U6 text-time pre-edit archive. No broader closure. | [x] |
+| R03b-V | D | Accepted bounded scope; exact commits/proof/history/limits in M-U6 text-time pre-edit archive. No broader closure. | [x] |
+| R03b-C | Inline | Accepted bounded scope; exact commits/proof/history/limits in M-U6 text-time pre-edit archive. No broader closure. | [x] |
 
-**M-U6 proof/limits:** `mu6-date-null-independent/report.json` SHA7a9b4017… and `mu6-date-null-closeout/tracker-preacceptance.md` retain complete pre-closeout wording. Writer preimages9owned-only, cache metadata changes and initial related/full/docs failures remain qualified. Independent parser failure corrected; unauthorized zero-byte external placeholder retained (`scope-incident.json`), not a clean-preservation verdict. No CI/Postgres/Redis/build/timing claim. M-U6 partial;41 primary pending/limited IDs(not41bugs),7 recommendations separate;107checked/25overlapping unchecked tasks,15principalblocks open.
+**M-U6 proof/limits:** Exact scope, authority, checks, failures/UNKNOWNs and archive chains in `mu6-text-time-preparation/tracker-preedit.md`; no broader closure or policy change.
+
+**M-U6 text-time pre-edit archive:** `mu6-text-time-preparation/tracker-preedit.md`,49,891B,SHA`a63ec88da2f53e1648110d2cf87952690d74b6461b8b81817b10fe484822c5ea`, preserves exact shortened prior policies/proof/failures/UNKNOWNs and archive chains.
+
+**BP-MU6-TEXT-TIME-001** (human23567): zero only omitted TIME components for accepted text, including seconds/microseconds in partial date-time/time-only input. Preserve missing DATE filling, explicit components, timezone/offset/localtime, Python date/datetime and None behavior; no other directive/SDL policy. Strict TDD/docs/nonempty coverage>=95.01%; unitbase03931b7,cumulative5a155a0. Read-only native diagnostic23565 is NOT permanent RED; original harness failures/control qualifications remain.
+
+| R03c-I | D writer; human23567; accepted23582 | Text-only zero-time default, native/parser regressions and docs. Causal original-source RED01/02; corrected restored-source RED03/same-byte GREEN02; final6PASS. Full chronology qualified below. | [x] |
+| R03c-V | D independent + parent; accepted23582 | Full5874pass/7skip/10warn; branches4418/4626,combined16447/16837; unit4/4branch-sensitive lines+2/2exits,cumulative841/866exits. Related153,Playground61,104controls,quality/docs43pages/static5ops PASS; parent6PASS/frozen bindings. | [x] |
+| R03c-C | Inline; accepted23582;35199aa | Nine-path/269-line behavior/tests/docs commit verified against accepted disk/staged/Git bytes+modes. Full mirror synchronized. Rollback only this unit. No size exception; RDD OFF; no PR/push/tags/publish. | [x] |
+
+**M-U6 text-time proof:** `mu6-text-time-independent/manifest.json` SHA6a0447cd… and `mu6-text-time-closeout/tracker-preacceptance.md`. Original causal RED precedes changed-source GREEN; RED03 followed restoration. Incomplete historical source/helper captures, two-entry DB baseline, wrong expectations and docs/native/audit-helper failures remain qualified, not repaired by fresh passes. No CI/Postgres/Redis/build/timing claim. M-U6 partial;41 primary pending/limited IDs(not41bugs),7 recommendations separate;110checked/25overlapunchecked tasks,15principalopen.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate remaining M-U6 date-only-text behavior before proposing any change; other incompatible policies remain gated. No PR/push/tag/publication.
+**Next:** Investigate remaining aware-date timezone behavior before proposing any other incompatible policy. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
