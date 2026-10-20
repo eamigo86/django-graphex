@@ -331,33 +331,43 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **M-U2 pre-edit archive:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
-**BP-MU2-DELETE-MATCH-001** (human23326): private immutable signal-time projected scalar values verify DELETE plain equality separately from public id_only data; server scope wins, missing/unsupported/unverifiable filters fail closed. No lookup interpreter/output widening/non-delete policy change. Native13-case witness: `mu2-delete-investigation/witness-20261019/REPORT.md` SHA9a8cc40d…. Strict TDD/docs/branch+combined+nonempty unit/cumulative diff>=95.01%; baseline1d26aa6/cumulative5a155a0.
+**BP-MU2-DELETE-MATCH-001** Exact approved scope, commits, checks, failures/UNKNOWNs and archive chains preserved byte-for-byte in `mu6-date-null-preparation/tracker-preedit.md`; no broader authority or closure.
 
-| R02c-I | D writer; human23326; accepted23371 | Private projected scalar DELETE matching, unchanged public PK-only data, server scope and conservative unsupported/missing/deferred handling. Corrected deferred-instance regression and Meta table; RED/GREEN with historical proof qualifications below. | [x] |
-| R02c-V | D independent + parent; accepted23371 | Full5849/7skip/10warn; branches4414/4622, combined16437/16827; unit34/34+18/18, direct cumulative1871/1904+837/862. Quality/docs/Playground/static benchmark PASS; parent24PASS/protected parity. Exact proof below. | [x] |
-| R02c-C | Inline; human23374 local size exception;1ee78e2 | Approved474-line/10path behavior/tests/docs committed locally with exact disk/staged/Git blob and mode parity. Tracker/full mirror synchronized; closeout proof in `mu2-delete-local-commit/`. No PR/push/tag/publication; RDD OFF. | [x] |
+| R02c-I | D | Accepted bounded scope; exact authority/commits/proof/failures/UNKNOWNs in M-U6 pre-edit archive. No broader closure. | [x] |
+| R02c-V | D | Accepted bounded scope; exact authority/commits/proof/failures/UNKNOWNs in M-U6 pre-edit archive. No broader closure. | [x] |
+| R02c-C | Inline | Accepted bounded scope; exact authority/commits/proof/failures/UNKNOWNs in M-U6 pre-edit archive. No broader closure. | [x] |
 
 **M-U2 final proof:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
 **M-U2 local delivery** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
-**M-U3 pre-edit archive:** `mu3-float-preparation/tracker-preedit.md` (49,570B; SHA256 `22edb0ce6bd88444eddd5aa970afadc5c919c2003f2fec4761daeccc774aca78`) preserves all shortened prior authority/proof/history and archive chains. Relative external proof paths use the audit proof root; no old scope or acceptance changes.
+**M-U3 pre-edit archive:** Exact approved scope, commits, checks, failures/UNKNOWNs and archive chains preserved byte-for-byte in `mu6-date-null-preparation/tracker-preedit.md`; no broader authority or closure.
 
-**BP-MU3-FLOAT-EXACT-001** (human23415): exact numeric equality exception only for TWO actual finite built-in floats, including legacy dictionary -0.0/+0.0 pairs. No epsilon, string/Boolean/null/mixed-type coercion, nonfinite policy change, DB fallback or indexed-routing normalization. Other incompatibilities remain individually gated. Native diagnostic9PASS confirms signed-zero drops but ordinary finite equality works; proof `mu3-float-investigation/REPORT.md` SHA5a09e4ed…. Baseline7988d4a, cumulative5a155a0.
+**BP-MU3-FLOAT-EXACT-001** Exact approved scope, commits, checks, failures/UNKNOWNs and archive chains preserved byte-for-byte in `mu6-date-null-preparation/tracker-preedit.md`; no broader authority or closure.
 
-| R02d-I | D writer; human23415; accepted23460 | Approved finite Float exception + permanent native regressions/docs; causal RED3fail/6pass, same-byte GREEN9pass; final9PASS. Legacy/mixed/nonfinite/index behavior preserved as scoped. | [x] |
-| R02d-V | D independent + parent; accepted23460 | Native3.3 full5858pass/7skip/10warn; branches4414/4622,combined16438/16828; unit1/1 branch-sensitive lines,raw exits0/0=N/A,impacted6/6; cumulative837/862. Related604,Playground61,quality/docs43pages,semantic1024pairs+7controls PASS; parent9PASS/frozen parity. | [x] |
-| R02d-C | Inline parent; accepted23460;c664db3 | Seven-path/272-line behavior/tests/docs commit verified against accepted disk/staged/Git blobs+modes. No size exception; full mirror synchronized. Rollback only this bounded unit. Local only; RDD OFF. | [x] |
+| R02d-I | D | Accepted bounded scope; exact authority/commits/proof/failures/UNKNOWNs in M-U6 pre-edit archive. No broader closure. | [x] |
+| R02d-V | D | Accepted bounded scope; exact authority/commits/proof/failures/UNKNOWNs in M-U6 pre-edit archive. No broader closure. | [x] |
+| R02d-C | Inline | Accepted bounded scope; exact authority/commits/proof/failures/UNKNOWNs in M-U6 pre-edit archive. No broader closure. | [x] |
 
-**M-U3 closeout archive:** `mu3-float-closeout/tracker-preacceptance.md`,49,699B,SHA`a2987abef3835872ff1b0c6fdf820e99b64d538830212aa64acd952270f79dcb`.
+**M-U3 closeout archive:** Exact approved scope, commits, checks, failures/UNKNOWNs and archive chains preserved byte-for-byte in `mu6-date-null-preparation/tracker-preedit.md`; no broader authority or closure.
 
-**M-U3 accepted proof:** `mu3-float-independent/REPORT.md` (SHA34dfeef7…) and `mu3-float-parent-repair/` retain commands, preimages, full results, original guard KeyError and data-only helper RED/GREEN repair. Final parent9PASS on unchanged candidate. Earlier incomplete helper pre-capture, changelog preimage collision, invocation/analyzer failures and JUnit aggregate overcount remain explicitly qualified. No fresh CI/Postgres/Redis/build/timing. Test app already has FloatField; Playground/benchmark models do not, so no surface/schema or canonical-result changes. M-U3 stays partial:41 primary pending/limited IDs (28partial+6limited+7deferred),not41bugs;7recommendations separate;15principalblocks open;104checked/25overlapping unchecked task rows (not bug counts).
+**M-U3 accepted proof:** Exact approved scope, commits, checks, failures/UNKNOWNs and archive chains preserved byte-for-byte in `mu6-date-null-preparation/tracker-preedit.md`; no broader authority or closure.
+
+**M-U6 pre-edit archive:** `mu6-date-null-preparation/tracker-preedit.md` preserves exact 49,731B tracker, SHA`87e080330c786e2dca752890b21621f265da612cb9bae2bf4245f4e714d1b2ac`, including shortened prior policies/proof/limits and all archive chains.
+
+**BP-MU6-DATE-NULL-001** (human23502): only @date(value=None) passes None through, including normal GraphQL NonNull error/bubbling (root may annul data). No other directive, invalid/non-null input, parsing/timezone/localtime/date-only or SDL-type policy change. Strict TDD/docs/branch+combined+nonempty patch>=95.01%; baseline86e99af,cumulative5a155a0. Native diagnostic proof `mu6-date-null-investigation/run-record-v3.json` SHA1ff9198a… is not permanent RED; original setup/serializer and limited preimage/protection qualifications retained.
+
+| R03b-I | D writer; human23502; accepted23550 | Null-only guard + native String/Date/DateTime nullable/root+nested NonNull regressions/docs; permanent RED7fail/3pass, same-byte GREEN10pass; final10PASS. Other directive policies unchanged. | [x] |
+| R03b-V | D independent + parent; accepted23550 | Full5868pass/7skip/10warn; branches4416/4624,combined16442/16832; unit2/2,cumulative839/864 raw exits. Related142,Playground61,quality/docs43pages/static5ops PASS; parent10PASS/full frozen bindings. Preservation qualified below. | [x] |
+| R03b-C | Inline; accepted23550;1f97d24 | Nine-path/239-line behavior/tests/docs commit verified against accepted disk/staged/Git bytes+modes. Full mirror synchronized. Rollback only this unit. No size exception; RDD OFF; no PR/push/tags/publish. | [x] |
+
+**M-U6 proof/limits:** `mu6-date-null-independent/report.json` SHA7a9b4017… and `mu6-date-null-closeout/tracker-preacceptance.md` retain complete pre-closeout wording. Writer preimages9owned-only, cache metadata changes and initial related/full/docs failures remain qualified. Independent parser failure corrected; unauthorized zero-byte external placeholder retained (`scope-incident.json`), not a clean-preservation verdict. No CI/Postgres/Redis/build/timing claim. M-U6 partial;41 primary pending/limited IDs(not41bugs),7 recommendations separate;107checked/25overlapping unchecked tasks,15principalblocks open.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate R03/M-U6 directive residuals; explain and seek approval before any incompatible policy. M-U3 stays partial. No PR/push/tag/publication.
+**Next:** Investigate remaining M-U6 date-only-text behavior before proposing any change; other incompatible policies remain gated. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
