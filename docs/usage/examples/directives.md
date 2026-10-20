@@ -85,6 +85,13 @@ the full directive reference see [Directives](../../directives.md).
 
 ### Date Formatting
 
+If `publishedAt` is nullable and the resolver returns `null`, the formatted
+response still contains `"publishedAt": null`. Applying `@date` does not
+manufacture a date or an invalid-format placeholder. Declare a date field
+non-null only when its resolver always supplies a value; otherwise GraphQL
+reports the nullability violation and bubbles null to the nearest nullable
+parent.
+
 === "Format Dates"
 
     ```graphql

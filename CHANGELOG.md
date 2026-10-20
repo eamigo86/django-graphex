@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve GraphQL null values through `@date`, including fields with an
+  explicit format. Non-null fields now follow normal GraphQL error and null
+  propagation when their resolver returns null; date parsing, non-null
+  formatting, and other directives are unchanged.
+
 - Match exact finite native Float subscription filters against finite float
   event snapshots by numeric equality. Full-payload signed zeros now match in
   either direction, including direct legacy `split_filters` calls with two

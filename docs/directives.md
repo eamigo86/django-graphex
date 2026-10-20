@@ -419,6 +419,14 @@ Powerful date and time formatting with multiple options:
 
 ### Naive dates and timezone
 
+When a nullable field resolves to `null`, `@date` leaves it as `null` with or
+without an explicit format. It does not replace missing dates with the
+`INVALID FORMAT STRING` fallback. For a field declared non-null in the GraphQL
+schema, the same null value produces the normal GraphQL error and null
+propagation; a root non-null field can make the entire response `data` null.
+Check the field's declared nullability rather than treating the directive as
+a default-value provider.
+
 `@date` converts a `date` or naive `datetime` into an aware datetime in the
 **active Django timezone** (falling back to `TIME_ZONE`) before formatting,
 even when `USE_TZ=False`. For example, a resolver returning

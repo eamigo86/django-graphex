@@ -556,6 +556,11 @@ Format dates and times using various formats.
 |----------|------|----------|-------------|
 | `format` | `String` | No | Date format string (default: "default") |
 
+A nullable field that resolves to `null` remains `null` after `@date`, even
+with an explicit format. A null result on a non-null field follows normal
+GraphQL error and bubbling rules; the directive does not change SDL
+nullability. Non-null values retain the existing formatting behavior.
+
 #### Format Options
 
 ##### Predefined Formats

@@ -16,6 +16,21 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Review nullable fields formatted with @date
+
+The `@date` directive now passes a resolver's `None` through as GraphQL
+`null`. Previously, a nullable Date/DateTime field could expose
+`"INVALID FORMAT STRING"` instead, while a String field could expose the
+wrapper's text. For example, a nullable `publishedAt` queried as
+`publishedAt @date(format: "YYYY-MM-DD")` now returns
+`"publishedAt": null` when the resolver has no date.
+
+If the field is declared non-null, the same resolver result now triggers the
+normal GraphQL nullability error and bubbles null to the nearest nullable
+parent. A non-null root field can make `data` null, so clients should check
+`errors` and the field's SDL nullability. This change does not alter the SDL,
+non-null date formatting, date parsing, or other directives.
+
 For nested creates using the included Django backend, a database router now
 receives a populated but unsaved parent instance before any related write.
 It may therefore choose an alias from a supplied scalar such as `region` or

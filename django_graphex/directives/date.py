@@ -359,9 +359,12 @@ class DateGraphQLDirective(BaseExtraGraphQLDirective):
             **kwargs: Additional resolver keyword arguments.
 
         Returns:
-            The formatted date string for string values, otherwise a
-            "CustomDateFormat" wrapping the formatted result.
+            None for a null value; otherwise the formatted date string for
+            string values or a CustomDateFormat wrapping the formatted result.
         """
+        if value is None:
+            return None
+
         custom_format = args.get("format") or "default"
         dt = _parse(value)
         try:
