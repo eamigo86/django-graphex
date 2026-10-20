@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+- Display aware Python datetimes and text with an explicit numeric offset or
+  `Z` in Django's active timezone for absolute `@date` formats, preserving
+  the instant while allowing date rollover. Relative formats, originally
+  naive text and other input kinds are unchanged; `iso` still omits its
+  output offset and microseconds.
+
 - Default omitted time components in accepted textual `@date` values to zero,
   including seconds and microseconds of partial times. Missing date components
-  still use the current date; explicit components, timezone handling, typed
-  date/datetime values, and null behavior are unchanged.
+  still use the current date; explicit components and null behavior are
+  unchanged. The aware-value conversion above is a separate change.
 
 - Preserve GraphQL null values through `@date`, including fields with an
   explicit format. Non-null fields now follow normal GraphQL error and null

@@ -563,8 +563,15 @@ nullability. For accepted text values, omitted time components now default to
 zero: `"2026-01-10"` with `format: "iso"` yields
 `"2026-01-10T00:00:00"`, and `"2026-01-10 14:30"` yields
 `"2026-01-10T14:30:00"`. A time-only string still fills the date from the
-current day. Explicit time and offset components, Python date/datetime inputs,
-and other directives keep their existing behavior.
+current day. Explicit time and offset components remain input values; for
+absolute formats (`default`, `iso`, `js`/`javascript`, and custom tokens), an
+aware Python datetime or text with an explicit numeric offset or `Z` is
+displayed in Django's active timezone without changing the instant. For
+example, `"2026-01-01T03:30:00+02:00"` displays as
+`"2025-12-31T20:30:00"` with `format: "iso"` in `America/New_York`.
+The `iso` output still omits offsets and microseconds. Naive text, date-only
+and other input kinds, both relative formats, and other directives keep
+their existing behavior.
 
 #### Format Options
 

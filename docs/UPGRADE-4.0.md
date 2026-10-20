@@ -16,6 +16,22 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Review aware values formatted with absolute @date formats
+
+The `@date` directive now displays originally aware Python `datetime` values
+and text with an explicit numeric offset or `Z` in Django's active timezone
+for `default`, `iso`, `js`/`javascript`, and custom absolute formats. It
+preserves the instant but may change the displayed calendar date. For example,
+with `America/New_York` active, `"2026-01-01T03:30:00+02:00"` now displays
+as `"2025-12-31T20:30:00"` under `@date(format: "iso")`, rather than
+`"2026-01-01T03:30:00"`.
+
+If clients relied on the input offset's wall clock, review their expectations
+or choose an explicit display zone in the resolver. The `iso` output still
+omits offset and microseconds; it is not an offset-bearing timestamp. The
+relative formats, originally naive text, naive Python datetimes, date-only
+values, other input kinds, null handling and directive arguments are unchanged.
+
 ### Review text values formatted with @date
 
 The `@date` directive now fills omitted time components of accepted text
@@ -28,9 +44,9 @@ microsecond. For example, a resolver returning `"2026-01-10"` with
 
 Check clients that relied on an implicit server time. Supply the intended
 time explicitly in the resolver value instead. A time-only string still uses
-the current date; explicit time and offset components, Python date/datetime
-values, timezone policy, and null behavior remain unchanged. The `iso` output
-format itself is unchanged and does not display offsets or microseconds.
+the current date; explicit time components and null behavior are unchanged.
+The aware-value timezone conversion above is a separate change. The `iso`
+output format itself is unchanged and does not display offsets or microseconds.
 
 ### Review nullable fields formatted with @date
 

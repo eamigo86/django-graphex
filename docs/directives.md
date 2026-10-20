@@ -426,8 +426,24 @@ formats as `2026-01-10T14:30:00`. The zero default includes microseconds,
 although the directive's `iso` output does not display them. A time-only
 string such as `"14:30"` still uses the current date for missing date
 components, but formats with seconds zero. Explicit time and offset
-components are preserved. Python `date` and `datetime` inputs retain their
-existing behavior.
+components are preserved as inputs. Absolute output formats display an
+originally aware Python `datetime`, or text carrying an explicit numeric
+offset or `Z`, in Django's **active timezone**. The instant is unchanged, but
+the displayed calendar date and clock can change. For example, with the active
+timezone set to `America/New_York`:
+
+```graphql
+{ publishedAt @date(format: "iso") }
+```
+
+If the resolver returns `"2026-01-01T03:30:00+02:00"`, the field returns
+`"2025-12-31T20:30:00"`. The `iso` output still omits the offset and
+microseconds; clients must not read it as an offset-bearing timestamp. The
+same conversion applies to `default`, `js`/`javascript`, and custom absolute
+formats. The `"time ago"` and `"time ago 2d"` relative formats are unchanged.
+Text with no explicit offset keeps its former wall-clock output, even if the
+parser internally inherited timezone information from its default. Python
+`date`, naive `datetime`, and other input kinds keep their existing behavior.
 
 When a nullable field resolves to `null`, `@date` leaves it as `null` with or
 without an explicit format. It does not replace missing dates with the

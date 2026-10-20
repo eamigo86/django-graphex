@@ -89,7 +89,13 @@ For a text value such as `"2026-01-10"`, querying
 `@date(format: "iso")` now returns `"2026-01-10T00:00:00"` rather than a
 timestamp with the server's current time. Partial text such as
 `"2026-01-10 14:30"` returns `"2026-01-10T14:30:00"`; a time-only text
-value still uses today's date. Explicit seconds and offsets are not replaced.
+value still uses today's date. Explicit seconds and offsets are not replaced
+in the input. Absolute output formats display originally aware Python
+datetimes and text with an explicit numeric offset or `Z` in Django's active
+timezone. In `America/New_York`, `"2026-01-01T03:30:00+02:00"` with
+`@date(format: "iso")` displays as `"2025-12-31T20:30:00"`; `iso` still
+omits the output offset and microseconds. Relative formats and originally
+naive text keep their existing behavior.
 
 If `publishedAt` is nullable and the resolver returns `null`, the formatted
 response still contains `"publishedAt": null`. Applying `@date` does not

@@ -113,18 +113,19 @@ def test_text_time_components_are_zero_in_native_graphql(
       timeOnly @date(format: "iso")
       fullDatetime @date(format: "iso")
     }"""
-    result = graphql_sync(
-        _SCHEMA.graphql_schema,
-        query,
-        middleware=[GraphQLDirectiveMiddleware()],
-    )
+    with django_timezone.override(timezone.utc):
+        result = graphql_sync(
+            _SCHEMA.graphql_schema,
+            query,
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
     assert result.errors is None
     assert result.data == {
         "isoDate": "2026-01-10T00:00:00",
         "namedDate": "2026-01-10T00:00:00",
         "partialDatetime": "2026-01-10T14:30:00",
         "timeOnly": "2026-04-02T14:30:00",
-        "fullDatetime": "2026-01-10T14:30:45",
+        "fullDatetime": "2026-01-10T12:30:45",
     }
 
 

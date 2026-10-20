@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,9 @@ __all__ = ("DateGraphQLDirective",)
 
 
 DEFAULT_DATE_FORMAT = "%d %b %Y %H:%M:%S"
+_ZERO_OFFSET_TOKEN_RE = re.compile(
+    r"(?<!\d)[+-](?:0+|00:00)(?![\d:])|(?<![A-Za-z])[Zz](?![A-Za-z])"
+)
 FORMATS_MAP = {
     # Year
     "YYYY": "%Y",
@@ -123,6 +127,39 @@ def _parse(partial_dt: Any) -> datetime | None:
         return dt
     except ValueError:
         return None
+
+
+def _text_has_explicit_offset(value: str, parsed: datetime) -> bool:
+    """Report whether accepted text supplied its own numeric or UTC offset.
+
+    Args:
+        value: The original text passed to the directive.
+        parsed: The already parsed datetime used for formatting.
+
+    Returns:
+        True only when the text, rather than the parser default, supplied an
+        explicit offset.
+    """
+    numeric_offset: int | None = None
+
+    def capture_offset(_name: str | None, offset: int | None) -> None:
+        """Remember the offset identified by the public parser callback."""
+        nonlocal numeric_offset
+        numeric_offset = offset
+
+    # _parse already accepted the text. A naive default avoids inherited
+    # awareness, while tzinfos reports a numeric offset in any accepted
+    # position without changing the parser or relative-format path.
+    parser.parse(
+        value,
+        default=parsed.replace(tzinfo=None),
+        tzinfos=capture_offset,
+    )
+    # UTC/GMT names and explicit Z/zero offsets all report zero. Only the
+    # original text can distinguish the approved explicit-offset inputs.
+    return numeric_offset is not None and (
+        numeric_offset != 0 or bool(_ZERO_OFFSET_TOKEN_RE.search(value))
+    )
 
 
 def _format_relativedelta(
@@ -327,7 +364,9 @@ class DateGraphQLDirective(BaseExtraGraphQLDirective):
     "js", "time ago", "time ago 2d") or a token string built from the keys of
     "FORMATS_MAP" (dateutil-style tokens such as "YYYY-MM-DD"). String field
     values yield a plain string; other values are wrapped in a
-    "CustomDateFormat" so the scalar can serialize them.
+    "CustomDateFormat" so the scalar can serialize them. Absolute formats
+    display aware datetimes and explicitly offset text in Django's active
+    timezone; relative formats retain their existing calculation path.
     """
 
     @staticmethod
@@ -372,6 +411,17 @@ class DateGraphQLDirective(BaseExtraGraphQLDirective):
         custom_format = args.get("format") or "default"
         dt = _parse(value)
         try:
+            if dt is not None and custom_format.lower() not in (
+                "time ago",
+                "time ago 2d",
+            ):
+                explicitly_aware = (
+                    timezone.is_aware(value)
+                    if isinstance(value, datetime)
+                    else isinstance(value, str) and _text_has_explicit_offset(value, dt)
+                )
+                if explicitly_aware:
+                    dt = timezone.localtime(dt, timezone.get_current_timezone())
             result = _format_dt(dt, custom_format)
             if isinstance(value, str):
                 return result or value
