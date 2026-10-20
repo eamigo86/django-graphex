@@ -1970,7 +1970,15 @@ mutation CreateProduct($tag: JSON) {
 
 This rule applies to raw `JSON` literal containers, not to a missing variable
 used as the entire argument. `JSONString` remains a separate string-encoded
-scalar. Non-finite numeric JSON policy is unchanged.
+scalar.
+
+Raw `JSON` **inputs** reject non-finite numeric values, including values
+nested in lists or objects. For example, `1e999` in a raw `JSON` literal, or
+a non-finite number supplied through a variable, produces a GraphQL
+input error before the field resolver runs. The strings `"NaN"` and
+`"Infinity"` are still ordinary strings; finite numbers, nulls, and the
+omission rules above are unchanged. This input check does not change raw
+`JSON` output serialization or the separate `JSONString` scalar.
 
 !!! tip "Custom JSON fields: the `JSONField()` descriptor and `as_str=`"
 

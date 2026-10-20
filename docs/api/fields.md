@@ -58,8 +58,10 @@ JSONField(*, as_str=False, source=None, required=False, default=_UNSET,
 ```
 
 `as_str=False` (the default) binds the raw `JSON` scalar (structured
-objects/lists pass through on both output and input). `as_str=True` binds
-`JSONString`, the string-encoding escape hatch.
+objects/lists pass through on output and for finite input values). Raw `JSON`
+input rejects non-finite numeric values, including nested members; output
+serialization is unchanged. `as_str=True` binds `JSONString`, the
+string-encoding escape hatch.
 
 !!! note "No `InputField`"
     There is a single `Field` (and a single set of typed shortcuts) for both

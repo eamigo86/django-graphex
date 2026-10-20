@@ -22,6 +22,7 @@ import datetime
 import decimal
 import json
 import uuid as _uuid_module
+from math import isfinite
 from typing import Any
 
 from graphql import (
@@ -456,8 +457,38 @@ def _json_raw_serialize(value: Any) -> Any:
     return value
 
 
-def _json_raw_parse_value(value: Any) -> Any:
+def _reject_nonfinite_json_input(value: Any) -> Any:
+    """Reject non-finite floats in raw JSON input without copying it.
+
+    Only built-in JSON containers are traversed. Other native Python values
+    retain the scalar's existing input identity behavior.
+
+    Args:
+        value: Raw input value to inspect.
+
+    Returns:
+        The original value when no non-finite float is found.
+
+    Raises:
+        GraphQLError: If the input is or contains a non-finite float.
+    """
+    pending = [value]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if isinstance(current, float) and not isfinite(current):
+            raise GraphQLError("JSON cannot represent non-finite numbers")
+        if type(current) is list or type(current) is dict:
+            identity = id(current)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            pending.extend(current.values() if type(current) is dict else current)
     return value
+
+
+def _json_raw_parse_value(value: Any) -> Any:
+    return _reject_nonfinite_json_input(value)
 
 
 def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
@@ -484,14 +515,14 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
         is itself a variable whose value is unavailable.
 
     Raises:
-        GraphQLError: If "ast" is not a JSON-representable literal node.
+        GraphQLError: If the literal is unsupported or contains a non-finite float.
     """
     if isinstance(ast, StringValueNode):
         return ast.value
     if isinstance(ast, IntValueNode):
         return int(ast.value)
     if isinstance(ast, FloatValueNode):
-        return float(ast.value)
+        return _reject_nonfinite_json_input(float(ast.value))
     if isinstance(ast, BooleanValueNode):
         return ast.value
     if isinstance(ast, NullValueNode):
@@ -515,7 +546,7 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
         name = ast.name.value
         if variable_values is None or name not in variable_values:
             return Undefined
-        return variable_values[name]
+        return _reject_nonfinite_json_input(variable_values[name])
     raise GraphQLError(f"JSON cannot represent literal: {ast!r}")
 
 
