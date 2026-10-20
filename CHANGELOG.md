@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Normalize output values of `@camel_case`, `@snake_case`, and `@kebab_case`
+  across spaces, underscores, hyphens, camel/Pascal boundaries, and acronym
+  blocks. `orderTotal` now becomes `order_total` or `order-total`, and
+  `HTTPServer` becomes `httpServer`, `http_server`, or `http-server` in
+  directive order. Schema names, shared converters, and other directives are
+  unchanged; punctuation and other character forms retain prior handling.
+
 - Display aware Python datetimes and text with an explicit numeric offset or
   `Z` in Django's active timezone for absolute `@date` formats, preserving
   the instant while allowing date rollover. Explicit-offset/Z text retains

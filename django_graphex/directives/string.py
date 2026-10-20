@@ -156,6 +156,76 @@ def _apply_str(value: Any, transform: Callable[[str], Any]) -> Any:
     return transform(_as_str(value))
 
 
+_CASE_SEPARATOR_RE = re.compile(r"[ _-]+")
+_CASE_BOUNDARY_RE = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])|(?<=[a-z0-9])(?=[A-Z])")
+_CASE_UNSUPPORTED_RE = re.compile(r"[^A-Za-z0-9 _-]")
+
+
+def _directive_case_words(value: str) -> list[str] | None:
+    """Split approved directive input without changing other character policies.
+
+    Args:
+        value: The string supplied to a case-conversion directive.
+
+    Returns:
+        Lowercase words, or None when the input contains characters outside
+        the approved separators and ASCII word forms.
+    """
+    if _CASE_UNSUPPORTED_RE.search(value):
+        return None
+    return [
+        word.lower()
+        for segment in _CASE_SEPARATOR_RE.split(value)
+        if segment
+        for word in _CASE_BOUNDARY_RE.split(segment)
+    ]
+
+
+def _directive_camel_case(value: str) -> str:
+    """Convert approved word forms to camelCase within the directive only.
+
+    Args:
+        value: The string supplied to the directive.
+
+    Returns:
+        The converted string, retaining legacy handling of other characters.
+    """
+    words = _directive_case_words(value)
+    if words is None:
+        return to_camel_case(value)
+    return words[0] + "".join(word.capitalize() for word in words[1:]) if words else ""
+
+
+def _directive_snake_case(value: str) -> str:
+    """Convert approved word forms to snake_case within the directive only.
+
+    Args:
+        value: The string supplied to the directive.
+
+    Returns:
+        The converted string, retaining legacy handling of other characters.
+    """
+    words = _directive_case_words(value)
+    if words is None:
+        return to_snake_case(value.title().replace(" ", ""))
+    return "_".join(words)
+
+
+def _directive_kebab_case(value: str) -> str:
+    """Convert approved word forms to kebab-case within the directive only.
+
+    Args:
+        value: The string supplied to the directive.
+
+    Returns:
+        The converted string, retaining legacy handling of other characters.
+    """
+    words = _directive_case_words(value)
+    if words is None:
+        return to_kebab_case(value)
+    return "-".join(words)
+
+
 def _serializes_string(info: GraphQLResolveInfo) -> bool:
     """Report whether the field can serialize a formatted string.
 
@@ -561,7 +631,7 @@ class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The camelCased string.
         """
-        return _apply_str(value, to_camel_case)
+        return _apply_str(value, _directive_camel_case)
 
 
 class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -592,9 +662,7 @@ class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The snake_cased string.
         """
-        return _apply_str(
-            value, lambda text: to_snake_case(text.title().replace(" ", ""))
-        )
+        return _apply_str(value, _directive_snake_case)
 
 
 class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -625,7 +693,7 @@ class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The kebab-cased string.
         """
-        return _apply_str(value, to_kebab_case)
+        return _apply_str(value, _directive_kebab_case)
 
 
 class SwapCaseGraphQLDirective(BaseExtraGraphQLDirective):

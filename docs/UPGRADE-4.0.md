@@ -16,6 +16,19 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Review case-conversion directive output values
+
+`@camel_case`, `@snake_case`, and `@kebab_case` now recognize words separated
+by spaces, underscores or hyphens, camelCase/PascalCase boundaries, and
+acronym blocks. For example, `orderTotal` now yields `order_total` with
+`@snake_case` and `order-total` with `@kebab_case`; previously both collapsed
+to `ordertotal`. Likewise, `order_total @kebab_case` changes from
+`order_-total` to `order-total`, while `HTTPServer` converts to `httpServer`,
+`http_server`, or `http-server` in directive order. Review clients that compare
+these formatted response values. Field and argument names in the schema,
+other directives, shared conversion helpers, and handling of other
+punctuation or characters are unchanged.
+
 ### Review aware values formatted with absolute @date formats
 
 The `@date` directive now displays originally aware Python `datetime` values

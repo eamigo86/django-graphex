@@ -39,6 +39,26 @@ the full directive reference see [Directives](../../directives.md).
     }
     ```
 
+### Case Conversion
+
+For a post whose title resolves to `HTTPServer`, the three case directives
+produce consistent value spellings without renaming the `title` schema field:
+
+```graphql
+query PostLabels {
+  post(id: "1") {
+    camel: title @camel_case
+    snake: title @snake_case
+    kebab: title @kebab_case
+  }
+}
+```
+
+The response values are `httpServer`, `http_server`, and `http-server`.
+Spaces, underscores, hyphens, camelCase and PascalCase are also recognized;
+for example, `order_total` yields `orderTotal`, `order_total`, and
+`order-total`. These directives change values, not field names.
+
 ### Number Formatting
 
 === "Format View Count"

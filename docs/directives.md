@@ -215,18 +215,18 @@ Transform text case with these directives:
 
 === "Code Style Conversion"
 
-    Each directive expects a specific input shape: `@camel_case` converts a
-    **snake_case** string, while `@snake_case` and `@kebab_case` convert a
-    **space-separated Title Case** string (they title-case the input before
-    splitting on words, so already-camelCase input will *not* round-trip back
-    to snake/kebab).
+    All three directives recognize words separated by spaces, underscores or
+    hyphens, plus camelCase and PascalCase boundaries. Acronym blocks remain
+    words: `HTTPServer` becomes `httpServer`, `http_server` or `http-server`.
+    The conversion changes field **values**, not GraphQL schema names. Other
+    punctuation and characters keep their previous handling.
 
     ```graphql
     query GetData {
       post {
-        apiName @camel_case      # "api_name" → "apiName"
-        title @snake_case        # "My Blog Post" → "my_blog_post"
-        url @kebab_case          # "My Blog Post" → "my-blog-post"
+        apiName @camel_case      # "order_total" → "orderTotal"
+        title @snake_case        # "orderTotal" → "order_total"
+        url @kebab_case          # "order_total" → "order-total"
       }
     }
     ```

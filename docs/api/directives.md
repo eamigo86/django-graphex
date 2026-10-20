@@ -300,16 +300,18 @@ Convert string to kebab-case.
 
 #### Example
 
-Each directive expects a specific input shape: `@camel_case` converts a
-**snake_case** string, while `@snake_case` and `@kebab_case` convert a
-**space-separated Title Case** string.
+All three directives recognize space-, underscore- and hyphen-separated
+words, camelCase, PascalCase and acronym blocks. `HTTPServer` becomes
+`httpServer`, `http_server` or `http-server`, respectively. They transform
+field values only; schema names and shared string-conversion helpers are
+unchanged. Other punctuation and characters keep their previous handling.
 
 ```graphql
 query {
   field {
-    displayName @camel_case  # "user_profile" → "userProfile"
-    apiName @snake_case      # "Api Name" → "api_name"
-    urlSlug @kebab_case      # "Blog Post Title" → "blog-post-title"
+    displayName @camel_case  # "order_total" → "orderTotal"
+    apiName @snake_case      # "orderTotal" → "order_total"
+    urlSlug @kebab_case      # "order_total" → "order-total"
   }
 }
 ```
