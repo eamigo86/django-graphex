@@ -217,7 +217,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D3 | 126 | Approved breaking Decimal output precision fix T03c; SQLite reload rounding/input policy separate; refs 9007199254740993,9007199254740994,d278321,4cc048b; archive. | T03c/T03 |
 | M-D4 | 127 | **Partly verified, still open:** scalar accepts nonfinite values; actual public model mutations reject NaN, Infinity, -Infinity and 1e1000 with structured field errors and zero save calls, not an unhandled Django exception. Exact report exponent 1E+999999999 remains untested because bounded processing was not established; no whole-row false-positive verdict. | T03 |
 | M-D5 | 128 | Raw JSON-string coercion is a qualified false positive (24047); wider JSON policy not closed. | T15 |
-| M-D6 | 129 | Approved list-null slice fixed R03i/accepted24132; absent object keys omitted. Nonfinite exponent/whole ID remain open. | T15/R03i |
+| M-D6 | 129 | Approved R03i list-null and R03j finite-input slices fixed/accepted24132/24168. Raw output/JSONString/native-only policy unchanged; whole-ID disposition for T17. | T15/R03i/R03j |
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
@@ -333,7 +333,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R03d:** Exact native RED/GREEN, checks, failures, limits and archive chain are lossless in the R03h pre-edit archive below. Only approved absolute-zone slice closed.
 
-**BP-MU6-NAIVE-ZONE-001** (human23759; R03e only): accepted GENUINELY timezone-less TEXT passed to `@date` uses its written wall clock in Django's **active** timezone for every absolute format (`default`, `iso`, `js`/`javascript`, custom) and both relative formats (`time ago`, `time ago 2d`), regardless of `USE_TZ`. Attach the zone; do not convert an assumed UTC instant. Keep missing-DATE/current-date and omitted-TIME/zero defaults, None, other input kinds and naive Python behavior. Prior numeric/Z TEXT absolute conversion (human23667) remains; numeric/Z relative, valid named UTC/GMT-only, and unknown-name fallback/warnings (e.g. XYZ) stay unchanged. Do not add a DST gap/fold policy, setting, dependency, API, SDL, scalar or other-directive change. Preserve accepted `(EET)`, RFC-year, nonterminal-offset and Z regressions. M-U6 remains partial; case conversion and number/currency null families remain open.
+**BP-MU6-NAIVE-ZONE-001:** Human23759/accepted23842, scoped R03e only. The exact full approved timezone/default/input-kind scope, exclusions, qualifications and history are retained in the R03j pre-edit archive above; no prior policy is broadened or revoked.
 
 | Task | Route, acceptance and checks | State |
 |---|---|---|
@@ -364,7 +364,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R03g:** Accepted23933 directive-case slice only. Exact proof, original RED-preimage/first-edit UNKNOWNs, counts and archive chain retained in the R03i preclosure archive below; M-U6 partial.
 
-**Current audit state:** 129 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 41 pending/limited ID records (not 41 bugs)+7 recommendations. R03i closes only approved list-null behavior; M-D6 nonfinite/whole-ID disposition remains open.
+**Current audit state:** 132 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 41 pending/limited ID records (not 41 bugs)+7 recommendations. R03j closes only finite raw JSON inputs; final whole-ID disposition open.
 
 **R03h pre-edit archive:** `mu6-number-null-preparation/tracker-preedit.md` (49,892 B; SHA-256 `03bccbb505315e47ccb9555d2fb8e75d115b39d3f93d8cca091278cf3e26fbee`; mode 0644) retains exact pre-compaction R03d/e/f/g wording, approvals, proof, failures, UNKNOWNs, limitations and all older archive chains. Shortening completed history changes no acceptance or residual claim.
 
@@ -372,9 +372,9 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | Task | Route, intended outcome and checks | State |
 |---|---|---|
-| R03h-I | D writer; human23947, accepted24012. Guarded null passthrough, ordinary NonNull bubbling; current cap/typegate/format and other-value policies retained. Original RED test/source archived, ordered RED4→edit→same-byte GREEN4 verified. Feature `e84090e6411e95b4a5a9b2378ee8c8d07164cb52`. | [x] |
-| R03h-V | D independent+parent; accepted24012. Fresh native matrix127rows/focal87; retained full5953pass/7skip/10warn, writerfocal191/related269, quality/docs43/Playground61/static5 audited,NOT rerun. Raw4439/4646=95.544554%,combined97.705228%;direct4/4lines2/2exits,cumulative861/886=97.178330%. Parent22PASS. | [x] |
-| R03h-C | Inline local feature `e84090e6411e95b4a5a9b2378ee8c8d07164cb52`,10paths453authoredlines; advisory overrun retains tests/docs, no PR authority. Exact accepted disk/staged/Git blobs+modes. RDD OFF; no PR/push/tag/pub/build/timing. | [x] |
+| R03h-I | D; accepted24012; `e84090e`; full proof/limits in R03i preclosure archive. | [x] |
+| R03h-V | D; accepted24012; full checks/UNKNOWNs in R03i preclosure archive. | [x] |
+| R03h-C | Inline; accepted24012; 453 authored lines, no PR; archive. | [x] |
 
 **R03h closeout:** Accepted24012/human23947; featuree84090e, numeric-null slice only. Exact proof, failures, UNKNOWNs, counts, rollback and archive chain retained in the R03i preclosure archive below; M-U6 partial.
 
@@ -384,19 +384,33 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | Task | Route, outcome and acceptance checks | State |
 |---|---|---|
-| R03i-I | D writer; human24091/BP-MD6-MISSING-LIST-NULL-001, accepted24132. List-null slots only, other contracts retained. Original RED1 -> first edit -> identical-test GREEN1 validated. Feature `4a0760664ee6806a1fa8c07211a5501256bd65ef`. | [x] |
-| R03i-V | D independent+parent, accepted24132. Fresh focal86/matrix16/static5; parent13PASS. Audited full5966PASS/7skip/10warn, quality/docs43/Playground61, NOT rerun. Raw4441/4648=95.546472%, combined16526/16914=97.706042%; direct5/5 lines,2/2 loop exits. Qualifications in closure below. | [x] |
-| R03i-C | Parent local feature `4a0760664ee6806a1fa8c07211a5501256bd65ef`, seven paths/241 authored lines. Exact disk/Git bytes/modes match accepted proof. RDD OFF; independent ordinary checks, no review/PR/push/tag/publication. | [x] |
+| R03i-I | D; human24091; accepted24132; `4a07606`; RED1→edit→same-byte GREEN1. | [x] |
+| R03i-V | D; accepted24132; full5966/7skip/10warn; raw4441/4648; combined16526/16914; direct5/5lines,2/2exits; closure. | [x] |
+| R03i-C | Parent local feature `4a07606`; seven paths/241 authored lines, no PR; closure. | [x] |
 
 **R03i preclosure archive:** `md6-list-null-closeout/tracker-preclosure.md` (49,736 B; SHA-256 `7c77c69cb8d6d3ef09db0630ecdf1fcac4e0fdd72cb636089392e438311db20f`, mode 0644) preserves every shortened prior scope, failure, UNKNOWN and archive pointer exactly.
 
-**R03i closeout:** Full acceptance24132, proof identities, checks, failures, qualifications and rollback are retained in `md6-list-null-closeout/closure.md` (SHA-256 `2c48172e3d42b6cc64d645a6f87ea18d556f1cf78aa16855a2785ba10fce8a71`). Only the approved list-null slice is closed; M-D6 nonfinite/whole ID remain open.
+**R03i closeout:** Accepted24132; full proof/qualifications in `md6-list-null-closeout/closure.md`, with exact prior identity and wording retained in the R03j pre-edit archive.
+
+**R03j pre-edit archive:** `md6-finite-input-preparation/tracker-preedit.md` (49,046 B; SHA-256 `13b4280bd5cecacae9bb0b1a29b42fddbad3d903034334b8f66392e8fde96445`, mode 0644) preserves all prior wording, approvals, failures, UNKNOWNs, checked states, qualifications and archive chains; shortening changes no acceptance.
+
+**BP-MD6-FINITE-INPUT-001 (human24143; R03j only):** Reject non-finite numeric values in raw `JSON` inputs, including nested list/object members, with `GraphQLError('JSON cannot represent non-finite numbers')`. Preserve raw `JSON` output identity, `JSONString`, finite/falsy/null, string literals `NaN`/`Infinity`, omission/list-null/default/direct-missing contracts, and existing native non-JSON-type policy. No broad JSON validator, serialization, SDL/settings/dependency change; M-D6 whole-ID remains open.
+
+| Task | Route, intended outcome and acceptance checks | State |
+|---|---|---|
+| R03j-I | D writer; human24143/BP-MD6-FINITE-INPUT-001, accepted24168. Input-only guard, other contracts unchanged. Captured RED2 -> edit -> identical-test GREEN2. Feature `3a7f2da0ac65e49d2fde02d403dbe95de664f143`. | [x] |
+| R03j-V | D independent+parent; accepted24168. Fresh focal108/matrix23; parent22PASS. Final full5988PASS/7skip/10warn; raw4449/4656=95.554124%, combined16549/16937=97.709158%, direct18/18lines8/8exits. Retained checks/qualifications in closure. | [x] |
+| R03j-C | Parent feature `3a7f2da0ac65e49d2fde02d403dbe95de664f143`, seven paths/322 authored lines; exact disk/Git bytes/modes. Conventional local commit. RDD OFF, no review/PR/push/tag/publication. | [x] |
+
+**R03j preclosure archive:** `md6-finite-input-closeout/tracker-preclosure.md` (49,739B; SHA-256 `e3156ceef9b80a159c39907459180364cb43113f12c208a7ff38116168f1a2eb`, mode0644) retains every prior qualification and archive chain.
+
+**R03j closeout:** Acceptance24168, full proof identities, failures, limitations and rollback: `md6-finite-input-closeout/closure.md` (SHA-256 `ee59e4e60a26ac5ccf294643028615c97c04475557cb7bd6581f459f6fe7e644`). No whole-M-D6 closure or output/JSONString policy change.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** R03i list-null slice complete locally. Explain M-D6 non-finite raw JSON input policy and obtain separate approval before changing it; output/JSONString policies remain separate. Wider audit/final-ID disposition open. No PR/push/tag/publication.
+**Next:** R03j finite-input slice complete locally; raw output and JSONString unchanged as requested. Next pending report claim: L-C10 fragment-spread/inline-fragment directives; confirm before correcting and consult before incompatibilities. Wider audit/T17 open; no PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
