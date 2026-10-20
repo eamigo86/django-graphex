@@ -20,11 +20,11 @@ Verify all supplied audit claims on the supported runtime, fix demonstrated defe
 
 **Public API gate:** Explain examples/migration impact and obtain individual approval before incompatible changes. All prior approved policies and their exact scopes remain unchanged and are preserved byte-for-byte in `ls3-subprotocol-preparation/tracker-preedit.md` (49,450 bytes; SHA256 `56b9462a9021ceb476422c81e5703b22afc86e6e7fff2f7a69aab2a2cac91354`), together with the existing accepted task rows/archive chains. This lossless locator replaces only the repeated approval inventory to keep the full recovery mirror below its 50,000-byte storage limit; it does not broaden or revoke any policy. The newly approved L-S3 scope is stated separately below. Strict TDD/docs/coverage >95%; no tags/publication.
 
-**BP-R05C-INSTANCE-CREATE-ATOMIC-001** (human22248): included Django backend prepares the populated unsaved CREATE parent, selects its write alias with that instance, and pins parent/nested writes to one transaction on that alias. Router timing/instance hints change; no coordinated cross-DB transaction or custom-backend public-contract change is approved.
+**BP-R05C-INSTANCE-CREATE-ATOMIC-001** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
-**BP-LS3-SUBPROTOCOL-001** (human approval 2026-10-19; obs22823): reject before accept unless the client offers `graphql-transport-ws`. Emit a clear, static server-side diagnostic explaining the required offer; document HTTP403/browser error-detail limitations and client configuration. Preserve Channels >=4.0 compatibility (its close API has no reason argument), valid clients, authentication and other transports. Other incompatible changes remain gated.
+**BP-LS3-SUBPROTOCOL-001** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
-**BP-LS2-ONCONNECT-001** (approval22923/proposal22915): optional async `on_connect(scope,payload)` returns this socket's authoritative authenticated user before ACK/schema/subscribe; no fallback to old session on rejection. Missing/null payload→{}, malformed configured payload4400, denial/no-user/exception4403 generically, deadline retained. Default None unchanged. No JWT/backend/dependency, HTTP/SSE, persisted session or live refresh/reauth policy change.
+**BP-LS2-ONCONNECT-001** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
 **BP-LS1-SSE-CONTROLS-001** Approved bounded scope, authority, exact checks and size limits remain unchanged; full wording preserved in `mu2-delete-closeout/tracker-preacceptance.md`. No authority transfers to M-U2.
 
@@ -38,7 +38,7 @@ Verify all supplied audit claims on the supported runtime, fix demonstrated defe
 
 **Implementation route:** Delegated direct, not SDD; broad preparation or 2+ nontrivial files to bounded writer and independent verifier. Conventional work-unit behavior/tests/docs commits; ~400 authored lines advisory, no code-golf. Delivery `ask-on-risk`, chain unresolved; no PR authority.
 
-**Remaining-pass checks:** Delegated direct, no SDD or RDD lifecycle (globally OFF). Each behavior work unit requires permanent deterministic RED before production, same-byte GREEN then REFACTOR with seed21002; supported native3.3 identity guard; focal `--no-cov`, related and full `-q`, raw branch/combined/nonempty changed-production patch each >=95.01%, Ruff/format/mypy81/strict Google docstrings, docs and both changelogs, Playground in its own cwd with `--no-migrations --no-cov`, static benchmark and concrete cross-surface impact. No real PostgreSQL/CI/wheel/timing claim without evidence. Preserve finite36 JSON/14 tags/old branch/site/9 DB-lstat controls and T14g ignored/temp/environment/physical-index/unlisted UNKNOWN; fixed JSON/scripts only, no content-shell interpolation/eval/`shell=True`.
+**Remaining-pass checks:** Exact runners, protected controls, exclusions and historical UNKNOWNs remain unchanged in `mu3-float-closeout/tracker-preacceptance.md`; Strict TDD and Quality above still apply.
 
 ## Task sequence
 
@@ -311,7 +311,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | N6 | 274 | Current local strict scan0 after R09a/R09b; historical23tracked/58earlier ignored/7postincident counts remain. Ignored profiles stay local, originals UNKNOWN; no whole-CI-clean verdict. Wider tests/lint/types claim remains bounded. | T17/R09a/R09b |
 
 
-**R03a evidence locator:** Scoped acceptance21311 and all failures/limits are retained byte-for-byte in `r03a-closure-r08a-preparation/tracker-preclosure.md` (SHA `4fb523786fe8b951ee410acf65aa32160790c5adf3fb93a7628b242a1d418a74`) and the R10a pre-edit archive; wider R03/T15/N6 open.
+**R03a evidence locator:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
 
 
@@ -321,15 +321,15 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R02b original preparation:** `r02b-lossless-datetime-preparation/tracker-preedit.md` preserves exact49,826B prior state/R05c chains. Fullhashes/probe/approvedplan retained in the partial preimage below.
 
-**R02b partial tracker preimage:** `r02b-independent-partial-tracker/tracker-preedit.md` (49,931B; SHA `daff0dfe7f64c724e7cb055c7bf5547fa7db674c1eabd610adeac8e2f04b4e6d`,0644) preserves exact approved plan/all archive chains/failed proofs/UNKNOWNs, including R05c closeout and DateTime probe. No acceptance or retrospective repair.
+**R02b partial tracker preimage:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
-**L-S1 pre-edit archive:** `ls1-sse-controls-preparation/tracker-preedit.md` (49,872B; SHA256 `9137aad354de300ba849e4aa611e9b78ad2316fe2da918ef3ee1cdd1046edc41`) preserves every shortened accepted task row (T14g, R01a, R01b, R02a, R05b, R05c, R06f, R09a, R09b, R11, R01d-I, R01d-V, R01d-C), all approvals, exact proof/commit/rollback scopes, historical failures and UNKNOWNs. No scope or acceptance change.
+**L-S1 pre-edit archive:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
 | R01e-I | D; human23051/23232; accepted23298;7ec2264 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R01e-V | D, independent + parent; accepted23298 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 | R01e-C | Inline; human23303 local size exception;7ec2264 | Accepted bounded scope only; exact contract/commits/proof/failures/limits/UNKNOWNs in M-U2 pre-edit archive. No broader closure. | [x] |
 
-**M-U2 pre-edit archive:** `mu2-delete-preparation/tracker-preedit.md` (49,798B; SHA256 `b94a205412107a67e434ebe8152f890dfa862924afd4d7e5aef90572e19bcab4`) preserves exact previous tracker, shortened rows, approvals/proof/failures/UNKNOWNs. Earlier preparation capacity assertions (51,365B/50,651B) aborted before tracker writes; no acceptance changed. Relative external locators use existing audit proof root.
+**M-U2 pre-edit archive:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
 **BP-MU2-DELETE-MATCH-001** (human23326): private immutable signal-time projected scalar values verify DELETE plain equality separately from public id_only data; server scope wins, missing/unsupported/unverifiable filters fail closed. No lookup interpreter/output widening/non-delete policy change. Native13-case witness: `mu2-delete-investigation/witness-20261019/REPORT.md` SHA9a8cc40d…. Strict TDD/docs/branch+combined+nonempty unit/cumulative diff>=95.01%; baseline1d26aa6/cumulative5a155a0.
 
@@ -337,15 +337,27 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R02c-V | D independent + parent; accepted23371 | Full5849/7skip/10warn; branches4414/4622, combined16437/16827; unit34/34+18/18, direct cumulative1871/1904+837/862. Quality/docs/Playground/static benchmark PASS; parent24PASS/protected parity. Exact proof below. | [x] |
 | R02c-C | Inline; human23374 local size exception;1ee78e2 | Approved474-line/10path behavior/tests/docs committed locally with exact disk/staged/Git blob and mode parity. Tracker/full mirror synchronized; closeout proof in `mu2-delete-local-commit/`. No PR/push/tag/publication; RDD OFF. | [x] |
 
-**M-U2 final proof:** accepted23371; independent `mu2-delete-independent/CORRECTION/REPORT.md` SHA256 `51e7b4657e1c5b9dfcfa6cd91065c6daa638dd06e00a4373eabc6f1c65256ace`; clarification23367 confirms current required checks PASS. Parent24PASS USED. Exact coverage/TDD/preimages/retrospective replay/failures and historical UNKNOWNs remain byte-for-byte in `mu2-delete-local-commit/tracker-before-closure.md` (49,825B; SHA `2bc2f147a267864a9d604211c856749625d0278047eb8455b6156e142a32d832`). Original first-RED bytes/full preimages remain UNKNOWN, not repaired by later passes. No full rerun after identical-byte commit. Feature parity `feature-postcommit-parity.json` SHA `66024497e9f7abfdbe9e8a5bf29854ca721f0ac3eb760f9522108111d1769373` in that proof directory.
+**M-U2 final proof:** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
 
-**M-U2 local delivery** (human23374): size:exception474 authored lines/10functional paths, local commits only. Pre-close tracker/protected controls and original preflight ref delta are retained in `mu2-delete-local-commit/`; no release authority.
+**M-U2 local delivery** Exact approved scope, commits/proof, archive chains, historical failures and UNKNOWNs remain unchanged and preserved byte-for-byte in `mu3-float-preparation/tracker-preedit.md`; no broader closure or authority.
+
+**M-U3 pre-edit archive:** `mu3-float-preparation/tracker-preedit.md` (49,570B; SHA256 `22edb0ce6bd88444eddd5aa970afadc5c919c2003f2fec4761daeccc774aca78`) preserves all shortened prior authority/proof/history and archive chains. Relative external proof paths use the audit proof root; no old scope or acceptance changes.
+
+**BP-MU3-FLOAT-EXACT-001** (human23415): exact numeric equality exception only for TWO actual finite built-in floats, including legacy dictionary -0.0/+0.0 pairs. No epsilon, string/Boolean/null/mixed-type coercion, nonfinite policy change, DB fallback or indexed-routing normalization. Other incompatibilities remain individually gated. Native diagnostic9PASS confirms signed-zero drops but ordinary finite equality works; proof `mu3-float-investigation/REPORT.md` SHA5a09e4ed…. Baseline7988d4a, cumulative5a155a0.
+
+| R02d-I | D writer; human23415; accepted23460 | Approved finite Float exception + permanent native regressions/docs; causal RED3fail/6pass, same-byte GREEN9pass; final9PASS. Legacy/mixed/nonfinite/index behavior preserved as scoped. | [x] |
+| R02d-V | D independent + parent; accepted23460 | Native3.3 full5858pass/7skip/10warn; branches4414/4622,combined16438/16828; unit1/1 branch-sensitive lines,raw exits0/0=N/A,impacted6/6; cumulative837/862. Related604,Playground61,quality/docs43pages,semantic1024pairs+7controls PASS; parent9PASS/frozen parity. | [x] |
+| R02d-C | Inline parent; accepted23460;c664db3 | Seven-path/272-line behavior/tests/docs commit verified against accepted disk/staged/Git blobs+modes. No size exception; full mirror synchronized. Rollback only this bounded unit. Local only; RDD OFF. | [x] |
+
+**M-U3 closeout archive:** `mu3-float-closeout/tracker-preacceptance.md`,49,699B,SHA`a2987abef3835872ff1b0c6fdf820e99b64d538830212aa64acd952270f79dcb`.
+
+**M-U3 accepted proof:** `mu3-float-independent/REPORT.md` (SHA34dfeef7…) and `mu3-float-parent-repair/` retain commands, preimages, full results, original guard KeyError and data-only helper RED/GREEN repair. Final parent9PASS on unchanged candidate. Earlier incomplete helper pre-capture, changelog preimage collision, invocation/analyzer failures and JUnit aggregate overcount remain explicitly qualified. No fresh CI/Postgres/Redis/build/timing. Test app already has FloatField; Playground/benchmark models do not, so no surface/schema or canonical-result changes. M-U3 stays partial:41 primary pending/limited IDs (28partial+6limited+7deferred),not41bugs;7recommendations separate;15principalblocks open;104checked/25overlapping unchecked task rows (not bug counts).
 
 ## Progress and next action
 
-**Recovery:** Complete pre-compaction/acceptance history is byte-for-byte in the R02a pre-edit archive above. Earlier locators and full hashes remain there, including R03a, R01b, retry correction, R01a, initial remaining-pass and T14i preimages; no history or qualification is discarded.
+**Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Approved M-U2 closed locally at1ee78e2;101checked work rows (not101bugs),15principal areas OPEN. Next R02 M-U3/M-U4 residuals need separate witnesses/contracts. Broader audit report pending; no PR/push/tag/publication or new policy authority.
+**Next:** Investigate R03/M-U6 directive residuals; explain and seek approval before any incompatible policy. M-U3 stays partial. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
