@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+- Default omitted time components in accepted textual `@date` values to zero,
+  including seconds and microseconds of partial times. Missing date components
+  still use the current date; explicit components, timezone handling, typed
+  date/datetime values, and null behavior are unchanged.
+
 - Preserve GraphQL null values through `@date`, including fields with an
   explicit format. Non-null fields now follow normal GraphQL error and null
-  propagation when their resolver returns null; date parsing, non-null
-  formatting, and other directives are unchanged.
+  propagation when their resolver returns null; other directives are unchanged.
 
 - Match exact finite native Float subscription filters against finite float
   event snapshots by numeric equality. Full-payload signed zeros now match in

@@ -559,7 +559,12 @@ Format dates and times using various formats.
 A nullable field that resolves to `null` remains `null` after `@date`, even
 with an explicit format. A null result on a non-null field follows normal
 GraphQL error and bubbling rules; the directive does not change SDL
-nullability. Non-null values retain the existing formatting behavior.
+nullability. For accepted text values, omitted time components now default to
+zero: `"2026-01-10"` with `format: "iso"` yields
+`"2026-01-10T00:00:00"`, and `"2026-01-10 14:30"` yields
+`"2026-01-10T14:30:00"`. A time-only string still fills the date from the
+current day. Explicit time and offset components, Python date/datetime inputs,
+and other directives keep their existing behavior.
 
 #### Format Options
 

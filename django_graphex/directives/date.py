@@ -97,6 +97,7 @@ def _parse(partial_dt: Any) -> datetime | None:
 
     Args:
         partial_dt: A datetime, date, time, timestamp, or datetime string.
+            Omitted time components in strings default to zero.
 
     Returns:
         A timezone-aware datetime, or None when parsing fails.
@@ -112,7 +113,10 @@ def _parse(partial_dt: Any) -> datetime | None:
         elif isinstance(partial_dt, (int, float)):
             dt = datetime.fromtimestamp(partial_dt)
         elif isinstance(partial_dt, (str, bytes)):
-            dt = parser.parse(partial_dt, default=timezone.now())
+            default = timezone.now()
+            if isinstance(partial_dt, str):
+                default = default.replace(hour=0, minute=0, second=0, microsecond=0)
+            dt = parser.parse(partial_dt, default=default)
 
         if dt is not None and timezone.is_naive(dt):
             dt = timezone.make_aware(dt)

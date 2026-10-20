@@ -85,6 +85,12 @@ the full directive reference see [Directives](../../directives.md).
 
 ### Date Formatting
 
+For a text value such as `"2026-01-10"`, querying
+`@date(format: "iso")` now returns `"2026-01-10T00:00:00"` rather than a
+timestamp with the server's current time. Partial text such as
+`"2026-01-10 14:30"` returns `"2026-01-10T14:30:00"`; a time-only text
+value still uses today's date. Explicit seconds and offsets are not replaced.
+
 If `publishedAt` is nullable and the resolver returns `null`, the formatted
 response still contains `"publishedAt": null`. Applying `@date` does not
 manufacture a date or an invalid-format placeholder. Declare a date field

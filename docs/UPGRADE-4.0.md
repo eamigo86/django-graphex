@@ -16,6 +16,22 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Review text values formatted with @date
+
+The `@date` directive now fills omitted time components of accepted text
+values with zeros, rather than the server's current hour, minute, second, or
+microsecond. For example, a resolver returning `"2026-01-10"` with
+`@date(format: "iso")` previously produced a value such as
+`"2026-01-10T08:15:21"` when the server clock read 08:15:21; it now produces
+`"2026-01-10T00:00:00"`. A partial value `"2026-01-10 14:30"` now produces
+`"2026-01-10T14:30:00"` instead of inheriting the current seconds.
+
+Check clients that relied on an implicit server time. Supply the intended
+time explicitly in the resolver value instead. A time-only string still uses
+the current date; explicit time and offset components, Python date/datetime
+values, timezone policy, and null behavior remain unchanged. The `iso` output
+format itself is unchanged and does not display offsets or microseconds.
+
 ### Review nullable fields formatted with @date
 
 The `@date` directive now passes a resolver's `None` through as GraphQL
@@ -28,8 +44,8 @@ wrapper's text. For example, a nullable `publishedAt` queried as
 If the field is declared non-null, the same resolver result now triggers the
 normal GraphQL nullability error and bubbles null to the nearest nullable
 parent. A non-null root field can make `data` null, so clients should check
-`errors` and the field's SDL nullability. This change does not alter the SDL,
-non-null date formatting, date parsing, or other directives.
+`errors` and the field's SDL nullability. The null change does not alter SDL or
+other directives; the separate text-time default change is described above.
 
 For nested creates using the included Django backend, a database router now
 receives a populated but unsaved parent instance before any related write.

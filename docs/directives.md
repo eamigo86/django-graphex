@@ -419,6 +419,16 @@ Powerful date and time formatting with multiple options:
 
 ### Naive dates and timezone
 
+For text input, missing time components now default to zero. A resolver value
+of `"2026-01-10"` or `"January 10, 2026"` formats as
+`2026-01-10T00:00:00` with `@date(format: "iso")`; `"2026-01-10 14:30"`
+formats as `2026-01-10T14:30:00`. The zero default includes microseconds,
+although the directive's `iso` output does not display them. A time-only
+string such as `"14:30"` still uses the current date for missing date
+components, but formats with seconds zero. Explicit time and offset
+components are preserved. Python `date` and `datetime` inputs retain their
+existing behavior.
+
 When a nullable field resolves to `null`, `@date` leaves it as `null` with or
 without an explicit format. It does not replace missing dates with the
 `INVALID FORMAT STRING` fallback. For a field declared non-null in the GraphQL
