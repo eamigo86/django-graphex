@@ -245,7 +245,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-U3 | 165 | Decimal snapshot equality corrected R02a; native DateTime precision/equality/output corrected R02b(22668). Other scalar/entry-path allegations remain separately scoped; no whole-row closure. | T08/R02 |
 | M-U4 | 166 | m2m_changed and bulk/update paths allegedly emit no events; determine documented contract separately. | T08 |
 | M-U5 | 167 | Bounded R03a native async transformation and borrowed-Future HTTP-bypass correction accepted21311 at `d1b7622` after rejected eager-wrapper leak and lazy `031299c` fix. Synchronous HTTP remains JSON500; no general async HTTP or wider directive policy. | T15/R03a |
-| M-U6 | 168 | Prior bounded date slices retained; directive-only ASCII case normalization R03g accepted23933, shared converters and schema names unchanged. Other-character legacy handling and number/currency null families remain separately scoped/open; no whole-row closure. | T15 |
+| M-U6 | 168 | Bounded date and directive-only ASCII case slices retained; guarded numeric-null passthrough R03h accepted24012. Schema names, other values and legacy other-character handling unchanged. Final whole-ID disposition/other input-contract scope remains for T17; no automatic broader closure. | T15 |
 | M-T1 | 173 | Fork-depth thread isolation fixed T14d; other registry races separate; refs accepted19885; archive. | T14d/T14 |
 
 ### Low (§6)
@@ -301,7 +301,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | N6 | 274 | Current local strict scan0 after R09a/R09b; historical23tracked/58earlier ignored/7postincident counts remain. Ignored profiles stay local, originals UNKNOWN; no whole-CI-clean verdict. Wider tests/lint/types claim remains bounded. | T17/R09a/R09b |
 
 
-**M-U6 absolute-zone pre-edit archive:** `mu6-absolute-zone-preparation/tracker-preedit.md` (49,894 B; SHA-256 `bcd21eaa1aa84ac502945b920c398a91aad580703972415dcec31f2002fa7ed4`; mode 0644) is the exact prior tracker, including ALL completed task wording, policy clauses, ID ledger, approvals, commits, proof, failed/partial attempts, limitations, UNKNOWNs and older archive chains. This lossless pointer changes no acceptance or residual claim. Earlier locators remain `r02b-lossless-datetime-preparation/tracker-preedit.md`, `ls2-on-connect-preparation/tracker-preedit.md`, `mu3-float-preparation/tracker-preedit.md`, `mu3-float-closeout/tracker-preacceptance.md`, `mu6-date-null-preparation/tracker-preedit.md`, `mu6-text-time-preparation/tracker-preedit.md` (49,891 B; SHA-256 `a63ec88da2f53e1648110d2cf87952690d74b6461b8b81817b10fe484822c5ea`), `mu6-text-time-independent/manifest.json`, and `mu6-text-time-closeout/tracker-preacceptance.md`; follow the full pre-edit archive for other chains rather than assuming a shortened row is complete.
+**M-U6 absolute-zone pre-edit archive:** `mu6-absolute-zone-preparation/tracker-preedit.md` (49,894 B; SHA-256 `bcd21eaa1aa84ac502945b920c398a91aad580703972415dcec31f2002fa7ed4`; mode 0644). It preserves all earlier wording, proof, qualifications, UNKNOWNs and archive chains. The exact R03h pre-edit archive below also preserves this pointer; no prior acceptance or residual claim is changed.
 
 | Task | Route and retained bounded outcome | State |
 |---|---|---|
@@ -327,53 +327,62 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | Task | Route, acceptance and checks | State |
 |---|---|---|
-| R03d-I | D; accepted23732; native causal RED/same-byte GREEN; parser callback provenance; final focal16; commit `dc556059c5c06e5d21bcf63388535901ffe3979a`. Exact pre-R03e archive. | [x] |
-| R03d-V | D independent+parent; accepted23732. Exact prior verification counts, failures and limits remain in the R03g preclosure archive below. | [x] |
-| R03d-C | Inline local 10-path/455-authored-line commit above; ~400 advisory overrun, no PR/RDD/remote/release. Exact pre-R03e archive. | [x] |
+| R03d-I | D; accepted23732; `dc556059c5c06e5d21bcf63388535901ffe3979a`. | [x] |
+| R03d-V | D; accepted23732. | [x] |
+| R03d-C | Inline; accepted23732; 455 authored lines, no PR. | [x] |
 
-**R03d proof/limits:** Exact historical proof, failures, UNKNOWNs, counts and archive chains remain in `mu6-case-closeout/tracker-preclosure.md` (49,709 B; SHA-256 `3fddd3fb02304a638b314f7b7cf367740bbfa127920a5777fd5a02b859b1281c`; mode0644). This lossless locator changes no policy or residual claim.
+**R03d:** Exact native RED/GREEN, checks, failures, limits and archive chain are lossless in the R03h pre-edit archive below. Only approved absolute-zone slice closed.
 
 **BP-MU6-NAIVE-ZONE-001** (human23759; R03e only): accepted GENUINELY timezone-less TEXT passed to `@date` uses its written wall clock in Django's **active** timezone for every absolute format (`default`, `iso`, `js`/`javascript`, custom) and both relative formats (`time ago`, `time ago 2d`), regardless of `USE_TZ`. Attach the zone; do not convert an assumed UTC instant. Keep missing-DATE/current-date and omitted-TIME/zero defaults, None, other input kinds and naive Python behavior. Prior numeric/Z TEXT absolute conversion (human23667) remains; numeric/Z relative, valid named UTC/GMT-only, and unknown-name fallback/warnings (e.g. XYZ) stay unchanged. Do not add a DST gap/fold policy, setting, dependency, API, SDL, scalar or other-directive change. Preserve accepted `(EET)`, RFC-year, nonterminal-offset and Z regressions. M-U6 remains partial; case conversion and number/currency null families remain open.
 
 | Task | Route, acceptance and checks | State |
 |---|---|---|
-| R03e-I | D; human23759, accepted23842; feature `9faf5be77ccba11e18822b1bfd44aba66241da89`. Exact implementation, TDD and scope proof in the R03g preclosure archive. | [x] |
-| R03e-V | D independent+parent; accepted23842. Exact prior verification counts, failures and limits remain in the R03g preclosure archive below. | [x] |
-| R03e-C | Inline local feature `9faf5be77ccba11e18822b1bfd44aba66241da89`,9paths403authoredlines; exact accepted disk/staged/committed blobs+modes. Local~400 advisory overrun retains tests/docs, no PR authority. RDD OFF; no remote/tag/publish/build/timing. | [x] |
+| R03e-I | D; human23759; accepted23842; `9faf5be77ccba11e18822b1bfd44aba66241da89`. | [x] |
+| R03e-V | D; accepted23842. | [x] |
+| R03e-C | Inline; accepted23842; 403 authored lines, no PR. | [x] |
 
-**R03e closeout:** Accepted23842, feature `9faf5be77ccba11e18822b1bfd44aba66241da89`; R03e alone closed, M-U6 partial. Original full proof, failed/UNKNOWN checks, limits, rollback and chronology remain losslessly in `mu6-case-preparation/tracker-preedit.md` (48,871 B; SHA-256 `e00c6d69c0ee48bcb05b4a886bbf4170f34fb64e848d3eb26fc935827f43208e`; mode 0644), which also retains the older archive chain. No live services, CI, build or timings were claimed.
+**R03e:** Exact TDD, counts, failed/UNKNOWN checks, rollback and history are lossless in the R03h pre-edit archive below. R03e alone closed; M-U6 partial.
 
 **Inherited offset follow-up (NOT R03e regression):** Independent baseline parity proves adjacent numeric zero offsets such as `2026-01-10T00:30+00:00` and `+0000` are rejected by the old regex negative-digit lookbehind, so absolute output stays UTC while equivalent Z localizes. Initial matrix assertion against assumed correctness failed; original script/output retained and corrected HEAD/current parity then passed. This residual is within human23667's prior all-offset conversion approval, not a new product policy or permission to change named zones/relative/defaults.
 
-**R03f preparation/history:** Exact 48,581B preclosure tracker is `mu6-zero-offset-closeout/tracker-preclosure.md`, SHA-256 `df555642fe2ab33ae2f73351a7c0d03443651c247ecdbc26afe612ab60280f87`, mode0644. It losslessly preserves the full preparation barrier, scope, runner, forecasts, prior counts and every earlier qualification/archive. Original46,100B pre-edit remains in `mu6-zero-offset-preparation/tracker-preedit.md`; no approval/history is broadened.
-
-| Task | Route, acceptance and checks | State |
+| Task | Route and retained evidence | State |
 |---|---|---|
-| R03d-Z | D; accepted23855 under prior human23667. Inherited adjacent numeric-zero absolute conversion fixed in R03f; no R03e regression or new policy. Feature `2ca275cd475d209024d87ae1dee7cdb2fb7e1665`. | [x] |
-| R03f-I | D writer; accepted23855. Native causal RED2 before source edit; same-test-byte GREEN2; final focal38, related197. Only zero-offset regex lookbehind removed; named/relative/R03e/parser grammar preserved. Feature `2ca275cd475d209024d87ae1dee7cdb2fb7e1665`. | [x] |
-| R03f-V | D independent+parent; accepted23855. Fresh matrix342rows/3078fields+focal38; retained full5912pass/7skip/10warn and quality/docs43/Playground61/static5 independently audited, NOT rerun. Raw4429/4636=95.534944%, combined16485/16873=97.700468%; cumulative1904/1937 branch-sensitive lines,851/876 exits=97.146119%. Direct0/0 N/A. Parent15PASS. | [x] |
-| R03f-C | Inline local feature `2ca275cd475d209024d87ae1dee7cdb2fb7e1665`,9paths100authoredlines; exact accepted disk/staged/Git blobs+modes. Parent mirror/tracker evidence below. RDD OFF; no PR/push/tag/pub/build/timing. | [x] |
+| R03d-Z | D; accepted23855; inherited offset gap, not R03e regression. | [x] |
+| R03f-I | D; accepted23855; RED2/same-byte GREEN2; `2ca275cd475d209024d87ae1dee7cdb2fb7e1665`. | [x] |
+| R03f-V | D; accepted23855; direct Python branch 0/0 N/A. | [x] |
+| R03f-C | Inline; accepted23855; 100 authored lines, no PR. | [x] |
 
-**R03f closeout:** Accepted23855; feature `2ca275cd475d209024d87ae1dee7cdb2fb7e1665`. Only R03d-Z/R03f closed; M-U6 remains partial. The exact pre-R03g archive above retains all independent/parent evidence, initial failures, UNKNOWNs, finite guards, caveats, rollback and prior archive chains. No live PG/Redis, CI, wheel, timings or canonical benchmark changes. RDD globally OFF; no PR/push/tag/publication.
+**R03f:** Exact preparation, checks, failures, limits and archive chain are lossless in the R03h pre-edit archive below. Adjacent numeric-zero absolute conversion only; M-U6 partial; RDD OFF.
 
 **BP-MU6-CASE-001 (human23892; R03g only):** Normalize only the output of `@camel_case`, `@snake_case`, and `@kebab_case` from words separated by spaces, underscores or hyphens and from camel/Pascal boundaries, including acronym blocks. For example, `orderTotal` becomes `orderTotal`/`order_total`/`order-total`, and `HTTPServer` becomes `httpServer`/`http_server`/`http-server` in directive order. Preserve None, Python coercion, other directives, and already-normalized idempotence. Do not change schema field/argument names, SDL, settings, dependencies, shared `_strconv` helpers, or `utils.to_kebab_case`; consult the parent before any other incompatible boundary policy. Human approval does not close number/currency null families or wider M-U6.
 
 | Task | Route, intended outcome and checks | State |
 |---|---|---|
-| R03g-I | D writer; human23892, accepted23933. Directive-local case words; shared helpers/compiled SDL unchanged. Native RED6 then writer-recorded same-test-byte GREEN6; historical proof qualification below. Feature `4b82906b44a4af22fad7502c291f9baeb29ab371`. | [x] |
-| R03g-V | D independent+parent; accepted23933. Fresh compiler matrix51rows/153outputs+focal57; retained full5931pass/7skip/10warn,related199,quality/docs43/Playground61/static5 audited,NOT rerun. Raw4437/4644=95.542636%,combined16515/16903=97.704549%;direct25/25lines8/8exits,cumulative859/884exits=97.171946%. Parent19PASS. | [x] |
-| R03g-C | Inline local feature `4b82906b44a4af22fad7502c291f9baeb29ab371`,10paths324authoredlines; accepted disk/staged/Git blobs+modes equal. Parent mirror/closeout below. RDD OFF; no PR/push/tag/pub/build/timing. | [x] |
+| R03g-I | D; human23892; accepted23933; directive-local `4b82906b44a4af22fad7502c291f9baeb29ab371`. | [x] |
+| R03g-V | D; accepted23933. | [x] |
+| R03g-C | Inline; accepted23933; 324 authored lines, no PR. | [x] |
 
-**R03g state:** 123 checked/25 overlap-unchecked;100 claim IDs retained,15 principal OPEN,41 pending/limited ID records(not41bugs)+7 recommendations. Only this case slice closed;M-U6 remains partial.
+**R03g:** Exact full proof/limits and archive chain are lossless in the pre-edit archive below. Native RED6/same-byte GREEN6 were recorded, but original RED test/source preimages and first-edit time were not retained; fresh bound-HEAD causality does not reconstruct history. 5,931 pass/7 skip/10 warn; raw branch 4,437/4,644=95.542636%, combined 16,515/16,903=97.704549%, direct 8/8 and cumulative 859/884 exits. Only approved directive case slice closed; M-U6 partial, RDD OFF.
 
+**Current audit state:** 126 checked/25 overlap-unchecked;100 claim IDs,15 principal OPEN,41 pending/limited ID records(not41bugs)+7 recommendations. R03h closes only the approved numeric-null slice; final whole-ID disposition remains for T17.
 
-**R03g closeout:** Parent acceptance23933, human23892/BP-MU6-CASE-001 only. Writer `mu6-case-implementation/manifest.json` SHA070ae5d8…; independent `mu6-case-independent/manifest.json` SHA89ed13109c7083c36ed8de479e77a3ec89b1dd1b1b96abbff61399f746206723; parent `mu6-case-closeout/parent-spot.json` SHA2f3b37d0…(19PASS,778 finite source/candidate paths+Git guards). Source74bff17f…/newtested7d537d…/mode0644. ASCII letters/digits with ordinary spaces/_/- normalize; any other character uses the exact legacy whole-input converter. Native compiler SDL field/argument/type names are byte-identical to HEAD; shared files/results and other directives unchanged. Actual5938 unique cases vs aggregate5961(+23 unexplained), zero errors/failures. Cumulative actual hits1954/1962 vs branch-sensitive1929/1962; measured exits859/884. Writer reports contemporaneous RED→production edit→same-test-byte GREEN and records equal SHA4fe04237…; ordered raw RED/GREEN results audited, but original six-test/source preimages and first-edit timestamp were not retained, so independent historical reconstruction is unavailable. Fresh bound-HEAD causality is verified, not substituted for history. Writer lint/config/docs drafts, independent staging-count/nested-operation/report-serialization harness failures and parent size-guard attempt remain preserved externally; final audits passed. Seven skips(5PG,optional multiselect,retiredGraphene),10 existing warnings; retained full/quality/docs/Playground were audited, not rerun independently. Playground has no changed behavior example(61PASS); five benchmark queries use no case/date directives, results/DB unchanged. No livePG/Redis/CI/wheel/timing/remote/tag/pub. Rollback only ten feature paths, keep tracker/prior fixes/proof. RDD globallyOFF; unassessable/HIGH assessment handled by ordinary independent verification, no preflight. Full preclosure archive above preserves preparation and all history.
+**R03h pre-edit archive:** `mu6-number-null-preparation/tracker-preedit.md` (49,892 B; SHA-256 `03bccbb505315e47ccb9555d2fb8e75d115b39d3f93d8cca091278cf3e26fbee`; mode 0644) retains exact pre-compaction R03d/e/f/g wording, approvals, proof, failures, UNKNOWNs, limitations and all older archive chains. Shortening completed history changes no acceptance or residual claim.
+
+**BP-MU6-NUMERIC-NULL-001 (human23947; R03h only):** `@number` and `@currency` must return Python None as GraphQL null, not `0.00`/`$0.00`; normal GraphQL NonNull error/bubbling applies. Retain all validation/caps: `@number` width/precision cap runs before the type gate even on None; applicable non-Int/Float format validation still rejects invalid `'.2q'` on None; oversized caps reject all types. Preserve raw Int/Float None, `0`, `'0'`, False, empty string and all other falsy/coercion/symbol/default behavior. No other numeric policy, directive, shared helper, schema/SDL, setting or dependency change; consult parent on incompatible extensions. M-U6 remains partial.
+
+| Task | Route, intended outcome and checks | State |
+|---|---|---|
+| R03h-I | D writer; human23947, accepted24012. Guarded null passthrough, ordinary NonNull bubbling; current cap/typegate/format and other-value policies retained. Original RED test/source archived, ordered RED4→edit→same-byte GREEN4 verified. Feature `e84090e6411e95b4a5a9b2378ee8c8d07164cb52`. | [x] |
+| R03h-V | D independent+parent; accepted24012. Fresh native matrix127rows/focal87; retained full5953pass/7skip/10warn, writerfocal191/related269, quality/docs43/Playground61/static5 audited,NOT rerun. Raw4439/4646=95.544554%,combined97.705228%;direct4/4lines2/2exits,cumulative861/886=97.178330%. Parent22PASS. | [x] |
+| R03h-C | Inline local feature `e84090e6411e95b4a5a9b2378ee8c8d07164cb52`,10paths453authoredlines; advisory overrun retains tests/docs, no PR authority. Exact accepted disk/staged/Git blobs+modes. RDD OFF; no PR/push/tag/pub/build/timing. | [x] |
+
+**R03h closeout:** Acceptance24012 under human23947/BP-MU6-NUMERIC-NULL-001. Exact 47,001B preclosure tracker archived at `mu6-number-null-closeout/tracker-preclosure.md` (SHA-256 `720803c7baa222898bd8d0e0571d28637320c23f34dc91daec882f2e67a70f0f`,mode0644). Writer `mu6-number-null-implementation/manifest.json` SHA1b01358f…; independent `mu6-number-null-independent/manifest.json` SHAb6d37abc1dae33abb9fb0f87805bdaffab2da2830ac28acdf7f330dfc6af44f0; parent `mu6-number-null-closeout/parent-spot.json` SHAd3a395ab…(22PASS,779finite source/candidate paths+Git guards). Sourceea396ad5…/newtestcf612300…/mode0644. Original RED test862f3acf…/source74bff17f… and ordered first-edit/identical-byte GREEN records were retained contemporaneously and verified. Exact historical writer argv/full environment unavailable after its compaction; no reconstruction claimed, fresh independent/parent commands captured exactly. All required retained outcomes/log hashes/runtime assertions validated. Actual5960 unique JUnit cases vs aggregate5983(+23 unexplained),zero errors/failures. Cumulative actual hits1958/1966 vs branch-sensitive1933/1966;actual exits861/886. Direct2/2 exits belong to Currency; Number ternary has no separate XML branch instrumentation. SDL changed only Number/Currency descriptions, not names/arguments/types/locations; no full-byte identity claim. Writer legacy assertion/static parser/inventory attempts, parent preparation header correction, final private-helper docstring clarification and verifier frozen-AST harness failure remain preserved; final source verified after correction. Seven skips(5PG,optional multiselect,retiredGraphene),10 existing warnings. Independent fresh matrix/focal; full/quality/docs/Playground/static proof audited,not rerun independently. Playground has no null-output example to change(61PASS); five benchmark queries use no numeric directives, canonical results/DB untouched. Finite14tags/protected branch unchanged; 101 independent JSON hashes vs writer selected67 are distinct inventories; DB checks lstat-only; CodeGraph directory-mtime watcher qualification retained. No livePG/Redis/CI/wheel/timing/remote/publication. Rollback only ten feature paths against parent3cacd9f, keep tracker/prior fixes/proof.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** R03g is locally complete. Investigate remaining M-U6 null handling in @number/@currency read-only before proposing any incompatible change; other audit residuals remain open. No PR/push/tag/publication.
+**Next:** R03h is locally complete. Investigate M-D5 JSON-string coercion read-only next, distinguishing text such as "123" from numeric 123; consult before any incompatible scalar policy. Wider audit residuals and final ID disposition remain open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
