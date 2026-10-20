@@ -16,9 +16,15 @@ All notable changes to this library are documented here. The format is based on
 
 - Display aware Python datetimes and text with an explicit numeric offset or
   `Z` in Django's active timezone for absolute `@date` formats, preserving
-  the instant while allowing date rollover. Relative formats, originally
-  naive text and other input kinds are unchanged; `iso` still omits its
-  output offset and microseconds.
+  the instant while allowing date rollover. Explicit-offset/Z text retains
+  its prior relative behavior; `iso` still omits its output offset and
+  microseconds.
+
+- Interpret accepted timezone-less text passed to `@date` as its written wall
+  clock in Django's active timezone for absolute and relative formats,
+  regardless of `USE_TZ`. Relative wording can change. Named UTC/GMT and
+  unknown timezone names, Python inputs and missing-date filling retain their
+  existing behavior; no daylight-saving gap/overlap policy was added.
 
 - Default omitted time components in accepted textual `@date` values to zero,
   including seconds and microseconds of partial times. Missing date components

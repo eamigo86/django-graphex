@@ -28,9 +28,25 @@ as `"2025-12-31T20:30:00"` under `@date(format: "iso")`, rather than
 
 If clients relied on the input offset's wall clock, review their expectations
 or choose an explicit display zone in the resolver. The `iso` output still
-omits offset and microseconds; it is not an offset-bearing timestamp. The
-relative formats, originally naive text, naive Python datetimes, date-only
-values, other input kinds, null handling and directive arguments are unchanged.
+omits offset and microseconds; it is not an offset-bearing timestamp. Explicit
+offset/Z text retains its prior relative behavior. Naive Python datetimes,
+Python dates, other input kinds, null handling and directive arguments remain
+unchanged.
+
+### Review timezone-less text in absolute and relative @date formats
+
+Accepted text with no timezone information now means its **written wall
+clock in Django's active timezone**, regardless of `USE_TZ`. This does not
+convert an assumed UTC instant. With `TIME_ZONE="UTC"` and `Europe/Madrid`
+active in July, `"2026-07-10 14:30"` gives `"14:30 +0200"` for
+`@date(format: "HH:mm ZZ")`, rather than `"14:30 +0000"`. The same active-zone
+interpretation applies to `"time ago"` and `"time ago 2d"`, so their relative
+wording may change. Audit callers that previously relied on the default
+timezone's interpretation; supply an explicit offset when the instant is
+known. Named UTC/GMT text and unknown timezone names retain their existing
+handling and warnings. A time-only string still takes its missing date from
+the parser's current-date default, even when the active zone has crossed
+midnight; no new daylight-saving gap/overlap policy was added.
 
 ### Review text values formatted with @date
 

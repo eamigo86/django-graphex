@@ -440,10 +440,24 @@ If the resolver returns `"2026-01-01T03:30:00+02:00"`, the field returns
 `"2025-12-31T20:30:00"`. The `iso` output still omits the offset and
 microseconds; clients must not read it as an offset-bearing timestamp. The
 same conversion applies to `default`, `js`/`javascript`, and custom absolute
-formats. The `"time ago"` and `"time ago 2d"` relative formats are unchanged.
-Text with no explicit offset keeps its former wall-clock output, even if the
-parser internally inherited timezone information from its default. Python
+formats. Text with **no timezone information** follows a different rule: its
+written date and time are interpreted directly in the active Django timezone,
+even when `USE_TZ=False`. No assumed UTC instant is converted. For example,
+with `TIME_ZONE="UTC"` and `Europe/Madrid` active in July, a resolver returning
+`"2026-07-10 14:30"` gives `"14:30 +0200"` for
+`@date(format: "HH:mm ZZ")`, rather than `"14:30 +0000"`. Its `iso` output
+still shows `"2026-07-10T14:30:00"` without an offset.
+
+The timezone-less text rule also changes `"time ago"` and `"time ago 2d"`:
+they compare the wall clock in the active zone, so relative wording can change.
+Text carrying an explicit numeric offset or `Z` keeps its previous relative
+behavior. Named UTC/GMT text and unknown timezone names are not treated as
+timezone-less; their existing fallback and warning behavior remains. Python
 `date`, naive `datetime`, and other input kinds keep their existing behavior.
+Missing time components still become zero, and a time-only string still gets
+its missing date from the parser's current-date default. Near midnight, that
+date can differ from the active zone's calendar date; this change does not
+reselect it or add a daylight-saving gap/overlap policy.
 
 When a nullable field resolves to `null`, `@date` leaves it as `null` with or
 without an explicit format. It does not replace missing dates with the
