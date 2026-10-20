@@ -855,7 +855,8 @@ Filters are evaluated **per connection at delivery time**:
   matches `exact: "2026-10-18T17:30:00.123456+05:30"` and delivers that
   captured DateTime through the existing output scalar. An older notification
   already truncated to milliseconds cannot regain its lost digits.
-- **The other three lookups** fall back to a single-row database check.
+- **The other three lookups** fall back to a single-row database check while
+  the row exists. A deleted row cannot satisfy that check.
 - Combine them:
   `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
 - Omitting `filter` delivers every event in the group.
@@ -895,10 +896,17 @@ Filters are evaluated **per connection at delivery time**:
     delivered payload.
 
 !!! note "Delete + lookup filters"
-    On a `delete` the row no longer exists, so only the in-memory (equality)
-    path applies. With `payload_mode = "full"` the payload still carries the
-    field values, so equality filters work on deletes; with id-only payloads,
-    non-pk filters cannot be evaluated on delete and the notification is dropped.
+    Automatic `delete` notifications capture **projected concrete scalar**
+    values from the model instance at `post_delete`: SQL has removed the row,
+    but loaded in-memory fields and the PK are still available. Deferred fields
+    are not fetched after deletion. Plain equality filters, including
+    server-forced scopes, can
+    use this private snapshot even when the public payload is id-only. The
+    server scope still overrides a conflicting client filter. Missing or
+    nonprojected fields and lookup filters are not inferred from a deleted
+    row. In id-only mode, relation equality is likewise not part of this
+    private scalar snapshot. Such events are dropped unless every condition is
+    verifiable. This is not a general in-memory lookup evaluator.
 
 !!! tip "Scoping vs. security"
     A client-supplied `filter` is a **convenience** scope, not an authorization
@@ -952,13 +960,20 @@ event or a WS `next{id, payload}` message). Subscribing with
     The `{"stream": ..., "payload": {"action": ..., "model": ..., "data": ...}}`
     message you may see in channel-layer captures is the **internal** broadcast
     between the signal binding and the subscriber processes — it never reaches
-    the client. Clients only see the transport frames above.
+    the client. Automatic deletes may also carry a private `delete_match`
+    mapping of projected scalar values in that envelope; it is never copied
+    into GraphQL `data`, SSE, or WebSocket results. Treat channel-layer access
+    as privileged: its operators can see those values until the message expires.
+    Clients only see the transport frames above.
 
 ## Notification payload
 
 On every model change the binding builds the notification `data`. By default it
-is **id-only** — `{"id": <pk>}` — which **skips serialization entirely** (the
-fastest option for hot models, where clients typically refetch on notification).
+is **id-only** — `{"id": <pk>}` — which skips full-payload serialization on
+create and update (the fastest option for hot models, where clients typically
+refetch on notification). An automatic delete additionally captures projected
+scalar values privately for equality matching; the public data remains only
+the primary key.
 Set it to **full** to serialize the whole instance through the native (Pydantic)
 backend.
 

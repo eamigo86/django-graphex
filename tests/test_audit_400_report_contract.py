@@ -29,11 +29,11 @@ EXPECTED_IDS = tuple(
 )
 EXPECTED_COUNTS = {
     "bounded-fixed": 43,
-    "partial": 27,
+    "partial": 28,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 8,
+    "decision-deferred": 7,
 }
 
 
@@ -111,6 +111,7 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert rows["M-D5"][1] == "contract" and "JSONString" in rows["M-D5"][2]
     assert rows["M-D4"][1] == "partial" and "1E+999999999" in rows["M-D4"][2]
     assert rows["M-U1"][1] == "partial" and "retry works" in rows["M-U1"][2]
+    assert rows["M-U2"][1] == "partial" and "PK-only event" in rows["M-U2"][3]
     assert rows["L-C8"][1] == "contract" and "tail window" in rows["L-C8"][2]
     assert rows["L-C9"][1] == "partial" and "offset/page" in rows["L-C9"][2]
     assert rows["L-E3"][1] == "partial" and "SITE-B" in rows["L-E3"][2]

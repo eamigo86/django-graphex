@@ -314,11 +314,20 @@ class SubscriptionBinding:
             )
         else:
             data_snapshot = None
+        delete_match_snapshot = (
+            self.subscription_cls._serialize_delete_match(instance)
+            if action == "delete"
+            else None
+        )
 
         transaction.on_commit(
-            lambda action=action, pk_snapshot=pk_snapshot, index_snapshot=index_snapshot, data_snapshot=data_snapshot: (
+            lambda action=action, pk_snapshot=pk_snapshot, index_snapshot=index_snapshot, data_snapshot=data_snapshot, delete_match_snapshot=delete_match_snapshot: (
                 self._deliver_automatic_snapshot(
-                    action, pk_snapshot, index_snapshot, data_snapshot
+                    action,
+                    pk_snapshot,
+                    index_snapshot,
+                    data_snapshot,
+                    delete_match_snapshot,
                 )
             ),
             using=using,
@@ -330,6 +339,7 @@ class SubscriptionBinding:
         pk_snapshot: Any,
         index_snapshot: dict[str, Any] | None,
         data_snapshot: dict[str, Any] | None,
+        delete_match_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Drop a failed post-commit automatic delivery without aborting callbacks.
 
@@ -338,9 +348,16 @@ class SubscriptionBinding:
             pk_snapshot: The primary-key snapshot.
             index_snapshot: The routing-index snapshot.
             data_snapshot: The full-payload snapshot, if enabled.
+            delete_match_snapshot: Private projected scalars for a delete.
         """
         try:
-            self._broadcast_snapshot(action, pk_snapshot, index_snapshot, data_snapshot)
+            self._broadcast_snapshot(
+                action,
+                pk_snapshot,
+                index_snapshot,
+                data_snapshot,
+                delete_match_snapshot,
+            )
         except Exception as error:
             _log_automatic_drop(
                 self.model_label, self.stream, action, "delivery", error
@@ -374,6 +391,7 @@ class SubscriptionBinding:
         pk_snapshot: Any,
         index_snapshot: dict[str, Any] | None,
         data_snapshot: dict[str, Any] | None,
+        delete_match_snapshot: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast pre-captured state after commit without a model instance.
 
@@ -386,6 +404,8 @@ class SubscriptionBinding:
             index_snapshot: The routing index captured at signal time.
             data_snapshot: Pre-serialized payload (non-None when
                 "payload_mode='full'"), or "None" for id-only mode.
+            delete_match_snapshot: Private projected scalar equality values for
+                delete only. Never included in the public payload data.
         """
         channel_layer = get_channel_layer()
         if channel_layer is None:  # pragma: no cover - misconfiguration guard
@@ -431,6 +451,8 @@ class SubscriptionBinding:
                 "pk": pk_snapshot,
                 "payload": payload,
             }
+            if action == "delete" and delete_match_snapshot is not None:
+                message["delete_match"] = delete_match_snapshot
             _safe_group_send(
                 channel_layer,
                 group_name,

@@ -625,6 +625,11 @@ class ArticleType(DjangoModelType):
 | `complexity` | `int` | `None` | Cost weight of the generated output type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 | `model_operations` | `tuple` | `("create", "update", "delete", "list", "retrieve")` | The operations this type serves. Anything left out has its `*Field()` builder raise, and stops counting when a parent nests this model |
 
+An automatic delete in id-only mode still publishes only the primary key.
+Its private channel-layer envelope may carry projected scalar values to decide
+plain equality and server scope after the row is gone; these values are not
+GraphQL fields or transport output. See [Filtering notifications](../usage/subscriptions.md#filtering-notifications).
+
 !!! tip "`model_operations` — declaring a read-only type"
     The default is **every** operation, so a type that says nothing behaves
     exactly as it always has. Narrowing it does two things:

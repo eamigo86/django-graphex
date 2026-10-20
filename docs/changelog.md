@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Match automatic delete notifications against signal-time projected scalar
+  equalities even with id-only public payloads. Server-forced scope still wins
+  over conflicting client filters, and private values never become GraphQL
+  output. Deferred, missing, nonprojected, id-only relation, and lookup conditions remain
+  conservative; create/update and manual notification behavior is unchanged.
+
 - Add independently opt-in SSE idle heartbeat comments (15-second setting)
   and a shared Redis-backed concurrent stream cap for authenticated accounts
   (five-stream setting). Both remain off by default. A full account receives

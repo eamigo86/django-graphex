@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
@@ -375,7 +376,30 @@ class ChannelLayerSource:
             # single-row DB verification; the in-memory equality gate (the common
             # case, empty remaining) never touches the ORM here.
             if self.filters:
-                remaining = split_filters(data, self.filters)
+                match_data = data
+                if payload.get("action") == "delete":
+                    private = (message or {}).get("delete_match")
+                    if isinstance(private, dict) and isinstance(data, dict):
+                        # The public payload always takes precedence. The
+                        # private channel envelope is never returned to GraphQL.
+                        valid = all(
+                            isinstance(key, str)
+                            and type(value) in (str, int, float, bool, type(None))
+                            and not (
+                                isinstance(value, float) and not math.isfinite(value)
+                            )
+                            for key, value in private.items()
+                        )
+                        if valid:
+                            match_data = {**private, **data}
+                    if isinstance(match_data, dict) and any(
+                        key in match_data
+                        and ((match_data[key] is None) != (value is None))
+                        for key, value in self.filters.items()
+                        if "__" not in key
+                    ):
+                        continue
+                remaining = split_filters(match_data, self.filters)
                 if remaining is None:
                     # Dropped in memory — keep waiting for the next event.
                     continue

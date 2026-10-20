@@ -7,6 +7,8 @@ engine.
 
 from __future__ import annotations
 
+import json
+import math
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -515,6 +517,45 @@ class Subscription(NativeObjectType):
         """
         data = serialize_instance(cls._meta.backend, instance)
         return {key: value for key, value in data.items() if cls._projection_keeps(key)}
+
+    @classmethod
+    def _serialize_delete_match(cls, instance: Any) -> dict[str, Any]:
+        """Capture only declared concrete scalar fields for private delete matching.
+
+        The snapshot is detached and JSON-safe before the on-commit callback is
+        registered. Custom backends are not assumed to share the native field
+        representation, so their private match set stays empty. A deferred
+        scalar is omitted rather than fetched after its row has been deleted.
+
+        Args:
+            instance: The model instance at the delete signal.
+
+        Returns:
+            A mapping of projected scalar names to immutable JSON values.
+        """
+        from ..core.backend import PydanticBackend, _json_safe
+        from .mixins import _LosslessDateTimeJSONEncoder
+
+        if type(cls._meta.backend) is not PydanticBackend:
+            return {}
+
+        snapshot: dict[str, Any] = {}
+        deferred_fields = instance.get_deferred_fields()
+        for name in cls._output_field_names():
+            field = cls._meta.model._meta.get_field(name)
+            if (
+                not field.concrete
+                or field.is_relation
+                or field.attname in deferred_fields
+            ):
+                continue
+            value = _json_safe(field, getattr(instance, name))
+            value = json.loads(json.dumps(value, cls=_LosslessDateTimeJSONEncoder))
+            if type(value) in (str, int, float, bool, type(None)) and not (
+                isinstance(value, float) and not math.isfinite(value)
+            ):
+                snapshot[name] = value
+        return snapshot
 
     @classmethod
     def get_binding(cls) -> SubscriptionBinding:
