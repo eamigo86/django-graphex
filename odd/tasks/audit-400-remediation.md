@@ -32,135 +32,135 @@ Verify all supplied audit claims on the supported runtime, fix demonstrated defe
 
 ## Task sequence
 
-**Archive key:** Every shortened accepted task or ledger row marked `archive` points to the exact pre-compaction wording at `remaining-pass-preparation/tracker-preparation-preimage.md` (49,912 bytes; SHA-256 `442c725454b062a2db6b7b4fab70a68cceea2f613ff691d7b4e202aea0b50a94`). That preimage preserves approvals, failed/partial attempts, limits, and proof locators; compacting a row does not broaden acceptance or close a residual claim.
+**Archive key:** Shortened completed task rows below point first to `mu6-naive-zone-preparation/tracker-preedit.md` (48,710 B; SHA-256 `63d5a374e6752498017906ef9c2b6ec65e16540f26c2618c60c48ae1d6a9c520`; mode 0644), the exact pre-R03e tracker. That immutable preimage preserves all completed wording, approvals, proof, failures, UNKNOWNs, limits and older archive chains; shortening never broadens acceptance or closes a residual claim. Its chain includes `remaining-pass-preparation/tracker-preparation-preimage.md` (49,912 B; SHA-256 `442c725454b062a2db6b7b4fab70a68cceea2f613ff691d7b4e202aea0b50a94`), still authoritative for earlier rows.
 
 
 Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13i-selected-introspection-classifier-implementation/tracker-pre-t13i.md` (SHA `5df41527bccd61ab2b5b36ccc19605162f10ba86d7a9b45c5d99ce31fc02e809`). All pre-T14h wording, proof chronology and qualifications are preserved byte-for-byte at `lm3-enum-cache-triage/tracker-prep-preimage.md` (49,745 bytes; SHA256 `ed104091d7cc73c396abd49e0bc19febbff359361c93bcaac6fc3bb8bac069d0`); shortened completed rows below are locators, not revised acceptance claims. Exact pre-T14i tracker: `lm4-registry-preparation/tracker-prep-preimage.md` (48,899 bytes; SHA256 `9e078429c84b9c9933740afc7ebb4c29f6fa5e0ea5b4473c6ca9173657fe3906`).
 
 | Task | Route | Outcome and acceptance evidence | State |
 |---|---|---|---|
-| T00 | D, bootstrap | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| T00 | D, bootstrap | Archived bounded outcome. | [x] |
 | T01 | D | Q2 scoped completion; archive. | [x] |
 | T02a | D | C3 scoped completion; archive. | [x] |
-| T02b | D | C2 scoped completion; refs 92b1358f,7bec9571; archive. | [x] |
-| T03a | D | C1 scoped completion; refs dbabfde; archive. | [x] |
-| T03b | D | A8 scoped completion; refs 8f86dc8,12a7506; archive. | [x] |
-| T03c | D | M-D3 scoped completion; refs d278321,4cc048b; archive. | [x] |
+| T02b | D | Archived bounded outcome. | [x] |
+| T03a | D | Archived bounded outcome. | [x] |
+| T03b | D | Archived bounded outcome. | [x] |
+| T03c | D | Archived bounded outcome. | [x] |
 | T03 | D | Reproduce C1/A8/Decimal cases; use compatible fix if proven adequate. For each necessary incompatible SDL candidate, explain examples and migration impact to the user and obtain its separate explicit approval before implementation; output/input regression tests and docs. | [ ] |
 | T04 | D | A2 POST body order accepted T04a; A11 per-result output cap accepted T04b. Retained-cache bytes/memory claims still OPEN; no broader resource policy approved. Exact history in `t14e-lc12-implementation/tracker-prep-preimage.md`/T04 proof. | [ ] |
-| T04a | D | A2 scoped completion; refs 84369e4; archive. | [x] |
-| T04b | D | A11 scoped completion; refs 441899a,40f0f57; archive. | [x] |
+| T04a | D | Archived bounded outcome. | [x] |
+| T04b | D | Archived bounded outcome. | [x] |
 | T05 | D | A1 default-DB rollback T05a and R05b stable/model-routed nestedrollback accepted; included-Django instance-dependent CREATE R05c accepted22414/57e0aab (two-stage through checks, local rollback). Native ok:false, broader cross-DB and lost-update policies remain open. | [ ] |
-| T05a | D | A1 scoped completion; refs f91022e,cc67be5; archive. | [x] |
+| T05a | D | Archived bounded outcome. | [x] |
 | T06 | D | A3/A4/M-D7/L-C7 independently accepted; M-S6 is a documented shortcut limitation. Other permission/schema claims remain open, including T07 scope investigations. `t06e-lc7-recheck/README.md`. | [ ] |
-| T06a | D | A3 scoped completion; refs edb82a3,a2f329d; archive. | [x] |
-| T06b-F1 | D | A4 scoped completion; refs 93edfdd; archive. | [x] |
-| T06a-F2 | D | T06a-F2 scoped completion; refs 4643f9a; archive. | [x] |
-| T06b | D | A4 scoped completion; refs 65e99d3,ff4741e; archive. | [x] |
-| T06c | D | M-D7 scoped completion; refs 34b37e6,0b267da; archive. | [x] |
-| T06e | D | L-C7 scoped completion; refs c3a35a7,da31d91,668de45; archive. | [x] |
+| T06a | D | Archived bounded outcome. | [x] |
+| T06b-F1 | D | Archived bounded outcome. | [x] |
+| T06a-F2 | D | Archived bounded outcome. | [x] |
+| T06b | D | Archived bounded outcome. | [x] |
+| T06c | D | Archived bounded outcome. | [x] |
+| T06e | D | Archived bounded outcome. | [x] |
 | T07 | D | SD3/4/5, bounded automatic FK/reverse-FK/OneToOne/M2M outputs R06a/f/g and SD2 R06b–e accepted. Custom/global/newnonnull/unrelated policies excluded; T07 open. | [ ] |
-| T07c | D, accepted | SD3 scoped completion; refs a96ca17,6275b6e,dcdd25b,6a964b4; archive. | [x] |
-| T07d | D, read-only | SD4/SD5 scoped completion; read-only triage, no policy approval; archive. | [x] |
-| T07e | D | SD4 scoped completion; refs 8521c02,c39b434; archive. | [x] |
-| T07f | D | SD5 scoped completion; refs f0b3126,0a4ba13; archive. | [x] |
+| T07c | D, accepted | Archived bounded outcome. | [x] |
+| T07d | D, read-only | Archived bounded outcome. | [x] |
+| T07e | D | Archived bounded outcome. | [x] |
+| T07f | D | Archived bounded outcome. | [x] |
 | T08 | D | Confirm/fix A5/A6 and subscription lifecycle, filters, events, and transport claims; real-user WS/SSE and failure-path tests. | [ ] |
-| T08a | D, accepted16725 | A5 scoped completion; refs ac72aa7,c9cb4f1; archive. | [x] |
-| T08b | D, accepted | A6 scoped completion; refs 901c35b,c3edeb3; archive. | [x] |
-| T08c | D; human20540/root20555–20556; accepted20619 | L-E4/N6 scoped completion; diagnostic only; initial failures retained; refs 15834; archive. | [x] |
+| T08a | D, accepted16725 | Archived bounded outcome. | [x] |
+| T08b | D, accepted | Archived bounded outcome. | [x] |
+| T08c | D; human20540/root20555–20556; accepted20619 | Archived bounded outcome. | [x] |
 | T09 | D | A7/M-D8/M-D9 accepted; other annotation/interface claims remain open. | [ ] |
-| T09a | D | A7 scoped completion; refs accepted16924; archive. | [x] |
-| T09b | D | M-D8 scoped completion; refs accepted16997; archive. | [x] |
-| T09c | D | M-D9 scoped completion; refs accepted17088; archive. | [x] |
+| T09a | D | Archived bounded outcome. | [x] |
+| T09b | D | Archived bounded outcome. | [x] |
+| T09c | D | Archived bounded outcome. | [x] |
 | T10 | D | A9/T10a and bounded A10/T10b–d accepted; wider A10 open. Residual triage is read-only; no general `full_clean()`/upsert policy approved. | [ ] |
-| T10a | D, accepted17162 | A9 scoped completion; refs accepted17162; archive. | [x] |
-| T10b | D, accepted17234 | T10b scoped completion; refs accepted17234; archive. | [x] |
-| T10c | D | A10/P1 scoped completion; positive two-field only; wider A10 open; refs accepted17314,6bd37b2,ebe32b0,fc3bccd0; archive. | [x] |
-| T10d | D, accepted17370 | T10d scoped completion; refs accepted17370; archive. | [x] |
+| T10a | D, accepted17162 | Archived bounded outcome. | [x] |
+| T10b | D, accepted17234 | Archived bounded outcome. | [x] |
+| T10c | D | Archived bounded outcome. | [x] |
+| T10d | D, accepted17370 | Archived bounded outcome. | [x] |
 | T11 | D | A12/filter types/limits wider block open. T11a exact-null, T11b date-part, T11c A12 AND/to-many and T11d M-F1 compatible slices accepted; M-F3 empty-Boolean policy unchanged. | [ ] |
-| T11a | D, accepted17430 | M-F3 scoped completion; refs c4273e2; archive. | [x] |
-| T11b | D, accepted17503 | T11b scoped completion; refs 53b3481; archive. | [x] |
-| T11c | D, accepted17607 | A12 scoped completion; DB-read/htmlcov safety violations retained; refs 4c3e4bb; archive. | [x] |
-| T11d | D, accepted17812 | M-F1/A12 scoped completion; refs 954a2036; archive. | [x] |
+| T11a | D, accepted17430 | Archived bounded outcome. | [x] |
+| T11b | D, accepted17503 | Archived bounded outcome. | [x] |
+| T11c | D, accepted17607 | Archived bounded outcome. | [x] |
+| T11d | D, accepted17812 | Archived bounded outcome. | [x] |
 | T12 | D | Confirm/fix A13 and pagination ordering/count/page boundary claims; backend-specific and in-memory regression tests. | [ ] |
-| T12a | D, accepted17645 | A13 scoped completion; refs accepted17645; archive. | [x] |
-| T12b | D, accepted17715 | T12b scoped completion; refs accepted17715; archive. | [x] |
-| T12c | D, accepted17780 | T12c scoped completion; refs accepted17780; archive. | [x] |
-| T12d | D, accepted17944 | M-F7 scoped completion; refs accepted17944; archive. | [x] |
-| T12g | D, accepted19564 | M-F7 scoped completion; refs accepted19564; archive. | [x] |
-| T12f | D, human18041; accepted18137 | M-F5 scoped completion; refs f6e88d4,d1a6a18; archive. | [x] |
-| T12e | D, human17983; accepted18032 | M-F6 scoped completion; refs c75ea72; archive. | [x] |
+| T12a | D, accepted17645 | Archived bounded outcome. | [x] |
+| T12b | D, accepted17715 | Archived bounded outcome. | [x] |
+| T12c | D, accepted17780 | Archived bounded outcome. | [x] |
+| T12d | D, accepted17944 | Archived bounded outcome. | [x] |
+| T12g | D, accepted19564 | Archived bounded outcome. | [x] |
+| T12f | D, human18041; accepted18137 | Archived bounded outcome. | [x] |
+| T12e | D, human17983; accepted18032 | Archived bounded outcome. | [x] |
 | T13 | D | Confirm/fix HTTP/cache/error/introspection/limits and async-view claims, separating documented defaults from defects and optional hardening; each necessary incompatible public-default change needs its own explained user approval before implementation. | [ ] |
-| T13a | D, human18167; accepted18241 | M-S1 scoped completion; shell-mirror effects UNPROVEN; refs 96e1f9e,bcd6686,88107; archive. | [x] |
-| T13b | D, accepted18271 | M-S5 scoped completion; refs accepted18271; archive. | [x] |
-| T13c | D, human18294; accepted18361 | M-S4 scoped completion; refs accepted18361; archive. | [x] |
-| T13d | D, human18441; accepted18531 | M-H3 scoped completion; refs 043811e,cbfb9fb; archive. | [x] |
-| T13d-doc | D, accepted18531; `cbfb9fb` | T13d-doc scoped completion; DOC002 correction only; archive. | [x] |
-| T13e | D, human18554; accepted18627 | M-H4 scoped completion; Ruff cache effects UNPROVEN; refs 69d326e; archive. | [x] |
-| T13f | D, human18659; accepted18829 | M-H2 scoped completion; initial PARTIALs retained; archive. | [x] |
-| T13g | D, accepted18888 | M-S3 scoped completion; refs accepted18888; archive. | [x] |
-| T13h | D, accepted18998 | M-H1 scoped completion; refs 347b2ff; archive. | [x] |
-| T13i | D, accepted19287 | T13i scoped completion; refs accepted19287; archive. | [x] |
-| T14a | D, accepted19162 | T14a scoped completion; refs 9fec11d; archive. | [x] |
-| T14b | D, parent scope19589; accepted19665 | M-O1 scoped completion; refs 316844e; archive. | [x] |
-| T14c | D, accepted19762 | M-O2 scoped completion; refs 961c018; archive. | [x] |
-| T14d | D, accepted19885 | M-T1 scoped completion; archive. | [x] |
-| T14e | D, accepted20126 | L-C12/N6 scoped completion; refs c8bb0dd; archive. | [x] |
-| T14f | D, accepted20271; human20198 | L-E1/N6 scoped completion; refs 0c5e320; archive. | [x] |
-| T14g | D; human20732/root20769; accepted20835 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| T14h | D; human20843; accepted20879 | L-M3 scoped completion; old RED/setup failures and public-schema gap retained; refs 14720eab,4f5161a,15845,13078; archive. | [x] |
-| T14i | D; human20887/root20919; accepted20982 | L-M4 scoped completion; old witness failures and public-schema gap retained; refs 13b2e6b4,15857,13078; archive. | [x] |
+| T13a | D, human18167; accepted18241 | Archived bounded outcome. | [x] |
+| T13b | D, accepted18271 | Archived bounded outcome. | [x] |
+| T13c | D, human18294; accepted18361 | Archived bounded outcome. | [x] |
+| T13d | D, human18441; accepted18531 | Archived bounded outcome. | [x] |
+| T13d-doc | D, accepted18531; `cbfb9fb` | Archived bounded outcome. | [x] |
+| T13e | D, human18554; accepted18627 | Archived bounded outcome. | [x] |
+| T13f | D, human18659; accepted18829 | Archived bounded outcome. | [x] |
+| T13g | D, accepted18888 | Archived bounded outcome. | [x] |
+| T13h | D, accepted18998 | Archived bounded outcome. | [x] |
+| T13i | D, accepted19287 | Archived bounded outcome. | [x] |
+| T14a | D, accepted19162 | Archived bounded outcome. | [x] |
+| T14b | D, parent scope19589; accepted19665 | Archived bounded outcome. | [x] |
+| T14c | D, accepted19762 | Archived bounded outcome. | [x] |
+| T14d | D, accepted19885 | Archived bounded outcome. | [x] |
+| T14e | D, accepted20126 | Archived bounded outcome. | [x] |
+| T14f | D, accepted20271; human20198 | Archived bounded outcome. | [x] |
+| T14g | D; human20732/root20769; accepted20835 | Archived bounded outcome. | [x] |
+| T14h | D; human20843; accepted20879 | Archived bounded outcome. | [x] |
+| T14i | D; human20887/root20919; accepted20982 | Archived bounded outcome. | [x] |
 | T14 | D | Confirm/fix optimizer selection/concurrency/thread-safety and remaining low-level exception/memory claims where reproducible; bounded tests. | [ ] |
 | T15 | D | Confirm/fix scalar, directive, and low-level output-contract claims not already covered; behavior-specific tests/docs. | [ ] |
-| T15a | D; human20321; accepted20475 | L-E2/N6 scoped completion; refs 7fb4c12; archive. | [x] |
+| T15a | D; human20321; accepted20475 | Archived bounded outcome. | [x] |
 | T16a | D | Q2 scoped completion; archive. | [x] |
-| T16b | D, accepted | T16b scoped completion; refs ca6cfb7; archive. | [x] |
-| T16c | D, accepted17162 | A9 scoped completion; refs 4ec40e8; archive. | [x] |
-| T16d | D, accepted18385 | T16d scoped completion; refs 3e3af998; archive. | [x] |
-| T16e | D, accepted19086 | T16e scoped completion; refs 9c431f6; archive. | [x] |
-| T16f | D, accepted19403 | T16f scoped completion; refs 0606b34; archive. | [x] |
+| T16b | D, accepted | Archived bounded outcome. | [x] |
+| T16c | D, accepted17162 | Archived bounded outcome. | [x] |
+| T16d | D, accepted18385 | Archived bounded outcome. | [x] |
+| T16e | D, accepted19086 | Archived bounded outcome. | [x] |
+| T16f | D, accepted19403 | Archived bounded outcome. | [x] |
 | T16g | D, accepted20001 | N6 scoped completion; archive. | [x] |
 | T16 | D | Wider tooling, coverage, metadata, refactor and dead-code block OPEN; no benchmark regeneration. Q2=T16a, datepart=T16e, GET-body=T16f. Base-reproduced seed1823552487 test-fixture cached-pair leak is fixed in accepted T16g; not a new original audit ID and not N6 closure. | [ ] |
 | T17 | D | Complete independent disposition of every ledger ID, verify section-9 negative claims, run full quality/coverage gates, list all final false positives with evidence and reasons, and report remaining design decisions or unavailable checks. | [ ] |
 
 | R01 | D; human21002; unchecked | L-S4/R01a, M-U1/R01b, L-S3/R01c, optional L-S2/R01d and approved single-instance L-S1/R01e accepted in bounded scopes. Broader WS/SSE/HA policies and T08 remain open. | [ ] |
-| R01a | D; human21002; accepted21102 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R01b | D; human21002; accepted21184 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R01c-I | D; approval22823; accepted22902; ef598a7 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R01c-V | D; accepted22902 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R01c-C | Inline; accepted22902; ef598a7/33885c0 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R01a | D; human21002; accepted21102 | Archived bounded outcome. | [x] |
+| R01b | D; human21002; accepted21184 | Archived bounded outcome. | [x] |
+| R01c-I | D; approval22823; accepted22902; ef598a7 | Archived bounded outcome. | [x] |
+| R01c-V | D; accepted22902 | Archived bounded outcome. | [x] |
+| R01c-C | Inline; accepted22902; ef598a7/33885c0 | Archived bounded outcome. | [x] |
 | R02 | D; human21002; unchecked | Subscription data delivery M-U2/M-U3/M-U4: separate contract, real-path witnesses, then compatible scoped work units. | [ ] |
-| R02a | D; human21002; accepted21577 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R02b | D; accepted22668;33ff878/08c9725 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R02a | D; human21002; accepted21577 | Archived bounded outcome. | [x] |
+| R02b | D; accepted22668;33ff878/08c9725 | Archived bounded outcome. | [x] |
 | R03 | D; human21002; unchecked | Directives/scalars: M-U5/M-U6, M-D4/M-D5/M-D6, L-C10/L-C11/L-C13; preserve established SDL/input contracts or defer incompatible policy. | [ ] |
-| R03a | D; human21002; accepted21311 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R03a | D; human21002; accepted21311 | Archived bounded outcome. | [x] |
 | R04 | D; human21002; unchecked | Minor HTTP/pagination/cursor L-C1–6/L-C8/L-C9 and A13 residual; distinguish accepted bounded slices from remaining malformed-input cases. | [ ] |
 | R05 | D; human21002/22248; unchecked | Mutations A1/M-D1/M-D2/A10 residuals; R05c populated-parent singlealiasCREATE approved for includedDjango only. Other ok:false/lost-update/crossDB/custombackend policy gaps remain. | [ ] |
-| R05a | D; human21002; accepted21526 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R05b | D; human21002; accepted21547 scoped | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R05c | D; human22248/22326/22349; accepted22414 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R05a | D; human21002; accepted21526 | Archived bounded outcome. | [x] |
+| R05b | D; human21002; accepted21547 scoped | Archived bounded outcome. | [x] |
+| R05c | D; human22248/22326/22349; accepted22414 | Archived bounded outcome. | [x] |
 | R06 | D; human21002/21642/21718/21820/21939/22033/22081/22151 | R06a–g accepted bounded outputs/filters. Custom/global policy, L-E3 beyond SITE-B and L-C12 MTI deferred/unproven. | [ ] |
-| R06a | D; human21642; accepted21711; BP-SD1-READ-SCOPE-001 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R06b | D; human21718; accepted21796; BP-SD2-FK-FILTER-001 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R06c | D; human21820; accepted21929; BP-SD2-REVERSE-FK-FILTER-001 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R06d | D; human21939; accepted21993; BP-SD2-M2M-FILTER-001 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R06e | D; human22033; accepted22059; BP-SD2-FORWARD-O2O-FILTER-001 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R06g | D; accepted22219;0ee46b9/4cbb458 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R06a | D; human21642; accepted21711; BP-SD1-READ-SCOPE-001 | Archived bounded outcome. | [x] |
+| R06b | D; human21718; accepted21796; BP-SD2-FK-FILTER-001 | Archived bounded outcome. | [x] |
+| R06c | D; human21820; accepted21929; BP-SD2-REVERSE-FK-FILTER-001 | Archived bounded outcome. | [x] |
+| R06d | D; human21939; accepted21993; BP-SD2-M2M-FILTER-001 | Archived bounded outcome. | [x] |
+| R06e | D; human22033; accepted22059; BP-SD2-FORWARD-O2O-FILTER-001 | Archived bounded outcome. | [x] |
+| R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
+| R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
 | R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader SDL/input shapes; verify separately from accepted L-M2–4 internal fixes. | [ ] |
-| R08a | D; human21002; accepted21363 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
-| R09a | D; human21002; accepted21497 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R09b | D; approved22685; accepted22777; f931cb9/e740fb6 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R09c | D; human21002; accepted21591 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
+| R09b | D; approved22685; accepted22777; f931cb9/e740fb6 | Archived bounded outcome. | [x] |
+| R09c | D; human21002; accepted21591 | Archived bounded outcome. | [x] |
 | R10 | D; human21002; unchecked | Recommendation/negative-proof Q5–10, P1 and N1–5; classify evidence and reasons, not automatic code changes. | [ ] |
-| R10a | D; human21002; accepted21610 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R11 | D writer/verification, inline tracking; accepted21639; HISTORY_PARTIAL | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R10a | D; human21002; accepted21610 | Archived bounded outcome. | [x] |
+| R11 | D writer/verification, inline tracking; accepted21639; HISTORY_PARTIAL | Archived bounded outcome. | [x] |
 
-| R01d-I | D; approved22923/22957; accepted23010;98956fa | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R01d-V | D; accepted23010 | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
-| R01d-C | Inline; accepted23010;98956fa | Accepted scoped; full proof/limits/UNKNOWNs in M-U6 absolute-zone pre-edit archive. No wider closure. | [x] |
+| R01d-I | D; approved22923/22957; accepted23010;98956fa | Archived bounded outcome. | [x] |
+| R01d-V | D; accepted23010 | Archived bounded outcome. | [x] |
+| R01d-C | Inline; accepted23010;98956fa | Archived bounded outcome. | [x] |
 
 **L-S2 pre-edit archive:** `ls2-on-connect-preparation/tracker-preedit.md` preserves the exact49,554-byte prior tracker (SHA256 `9360137064090d9edf454e11599a4969a019a2dc1a9d6fb4706238bdfc783220`), including every shortened R01c/R09b acceptance qualification and historical archive chain. Lossless locators keep the complete mirror below50,000 bytes; no scope/history is revoked or broadened.
 
@@ -305,42 +305,56 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | Task | Route and retained bounded outcome | State |
 |---|---|---|
-| R01e-I | D; accepted single-instance L-S1 implementation; full scope/qualifications in pre-edit archive. | [x] |
-| R01e-V | D; accepted L-S1 independent/live proof; full scope/qualifications in pre-edit archive. | [x] |
-| R01e-C | Inline; accepted L-S1 local delivery; full scope/qualifications in pre-edit archive. | [x] |
-| R02c-I | D; accepted M-U2 delete-match implementation; full scope/qualifications in pre-edit archive. | [x] |
-| R02c-V | D; accepted M-U2 verification; full scope/qualifications in pre-edit archive. | [x] |
-| R02c-C | Inline; accepted M-U2 local delivery; full scope/qualifications in pre-edit archive. | [x] |
-| R02d-I | D; accepted M-U3 float-exact implementation; full scope/qualifications in pre-edit archive. | [x] |
-| R02d-V | D; accepted M-U3 verification; full scope/qualifications in pre-edit archive. | [x] |
-| R02d-C | Inline; accepted M-U3 local delivery; full scope/qualifications in pre-edit archive. | [x] |
-| R03b-I | D; accepted M-U6 date-null implementation; full scope/qualifications in pre-edit archive. | [x] |
-| R03b-V | D; accepted M-U6 date-null verification; full scope/qualifications in pre-edit archive. | [x] |
-| R03b-C | Inline; accepted M-U6 date-null local delivery; full scope/qualifications in pre-edit archive. | [x] |
-| R03c-I | D; accepted M-U6 text-time implementation; full scope/qualifications in pre-edit archive. | [x] |
-| R03c-V | D; accepted M-U6 text-time verification; full scope/qualifications in pre-edit archive. | [x] |
-| R03c-C | Inline; accepted M-U6 text-time local commit `35199aa`; full scope/qualifications in pre-edit archive. | [x] |
+| R01e-I | Scoped accepted; pre-R03e archive. | [x] |
+| R01e-V | Scoped accepted; pre-R03e archive. | [x] |
+| R01e-C | Scoped accepted; pre-R03e archive. | [x] |
+| R02c-I | Scoped accepted; pre-R03e archive. | [x] |
+| R02c-V | Scoped accepted; pre-R03e archive. | [x] |
+| R02c-C | Scoped accepted; pre-R03e archive. | [x] |
+| R02d-I | Scoped accepted; pre-R03e archive. | [x] |
+| R02d-V | Scoped accepted; pre-R03e archive. | [x] |
+| R02d-C | Scoped accepted; pre-R03e archive. | [x] |
+| R03b-I | Scoped accepted; pre-R03e archive. | [x] |
+| R03b-V | Scoped accepted; pre-R03e archive. | [x] |
+| R03b-C | Scoped accepted; pre-R03e archive. | [x] |
+| R03c-I | Scoped accepted; pre-R03e archive. | [x] |
+| R03c-V | Scoped accepted; pre-R03e archive. | [x] |
+| R03c-C | Scoped accepted; pre-R03e archive. | [x] |
 
-**BP-MU6-TEXT-TIME-001 retained:** Approval human23567 and exact old scope/limits remain in the pre-edit archive. Missing time components of accepted TEXT become zero; no date-filling, explicit-component, timezone, Python-input, None, relative-format, SDL or other directive policy was changed. Final prior result: 5,874 passed, 7 skipped, 10 warnings; raw branches 4,418/4,626 = 95.5036748811%, combined 16,447/16,837 = 97.6836728633%. These are PRIOR, not fresh M-U6 absolute-zone results; historical TDD/helper/guard gaps remain qualified. M-U6 is partial. Ledger remains 100 IDs, with 41 primary pending/limited (not 41 confirmed bugs) and 7 separate recommendations. Before the three new tasks: 110 checked/25 overlap-unchecked, 15 principal open. After adding them: 110 checked/28 overlap-unchecked, 15 principal open; no original audit ID is closed by preparation.
+**BP-MU6-TEXT-TIME-001 retained:** Human23567 approved omitted TIME in accepted TEXT -> zero only; missing DATE, explicit parts/zone, Python/None, relative path, SDL and other directives unchanged. Prior full 5,874pass/7skip/10warn; raw4,418/4,626=95.5036748811%, combined16,447/16,837=97.6836728633% (NOT R03e proof). M-U6 partial; 100 IDs, 41 primary pending/limited (not bugs), 7 recommendations, 15 principal blocks. Before R03d:110 checked/25 overlap-unchecked; after its three tasks:113/25. Full scope, TDD/helper/guard gaps and history in exact pre-R03e and older archives.
 
-**BP-MU6-ABSOLUTE-ZONE-001** (human23667; approved only for this unit): for every `@date` absolute format (`default`, `iso`, `js`/`javascript`, and custom tokens), convert originally aware Python `datetime` and TEXT carrying an explicit UTC offset or `Z` to Django's active timezone before formatting, preserving the instant and allowing the calendar date to change. Originally naive TEXT is NOT eligible merely because `_parse` inherited tzinfo from its aware default. Preserve only the relative `time ago`/`time ago 2d` format behavior, originally naive datetime/text, Python date/time, bytes/numeric/other input kinds, scalar coercion, SDL/directive args, missing-DATE/time defaults, and `None`. No new setting or API. This is a bounded M-U6 partial slice; case conversion, number/currency null policies and other M-U6 families remain open. Existing accepted BP-MU6-DATE-NULL-001 and BP-MU6-TEXT-TIME-001 remain unchanged.
+**BP-MU6-ABSOLUTE-ZONE-001** (human23667; accepted23732): every absolute `@date` format (`default`, `iso`, `js`/`javascript`, custom) converts originally aware Python `datetime` or TEXT with explicit numeric/Z offset to Django's active zone, preserving its instant and allowing date rollover. Relative formats, originally timezone-less/named-only TEXT under this older approval, naive Python/date/time/bytes/numeric/other kinds, missing-date/time defaults, None, SDL/scalars/directive API and other directives stayed unchanged. Human23759 separately changes ONLY genuinely timezone-less TEXT below; no broader policy follows.
 
 | Task | Route, acceptance and checks | State |
 |---|---|---|
-| R03d-I | D writer; human23667; accepted23732. Original-input provenance via public dateutil callback; all absolute formats, no relative/naive/named-only policy drift. Permanent causal native RED before each production correction; same-byte GREEN; final focal16. Behavior/tests/docs commit `dc556059c5c06e5d21bcf63388535901ffe3979a`. | [x] |
-| R03d-V | D independent + parent; accepted23732. Fresh5890pass/7skip/10warn; rawbranches4422/4630=95.507559%, combined16463/16853; direct12/12lines+4/4exits=100%, cumulative845/870exits=97.126437%/diff98. Related175, Playground61, quality/docs43anchors/static5 PASS; parent16PASS and exact10-path bindings. | [x] |
-| R03d-C | Inline local delivery: `dc556059c5c06e5d21bcf63388535901ffe3979a`, 10 paths/455 authored lines, exact accepted disk/staged/committed blobs+modes. Local ~400 advisory overrun retains complete regressions/docs; no PR authority. RDD OFF; no push/tag/publish/build/timing. | [x] |
+| R03d-I | D; accepted23732; native causal RED/same-byte GREEN; parser callback provenance; final focal16; commit `dc556059c5c06e5d21bcf63388535901ffe3979a`. Exact pre-R03e archive. | [x] |
+| R03d-V | D independent+parent; accepted23732; 5890pass/7skip/10warn, raw4422/4630=95.507559%, combined16463/16853, direct100%, cumulative branch845/870=97.126437%/diff98%; related175, Playground61, docs43 anchors/static5 PASS. Exact pre-R03e archive. | [x] |
+| R03d-C | Inline local 10-path/455-authored-line commit above; ~400 advisory overrun, no PR/RDD/remote/release. Exact pre-R03e archive. | [x] |
 
-**R03d closeout/proof:** Exact prior plan is in `mu6-absolute-zone-closeout/tracker-preclosure.md` (47,900B, SHAbaa3a10f…), preserving all older archive chains. Rollback only this unit's provenance-localization branch, dedicated timezone regressions, adjusted text-time expectation and affected docs; preserve R03b/R03c and unrelated work. Independent manifest `mu6-absolute-zone-provenance-recheck/manifest.json` SHA88c8d82aca78682a4a744d6f9529104aad825a3ffa7c4647d68b03f41a42934d; parent finite776-path/index/refs/7-manifest guard and native16PASS recorded in `mu6-absolute-zone-closeout/parent-spot.json`. Source c4b145ab… and test6699ebf… remain frozen at0644. Public helper ASTs unchanged; Playground UTC+shared middleware needs no source edit (61PASS); five benchmark operations use no @date, no measurements/results touched.
+**R03d proof/limits:** Exact chains: `mu6-absolute-zone-closeout/tracker-preclosure.md` (47,900 B; SHA prefix baa3a10f), `mu6-absolute-zone-provenance-recheck/manifest.json` (SHA `88c8d82aca78682a4a744d6f9529104aad825a3ffa7c4647d68b03f41a42934d`) and parent spot `mu6-absolute-zone-closeout/parent-spot.json`. Initial `(EET)` and RFC/year detectors failed; interrupted full wrapper130 had unknown child exit/empty JUnit, NOT PASS. Final119 assertions; 5,897 unique full cases versus unexplained JUnit aggregate5,920. Skips (5 PostgreSQL, optional multiselect, retired Graphene), 10 warnings and absent live services/CI/build/timing remain. Source/test SHA prefixes c4b145ab/6699ebf, mode0644. Failures, UNKNOWNs and guards remain in pre-R03e archive; no wider M-U6 closure.
 
-**R03d qualifications:** Initial end-position detectors missed accepted `(EET)` and RFC/trailing-year syntax; independent PARTIAL proofs remain, including interrupted full wrapper130/child exit unknown/empty JUnit, not PASS. Final parser-provenance design passes119 native assertions including both blockers, positional/zero/Z/DST and negative controls. Causal RED/GREEN histories, initial obsolete expectations, coverage-harness conflict, removed defensive catch, setup/helper failures and CodeGraph watcher metadata qualification remain in immutable implementation/correction/recheck proofs. Final full has5897 unique testcases (5890pass+7skip, zero failures/errors); JUnit aggregate5920 is inconsistent, not investigated. Skips:5Postgres, optionalmultiselectfield, retiredGraphene;10 warnings retained. LiveRedis/Postgres/CI/build/timing not run. No broader audit closure: M-U6 partial,41 primary pending/limited IDs (not41bugs),7 recommendations,15 principal blocks open. After R03d:113 checked/25 overlap-unchecked tasks.
+**BP-MU6-NAIVE-ZONE-001** (human23759; R03e only): accepted GENUINELY timezone-less TEXT passed to `@date` uses its written wall clock in Django's **active** timezone for every absolute format (`default`, `iso`, `js`/`javascript`, custom) and both relative formats (`time ago`, `time ago 2d`), regardless of `USE_TZ`. Attach the zone; do not convert an assumed UTC instant. Keep missing-DATE/current-date and omitted-TIME/zero defaults, None, other input kinds and naive Python behavior. Prior numeric/Z TEXT absolute conversion (human23667) remains; numeric/Z relative, valid named UTC/GMT-only, and unknown-name fallback/warnings (e.g. XYZ) stay unchanged. Do not add a DST gap/fold policy, setting, dependency, API, SDL, scalar or other-directive change. Preserve accepted `(EET)`, RFC-year, nonterminal-offset and Z regressions. M-U6 remains partial; case conversion and number/currency null families remain open.
+
+| Task | Route, acceptance and checks | State |
+|---|---|---|
+| R03e-I | D writer; human23759; accepted23842. Original name/offset provenance and resolve-only active wall-clock attachment; both absolute/relative, prior defaults/named/unknown/offset/other inputs unchanged. Native causal RED1fail1control before production, same-byte GREEN2; final focal29. Feature `9faf5be77ccba11e18822b1bfd44aba66241da89`. | [x] |
+| R03e-V | D independent + parent; accepted23842. Fresh5897pass/7skip/10warn; raw4429/4636=95.5349439%, combined16485/16873; direct20/20lines+10/10exits=100%, cumulative branch-sensitive1904/1937, exits851/876=97.1461187%. Matrix210rows/2376fields/12defensive assertions, related182, Playground61, quality/docs43anchors/static5 PASS; parent7PASS/frozen9paths. | [x] |
+| R03e-C | Inline local feature `9faf5be77ccba11e18822b1bfd44aba66241da89`,9paths403authoredlines; exact accepted disk/staged/committed blobs+modes. Local~400 advisory overrun retains tests/docs, no PR authority. RDD OFF; no remote/tag/publish/build/timing. | [x] |
+
+**R03e closeout:** Exact 44,997B preparation is archived in `mu6-naive-zone-closeout/tracker-preclosure.md`, SHA1c2d6d01…, preserving old policies/chains/failures/UNKNOWNs. Rollback only R03e feature source/test/docs, retaining R03b/c/d. Final independent manifest `mu6-naive-zone-independent/manifest.json` SHAf1b8bf383a55b7bd919e16ab59d047e01d57dfdac772721c6eb9058c2fa432b9; parent `mu6-naive-zone-closeout/parent-spot.json`. Source86138939…/testdf4b59aa… mode0644. Actual5904 unique cases versus unexplained JUnit aggregate5927; zero test failures/errors. Skips5Postgres/optional multiselect/retired Graphene;10warnings retained. Initial warning probe, wrong XYZ expectation, diff95.0 strict-gate failure, docs prelaunch failure and final postcomment re-verification remain in immutable proof; prelaunch docs failure had only before snapshot/no child. No live services/CI/build/timing claim. Playground explicit-offset clock needs no source edit (61PASS); five benchmark operations use no @date, no results/timing changed. R03e complete only; M-U6 remains partial,15 principal blocks,41 primary pending/limited IDs (not41bugs)+7 recommendations. After R03e and inherited follow-up:116 checked/26 overlap-unchecked.
+
+**Inherited offset follow-up (NOT R03e regression):** Independent baseline parity proves adjacent numeric zero offsets such as `2026-01-10T00:30+00:00` and `+0000` are rejected by the old regex negative-digit lookbehind, so absolute output stays UTC while equivalent Z localizes. Initial matrix assertion against assumed correctness failed; original script/output retained and corrected HEAD/current parity then passed. This residual is within human23667's prior all-offset conversion approval, not a new product policy or permission to change named zones/relative/defaults.
+
+| Task | Route, acceptance and checks | State |
+|---|---|---|
+| R03d-Z | D writer + independent follow-up; prior human23667 authority, findings23833/23827. Separate bounded TDD unit for already accepted adjacent numeric zero-offset absolute conversion; keep named/date-only/relative and R03e behavior. No new API/settings/policy; record causal native RED/GREEN, docs and coverage before closing. | [ ] |
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate originally naive TEXT timezone interpretation separately before proposing another incompatible policy. Aware absolute rendering is locally complete; no authorization to change naive/relative/other M-U6 policies. No PR/push/tag/publication.
+**Next:** Prepare the separate inherited adjacent-zero-offset follow-up R03d-Z under existing human23667 approval. R03e is locally complete. Consult before any other incompatible policy; no PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
-**Mirror:** Full tracker plus locator at `odd/audit-400-remediation/tasks` (obs15165).
+**Mirror:** Full tracker plus locator at parent-owned `odd/audit-400-remediation/tasks` (obs15165); require exact readback after each update.
