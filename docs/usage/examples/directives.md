@@ -105,6 +105,10 @@ and unknown timezone names keep their prior handling and warnings. A
 time-only value still inherits the parser's current date, not necessarily
 the active-zone date around midnight.
 
+Clock-adjacent `+00:00` and `+0000` are explicit offsets for absolute formats:
+`"2026-01-10T00:30:00+0000"` displays as `"2026-01-09T19:30:00"` in
+`America/New_York` with `format: "iso"`, matching the equivalent `Z` text.
+
 If `publishedAt` is nullable and the resolver returns `null`, the formatted
 response still contains `"publishedAt": null`. Applying `@date` does not
 manufacture a date or an invalid-format placeholder. Declare a date field

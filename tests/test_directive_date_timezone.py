@@ -25,6 +25,9 @@ class _Query(ObjectType):
     aware = field(GdxDateTime)
     offset_text = field(GraphQLString)
     z_text = field(GraphQLString)
+    zero_colon_text = field(GraphQLString)
+    zero_compact_text = field(GraphQLString)
+    zero_z_text = field(GraphQLString)
     naive_text = field(GraphQLString)
     naive_datetime = field(GdxDateTime)
     date_value = field(GdxDate)
@@ -55,6 +58,18 @@ class _Query(ObjectType):
     def resolve_z_text(root: Any, info: Any) -> str:
         """Return the same instant with an explicit UTC designator."""
         return "2026-01-01T01:30:00Z"
+
+    def resolve_zero_colon_text(root: Any, info: Any) -> str:
+        """Return a clock-adjacent colonized zero offset."""
+        return "2026-01-10T00:30:00+00:00"
+
+    def resolve_zero_compact_text(root: Any, info: Any) -> str:
+        """Return a clock-adjacent compact zero offset."""
+        return "2026-01-10T00:30:00+0000"
+
+    def resolve_zero_z_text(root: Any, info: Any) -> str:
+        """Return the matching instant with an explicit UTC designator."""
+        return "2026-01-10T00:30:00Z"
 
     def resolve_naive_text(root: Any, info: Any) -> str:
         """Return text without an explicit offset despite an aware parse default."""
@@ -168,6 +183,60 @@ def test_absolute_formats_localize_only_explicit_instants(
             'zText @date(format: "' + format_name + '") }'
         )
     assert result == {"aware": expected, "offsetText": expected, "zText": expected}
+
+
+@pytest.mark.parametrize(
+    ("format_name", "expected"),
+    [
+        ("default", "09 Jan 2026 19:30:00"),
+        ("iso", "2026-01-09T19:30:00"),
+        ("js", "Fri Jan 09 2026 19:30:00"),
+        ("javascript", "Fri Jan 09 2026 19:30:00"),
+        ("YYYY-MM-DD HH:mm ZZ", "2026-01-09 19:30 -0500"),
+    ],
+)
+def test_clock_adjacent_zero_offsets_match_z_absolute_zone(
+    format_name: str, expected: str
+) -> None:
+    """Accepted numeric zero offsets localize like the equivalent Z text."""
+    with django_timezone.override(ZoneInfo("America/New_York")):
+        result = _execute(
+            '{ zeroColonText @date(format: "' + format_name + '") '
+            'zeroCompactText @date(format: "' + format_name + '") '
+            'zeroZText @date(format: "' + format_name + '") }'
+        )
+    assert result == {
+        "zeroColonText": expected,
+        "zeroCompactText": expected,
+        "zeroZText": expected,
+    }
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ("+00:00", "+0000", "+00", "+0", "-00:00", "-0000", "-00", "-0"),
+)
+def test_parser_accepted_adjacent_zero_spellings_are_explicit(suffix: str) -> None:
+    """Recognize only zero-offset spellings already accepted by the parser."""
+    value = "2026-01-10T00:30:00" + suffix
+    parsed = date_directive._parse(value)
+    assert parsed is not None
+    assert date_directive._text_has_explicit_offset(value, parsed)
+
+
+@pytest.mark.parametrize("format_name", ("time ago", "time ago 2d"))
+def test_adjacent_zero_offset_relative_formats_keep_instant(
+    monkeypatch: pytest.MonkeyPatch, format_name: str
+) -> None:
+    """Relative output keeps the established explicit-offset instant path."""
+    clock = datetime(2026, 1, 10, 1, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(date_directive.timezone, "now", lambda: clock)
+    with django_timezone.override(ZoneInfo("America/New_York")):
+        result = _execute(
+            '{ zeroColonText @date(format: "' + format_name + '") '
+            'zeroCompactText @date(format: "' + format_name + '") }'
+        )
+    assert result == {"zeroColonText": "1 hour ago", "zeroCompactText": "1 hour ago"}
 
 
 def test_naive_text_and_typed_inputs_keep_existing_wall_clock(

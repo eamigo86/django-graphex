@@ -21,7 +21,9 @@ __all__ = ("DateGraphQLDirective",)
 
 DEFAULT_DATE_FORMAT = "%d %b %Y %H:%M:%S"
 _ZERO_OFFSET_TOKEN_RE = re.compile(
-    r"(?<!\d)[+-](?:0+|00:00)(?![\d:])|(?<![A-Za-z])[Zz](?![A-Za-z])"
+    # The parser callback establishes that a timezone was present. Do not
+    # exclude a zero offset just because it immediately follows clock digits.
+    r"[+-](?:0+|00:00)(?![\d:])|(?<![A-Za-z])[Zz](?![A-Za-z])"
 )
 FORMATS_MAP = {
     # Year

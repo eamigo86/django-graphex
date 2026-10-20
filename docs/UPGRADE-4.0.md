@@ -25,6 +25,9 @@ preserves the instant but may change the displayed calendar date. For example,
 with `America/New_York` active, `"2026-01-01T03:30:00+02:00"` now displays
 as `"2025-12-31T20:30:00"` under `@date(format: "iso")`, rather than
 `"2026-01-01T03:30:00"`.
+Clock-adjacent zero offsets are included: in the same active zone,
+`"2026-01-10T00:30:00+00:00"` and `"2026-01-10T00:30:00+0000"` now
+display as `"2026-01-09T19:30:00"`, matching the equivalent `Z` value.
 
 If clients relied on the input offset's wall clock, review their expectations
 or choose an explicit display zone in the resolver. The `iso` output still

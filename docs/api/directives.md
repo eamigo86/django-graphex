@@ -569,6 +569,9 @@ aware Python datetime or text with an explicit numeric offset or `Z` is
 displayed in Django's active timezone without changing the instant. For
 example, `"2026-01-01T03:30:00+02:00"` displays as
 `"2025-12-31T20:30:00"` with `format: "iso"` in `America/New_York`.
+Clock-adjacent `+00:00` and `+0000` are explicit offsets too: a value of
+`"2026-01-10T00:30:00+00:00"` displays as `"2026-01-09T19:30:00"`,
+matching the equivalent `Z` value.
 The `iso` output still omits offsets and microseconds. Genuinely
 timezone-less text instead keeps its written wall clock and attaches Django's
 active timezone, regardless of `USE_TZ`. For example, with `TIME_ZONE="UTC"`

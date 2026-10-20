@@ -440,9 +440,12 @@ If the resolver returns `"2026-01-01T03:30:00+02:00"`, the field returns
 `"2025-12-31T20:30:00"`. The `iso` output still omits the offset and
 microseconds; clients must not read it as an offset-bearing timestamp. The
 same conversion applies to `default`, `js`/`javascript`, and custom absolute
-formats. Text with **no timezone information** follows a different rule: its
-written date and time are interpreted directly in the active Django timezone,
-even when `USE_TZ=False`. No assumed UTC instant is converted. For example,
+formats. Clock-adjacent `+00:00` and `+0000` also count as explicit offsets:
+`"2026-01-10T00:30:00+00:00"` displays as `"2026-01-09T19:30:00"` in
+`America/New_York`, just like the equivalent `Z` text. Text with **no timezone
+information** follows a different rule: its written date and time are
+interpreted directly in the active Django timezone, even when `USE_TZ=False`.
+No assumed UTC instant is converted. For example,
 with `TIME_ZONE="UTC"` and `Europe/Madrid` active in July, a resolver returning
 `"2026-07-10 14:30"` gives `"14:30 +0200"` for
 `@date(format: "HH:mm ZZ")`, rather than `"14:30 +0000"`. Its `iso` output

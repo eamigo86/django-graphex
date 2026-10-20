@@ -18,7 +18,8 @@ All notable changes to this library are documented here. The format is based on
   `Z` in Django's active timezone for absolute `@date` formats, preserving
   the instant while allowing date rollover. Explicit-offset/Z text retains
   its prior relative behavior; `iso` still omits its output offset and
-  microseconds.
+  microseconds. Clock-adjacent `+00:00` and `+0000` now receive the same
+  absolute conversion as equivalent `Z` text.
 
 - Interpret accepted timezone-less text passed to `@date` as its written wall
   clock in Django's active timezone for absolute and relative formats,
