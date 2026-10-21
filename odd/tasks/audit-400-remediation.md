@@ -260,7 +260,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | L-C6 | 185 | Contract/documentation clarified R04e, accepted24614/localf982bb9. Server miss/cookie and hit/no-new-cookie paths characterized; browser reuse unproved, any-cookie privacy unchanged. | T13/R04e |
 | L-C7 | 186 | Ambiguous enum members rejected T06e; unique names unchanged, optional multiselect untested; refs c3a35a7,da31d91,16147,16210; archive. | T06e/T06 |
 | L-C8 | 187 | page:-1 allegedly not last actual page. | T12 |
-| L-C9 | 188 | Null ordering allegedly differs between DB and memory cursor. | T12 |
+| L-C9 | 188 | R04f accepted24747/local ebeb63a: automatic nullable concrete-column ASC NULL-last/DESC NULL-first for LimitOffset/Page direct/nested; explicit ORM expressions and Cursor unchanged. Broader backend/expression parity not claimed. | T12/R04f |
 | L-C10 | 189 | R03k accepted24230; FIELD-only transform validation, preserving built-ins and fields inside fragments. Local 03cd107; bounded-fixed, wider T15 open. | T15/R03k |
 | L-C11 | 190 | R03l accepted24279; local 5b1022b normalizes floor-only non-finite errors. truncate/title_case stringification not a demonstrated bug; title alias nonexistent. Wider T15 open. | T15/R03l |
 | L-C12 | 191 | Split: confirmed GFK union-wrapper N+1 fixed T14e `c8bb0dd`; direct-member already optimized. Concrete parent fragment on child invalid absent explicit interface/union; broader MTI N+1 UNPROVEN, not whole-row closure/false positive. Controlled prewarmed2/5/5 causal; mixed4/5/5 diagnostic only. Full history in pre-T14g archive. | T14/T14e |
@@ -347,7 +347,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 152 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 35 primary pending/limited ID records (not bugs)+7 recommendations. R04e clarifies L-C6 documentation only; wider R04/T13/T15/T17 open.
+**Current audit state:** 154 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R04f bounded-accepted; wider R04/T13/T15/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -401,31 +401,38 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | Task | Retained completion | State |
 |---|---|---|
 | R04c-I | D; RED2→same-byte GREEN2, final22PASS; accepted24509. | [x] |
-| R04c-V | D independent89PASS/1skip+12HTTP, parent22PASS; full6064/7skip/10warn, branch95.57314%, combined97.71698%, direct11/11lines8/8exits; quality/docs43/Playground61/static. Exact failures/limits archived. | [x] |
+| R04c-V | D; accepted24509, checks/failures/limits in exact R04f preedit archive. | [x] |
 | R04c-C | Parent local `dfb47a0`+tracker commit/fullmirror15165/readback; no PR/remote/tag/release. | [x] |
 
-**R04d accepted L-C5 (BP-LC5-MINIMUM-ZERO-001, human24532/accepted24573; local `9760b29`):** Only three named settings reject negative integers on lazy read; 0/None/default/noninteger behavior and other settings unchanged. Delegated-direct multi-file, strict TDD and native3.3/full/quality proof with RDD OFF; no PR. Full scope, chronology, failures/UNKNOWNs and rollback in lossless exact `lc6-csrf-cache-docs/tracker-preedit.md` (48,929 B; SHA-256 `7079d50281c9fcdd3ee6b545ec17dfac8033afb9140e7d00ac0e4f4be24eaebc`; 0644) and `lc5-minimum-zero-closeout/closure.md` (SHA-256 `50bc9f7baeb5704ece31280809cfae05eeed1005e27b8386cab7f9f8fb076b10`). Wider R04/T13/T17 open.
+**R04d completed locator:** BP-LC5-MINIMUM-ZERO-001 accepted24573/local `9760b29`; three settings reject negative integers lazily, all other values/defaults retained. Full scope, TDD, failures/UNKNOWNs, checks, rollback and earlier archive chains are losslessly retained in exact `lc9-null-order-preparation/tracker-preedit.md` (48,712 B; SHA-256 `59fa93c0e61bceaec36df861a148b414ead0a580500a2a214f5fa76f892c13e2`; 0644) and `lc5-minimum-zero-closeout/closure.md`. RDD OFF; no wider closure.
 
 | Task | Route and required result | State |
 |---|---|---|
-| R04d-I | D; accepted24573/local9760b29; original RED3→same-byte GREEN3, final30PASS; three data entries and direct guide/upgrade/changelogs/audit updates only. | [x] |
-| R04d-V | D independent118PASS+4settings groups, root30PASS; audited6094/7skip/10warn, branch95.573139%,combined97.716976%,direct0lines/exits N/A; quality/docs43/Playground61/static checks and provenance limits retained. | [x] |
-| R04d-C | Parent local9760b29 + separate tracker-only commit/fullmirror15165/readback; postcommit.json verifies identity/refs. No PR/remote/tag/publication or wider audit closure. | [x] |
+| R04d-I | D; accepted24573/local9760b29, scope/TDD archived. | [x] |
+| R04d-V | D; accepted checks/failures/limits archived. | [x] |
+| R04d-C | Parent local9760b29 + tracker-only commit/mirror; no remote delivery. | [x] |
 
-**R04d limits locator:** Exact pre-edit archive above preserves failed docs launch/capitalization, skips/warnings, direct coverage N/A, JUnit case/metadata mismatch, source-only SDL/settings-hook limits, no PostgreSQL/live benchmark, older archive chains and all prior task states.
+**R04d limits:** Exact R04f preedit archive preserves failed docs, skips/warnings, N/A patch coverage, JUnit mismatch, source-only SDL/settings-hook limits, no PostgreSQL/live benchmark and prior states.
 
-**R04e L-C6 bounded closure:** Parent accepted24614; four-path local `f982bb9`, 94 authored lines. Docs-contract RED→same-test-byte GREEN, passing issued-cookie server round trip, no runtime policy/SDL change or browser experiment. L-C6 remains contract; no wider closure. Full proof, first failed wording attempt, capacity/source-inspection failures, skips/warnings and limits: `lc6-csrf-cache-closeout/closure.md` (SHA-256 `d6b21ca14187d990448a254bde85a038b7bf98769e065bd83b6d4c13157157ab`) and exact preclosure tracker archive there (49,028 B; SHA-256 `9fa190e9200f138d11a82ef4097602db44280cb4493b8554664dc7df959f43aa`). RDD OFF; no receipt, PR, push, tag or publication.
+**R04e completed locator:** L-C6 contract/docs clarified, accepted24614/local `f982bb9`, 94 authored lines; no runtime/browser policy or empirical browser claim. Full RED/GREEN, characterization, failures/UNKNOWNs, limits and archive chain are in exact R04f preedit archive and `lc6-csrf-cache-closeout/closure.md`. RDD OFF; no remote delivery or wider closure.
 
 | Task | Route and required result | State |
 |---|---|---|
-| R04e-I | D; accepted24614/localf982bb9; docs RED→same-byte GREEN, actual-cookie characterization; no runtime/browser-policy change. | [x] |
-| R04e-V | D; independent71, parent spot12, full6096/7skip/10warn, raw4469/4676=95.573139%, combined16607/16995=97.716976%, direct N/A; quality/docs43/Playground61/static5 PASS. Exact limits in closure locator. | [x] |
+| R04e-I | D; accepted24614/localf982bb9, scope/TDD archived. | [x] |
+| R04e-V | D; accepted checks/failures/limits archived. | [x] |
+
+**R04f L-C9 bounded accepted (BP-LC9-NULL-ORDER-001, human24662, root24747):** Normalize automatic nullable-column ordering for LimitOffset/Page to NULLS LAST ASC/FIRST DESC, including nested window pages; preserve explicit ORM expression/null flags, term priority/direction, PK ties, Cursor, and unrelated pagination. L-C8 read-only findings24642/24644 are not this implementation. Strict TDD (`.venv/bin/python -B -m pytest`), delegated direct (pagination/window logic + tests/docs), local only; 400 authored lines advisory. Exact preedit archive, design, checks, and rollback: `lc9-null-order-preparation/{tracker-preedit.md,preparation.md}`. Implementation local `ebeb63ab665f650551470b3db107f8c98f28e87a`; exact proof and limits: `lc9-null-order-closeout/closure.md` (SHA-256 `1dcd60286e8f5670d89a6549545741bce001414cbc45f68337d1f902b9fb0189`).
+
+| Task | Route and required result | State |
+|---|---|---|
+| R04f-I | D; public SQL/list and nested-window RED before first source edit, identical-test GREEN; implement approved automatic NULL placement and direct docs/tests, preserve explicit/other controls. | [x] |
+| R04f-V | D; independent verification and local-only closure after focal/related/full branch+patch ≥95.01%, quality, strict docs, in-memory Playground, static benchmark/SDL, finite guards; parent owns checkoff/commit. | [x] |
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate L-C8/page:-1 allegation; no implementation or new pagination policy yet. Browser reuse remains unproved; wider R04/T13/T17 open. No PR/push/tag/publication.
+**Next:** Parent mirror/readback and tracker-only local commit; then investigate unprocessed L-C13 naive/date-only timezone/docs allegation before any new policy or code. L-C8 findings24642/24644 remain read-only; browser reuse unproved; wider R04/T13/T17 open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
