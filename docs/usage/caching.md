@@ -336,8 +336,10 @@ following are always passed through to the underlying view uncached:
 
 ## CSRF cookies and cached responses
 
-The base `GraphQLView.dispatch` is decorated with `@ensure_csrf_cookie`, which
-sets `Set-Cookie: csrftoken=<secret>` on every response.
+`BaseGraphQLView.dispatch` is decorated with `@ensure_csrf_cookie`. An
+eligible cookie-free query on a server response-cache miss reaches this
+dispatch and can receive a new `Set-Cookie: csrftoken` header. A cache hit
+returns earlier and does not issue a new CSRF cookie.
 
 To prevent one client's CSRF secret from being replayed to other clients in
 the same identity namespace, the cache stores **only the response body, HTTP
@@ -362,6 +364,15 @@ source of cookies, that **cookie-free** client can **remain eligible** on its
 next request. If an application opts into caching cookie-bearing queries with
 a custom hook, its key must **fully partition** every cookie-dependent identity
 and response input; the default deliberately does not.
+
+Server response-cache eligibility is distinct from browser HTTP caching.
+`Set-Cookie` alone does not prohibit HTTP caching ([RFC 9111, Section
+7.3](https://www.rfc-editor.org/rfc/rfc9111.html#section-7.3)). When a
+response has `Vary: Cookie`, a conforming HTTP cache compares the request's
+`Cookie` field with the original request before reuse ([Section
+4.1](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1)). This guide
+does not claim that a particular browser reuses these responses; assess the
+deployment's HTTP cache headers separately.
 
 ---
 

@@ -112,11 +112,14 @@ needed to use the report.
   required. See the [subscription guide](usage/subscriptions.md).
 - The cache privacy gate rejects **any cookie**. A cookie-free **cache miss**
   enters the decorated view and `ensure_csrf_cookie` can set
-  `csrftoken`; a following cookie-bearing browser request bypasses cache.
+  `csrftoken`; a following request carrying that cookie bypasses the server
+  response cache.
   A cookie-free **cache hit** returns before that dispatch and does **not**
   itself set `Set-Cookie`, so that client can remain eligible. Do not disable
-  CSRF to seek cache hits. See `tests/test_views_cache_cookie_bypass.py`
-  and the [cache guide](usage/caching.md).
+  CSRF to seek cache hits. This is a server-side request characterization,
+  not proof of browser HTTP-cache reuse. See
+  `tests/test_views_cache_cookie_bypass.py` and the
+  [cache guide](usage/caching.md).
 - A public model JSONField receiving the string `"123"` keeps a string
   through input, DB reload, and output. The distinct `JSONString` scalar
   intentionally decodes JSON text `"123"` to integer `123`; these

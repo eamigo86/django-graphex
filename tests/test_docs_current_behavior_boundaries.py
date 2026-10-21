@@ -83,6 +83,19 @@ def test_cache_guide_explains_csrf_cookie_round_trip_and_privacy() -> None:
     assert "disable CSRF" not in body
 
 
+def test_cache_guide_limits_csrf_cookie_claim_to_decorated_misses() -> None:
+    """Name the decorated base view without promising a cookie on every response."""
+    body = section("docs/usage/caching.md", "## CSRF cookies and cached responses")
+    introduction = body.split("### Browser cookie round trip", 1)[0]
+    assert "BaseGraphQLView.dispatch" in introduction
+    assert "on every response" not in introduction
+    assert "cache miss" in introduction and "cookie-free" in introduction
+    assert "Server response-cache eligibility is distinct" in body
+    assert "rfc9111.html#section-7.3" in body
+    assert "rfc9111.html#section-4.1" in body
+    assert "does not claim that a particular browser reuses" in body
+
+
 def test_mutation_guide_distinguishes_input_semantics_from_sql_updates() -> None:
     """Separate partial-input assignment from SQL and concurrency guarantees.
 

@@ -31,6 +31,29 @@ class _CookieQuery(ObjectType):
 _cookie_schema = DjangoGraphQLSchema(query=_CookieQuery)
 
 
+class _CSRFQuery(ObjectType):
+    """Count public query executions across an issued-cookie round trip."""
+
+    hello = field(GraphQLString)
+    calls: ClassVar[int] = 0
+
+    def resolve_hello(root: Any, info: GraphQLResolveInfo) -> str:  # noqa: N805
+        """Return a stable value and count resolver executions.
+
+        Args:
+            root: The unused parent value.
+            info: The unused execution context.
+
+        Returns:
+            The stable greeting.
+        """
+        _CSRFQuery.calls += 1
+        return "world"
+
+
+_csrf_schema = DjangoGraphQLSchema(query=_CSRFQuery)
+
+
 @override_settings(**CACHE_ON)
 class CookieCacheBypassTest(TestCase):
     """The safe default bypasses response caching for cookie-bearing queries.
@@ -103,3 +126,37 @@ class CookieCacheBypassTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         bump.assert_called_once()
+
+    @override_settings(
+        CACHES={
+            "default": {
+                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+                "LOCATION": "lc6-issued-cookie-roundtrip",
+            }
+        }
+    )
+    def test_issued_csrf_cookie_bypasses_next_server_cache_lookup(self) -> None:
+        """Characterize a real miss, returned cookie, and cookie-free hit."""
+        view = GraphQLView.as_view(schema=_csrf_schema)
+        _CSRFQuery.calls = 0
+
+        first = view(graphql_post(self.factory, "{ hello }"))
+        assert first.status_code == 200
+        assert json.loads(first.content) == {"data": {"hello": "world"}}
+        assert "csrftoken" in first.cookies
+        assert "Cookie" in first.get("Vary", "")
+        assert _CSRFQuery.calls == 1
+
+        returned_cookie = graphql_post(self.factory, "{ hello }")
+        returned_cookie.COOKIES["csrftoken"] = first.cookies["csrftoken"].value
+        assert not GraphQLView(schema=_csrf_schema).should_cache_query(returned_cookie)
+        second = view(returned_cookie)
+        assert second.status_code == 200
+        assert json.loads(second.content) == {"data": {"hello": "world"}}
+        assert _CSRFQuery.calls == 2
+
+        cookie_free_hit = view(graphql_post(self.factory, "{ hello }"))
+        assert cookie_free_hit.status_code == 200
+        assert json.loads(cookie_free_hit.content) == {"data": {"hello": "world"}}
+        assert _CSRFQuery.calls == 2
+        assert "csrftoken" not in cookie_free_hit.cookies
