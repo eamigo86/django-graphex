@@ -252,7 +252,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | ID | Report line | Distinct claim / subcases | Task |
 |---|---:|---|---|
-| L-C1 | 180 | Malformed ID in get_node/retrieve/DjangoObjectField allegedly raises raw error instead of null; three entry points. | T15 |
+| L-C1 | 180 | R04a accepted24375; local0512657: malformed PK-coercion IDs get safe INVALID_ID/format at three paths, valid missing/hidden IDs null. Single prep/hooks/original args preserved; prior null-only rejected. | T15/R04a |
 | L-C2 | 181 | Two public constructor guards preserved under -O T14a; exact predicates only; refs 19162; archive. | T14/T14a |
 | L-C3 | 182 | GraphQLView/BaseGraphQLView status and data:null response contracts diverge. | T13 |
 | L-C4 | 183 | Multipart files allegedly bypass MAX_UPLOAD_SIZE. | T13 |
@@ -353,7 +353,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 138 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 39 primary pending/limited ID records (not bugs)+7 recommendations. R03l closes only L-C11 floor normalization/qualified subclaims; wider T15/T17 remain open.
+**Current audit state:** 141 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 38 primary pending/limited ID records (not bugs)+7 recommendations. R04a closes L-C1 only; wider R04/T15/T17 open.
 
 **BP-MD6-MISSING-LIST-NULL-001 (human24091):** An omitted variable inside a raw JSON literal list becomes Python `None` / GraphQL `null` in the same slot/order; an absent variable under an object literal key still omits the key. Supplied values/defaults, explicit null, nested shapes and ordinary typed lists remain unchanged. Direct missing-variable arguments, JSONString, nonfinite numbers, SDL/schema, settings, dependencies and other scalars are excluded. M-D6's nonfinite subcase and whole ID remain open. No remote/release/build/DB/timing/official-benchmark authority.
 
@@ -379,37 +379,34 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R03j preclosure archive:** `md6-finite-input-closeout/tracker-preclosure.md` (49,739 B; SHA-256 `e3156ceef9b80a159c39907459180364cb43113f12c208a7ff38116168f1a2eb`, mode 0644) is preserved in R03k preimage.
 
-**BP-LC10-FIELD-ONLY-001 (human24193; R03k accepted24230):** Library transformation directives produced by `BaseExtraGraphQLDirective` are valid only on `FIELD`. On `FRAGMENT_SPREAD`/`INLINE_FRAGMENT`, GraphQL validation must fail before resolver execution. Fields inside named/inline fragments remain eligible for transforms. Preserve `@skip`/`@include` locations/behavior and transform names, arguments, order, repeatability, async and current middleware semantics. Raw third-party `GraphQLDirective` remains unrestricted by this factory policy. No fragment inheritance, other SDL/settings/dependencies/version or wider T15 policy. No remote/PR/tag/publication/build.
+**R03k/l lossless completed history:** Exact pre-R04a tracker `lc1-invalid-id-preparation/tracker-preedit.md` (49,717 B; SHA-256 `19d44ac1b2094cdc814a8f667ea58ed6de2be25f7078458b5f5ffbe0953648fa`; mode 0644) retains every approval, scope/exclusion, RED/GREEN, failure/UNKNOWN, coverage, inventory, closeout and older archive chain. Shortening revises no acceptance/residual T15/T17 claim. R03k accepted24230/human24193: library transforms FIELD-only; built-ins, fields inside fragments, raw third-party metadata preserved. R03l accepted24279/human24249: floor-only nonfinite error; others/SDL preserved; `@title` nonexistent, other named subclaims unproven. Both local-only, RDD OFF.
 
-**R03k route:** Delegated direct, not SDD: base factory plus public compiler/middleware tests and docs are multiple non-trivial surfaces. Strict TDD per AGENTS.md: `.venv/bin/python -B -m pytest`, public RED before first production edit, identical-test GREEN, refactor/final checks. Forecast ~200–350 authored lines, advisory 400; no code-golf/omitted tests. Parent mirrors tracker before source work and owns checkoffs/local commit.
-
-| Task | Route, intended outcome and acceptance checks | State |
+| Task | Retained outcome | State |
 |---|---|---|
-| R03k-I | D writer; accepted24230; local `03cd107`; original RED2→edit→identical-test GREEN2 independently verified. Central FIELD-only metadata; public tests/docs/upgrade/both changelogs together. | [x] |
-| R03k-V | D independent; accepted24230; fresh43+17checks and parent11PASS. Retained full5999PASS/7skip/10warn; raw4449/4656=95.5541%, combined97.7092%, direct0/0 N/A. Quality/docs/Playground61/static benchmarks PASS; failures and qualifications in closure. | [x] |
-| R03k-C | Parent local `03cd107` (341 authored lines); bytes/modes verified against accepted proof; separate tracker commit. RDD OFF; no PR/push/tag/publication or broad audit closure. | [x] |
+| R03k-I | D; accepted24230; `03cd107`. | [x] |
+| R03k-V | D independent; archive. | [x] |
+| R03k-C | Parent local; no PR. | [x] |
+| R03l-I | D; accepted24279; `5b1022b`. | [x] |
+| R03l-V | D independent; archive. | [x] |
+| R03l-C | Parent local; no PR. | [x] |
 
-**R03k closure:** Accepted24230; local behavior `03cd107`; `lc10-field-only-closeout/closure.md` SHA-256 `f65f6812d94ad5054ba7443f69b73a9dfac08c924001bbf901484992a903cdca` retains exact TDD provenance, proof manifests, failed attempts, skipped checks, inventory and coverage limits. Exact prepared tracker archived as `lc10-field-only-closeout/tracker-preclosure.md` (47,412 B; SHA-256 `636668e50247efbfc401300ab16de69a03a3d2f66a2437f9d6a6919f18a83cc4`; mode 0644). No prior acceptance or residual scope is revised.
+**BP-LC1-INVALID-ID-001 (human24312; R04a accepted24375):** Only PK-coercion-malformed IDs at `get_node`, `DjangoModelType.retrieve`, `DjangoObjectField.object_resolver` become intentional `GraphQLError`, `extensions.code=INVALID_ID`: integer `Invalid ID: expected an integer.`, UUID `Invalid ID: expected a UUID.`, custom/other `The ID format is invalid.`. Never expose raw value/model/Django text. Valid missing/hidden IDs remain null; Char PK `abc` and existing float/bool/null ORM coercion remain. Preserve queryset/permission hook order, sync/async/custom-PK semantics and unrelated queryset/resolver/permission/DB errors. Prior null-only proposal rejected; any other incompatible policy requires new approval. L-C1 bounded-fixed; T15/T17 and other R04 claims open.
 
-**R03l pre-edit archive:** `lc11-floor-preparation/tracker-preedit.md` (47,562 B; mode 0644; SHA-256 `72bdbb51bf328d8732f8d85532a6d15ab7397608bf829d52c166a7261b830136`) preserves exact earlier approvals, exclusions, proofs, failures/UNKNOWNs and archive chains.
+**R04a route:** Delegated direct, not SDD: three production paths plus public tests/docs. Strict TDD (AGENTS.md), `.venv/bin/python -B -m pytest`: supported-runtime public RED before production edit, same-byte GREEN, refactor/normalize before final checks. Parent mirrors/readbacks tracker before source writes. Forecast ~350–500 authored lines; 400 advisory, no code-golf/forced split/assumed exception. Local-only, no PR/push/tag/release.
 
-**BP-LC11-FLOOR-FINITE-001 (human24249; R03l accepted24279):** Only `@floor` rejects NaN and positive/negative infinity with `GraphQLError("@floor cannot operate on a non-finite value.")`. Preserve None, finite values including negative zero, malformed-value policy, other directives, SDL/settings/dependencies. Original L-C11 names `@title`, which is not registered; `@title_case`/`@truncate` stringification has no demonstrated bug and is not changed. No PR/push/tag/publication/build.
-
-**R03l route/TDD:** Delegated direct: multiple non-trivial files. Strict TDD per AGENTS.md, `.venv/bin/python -B -m pytest`, original RED→same-byte GREEN→REFACTOR. Full route/check criteria remain in the exact preclosure archive;237 authored lines, local-only delivery.
-
-| Task | Route and acceptance criteria | State |
+| Task | Acceptance checks | State |
 |---|---|---|
-| R03l-I | D; accepted24279; local `5b1022b`; original RED6→edit→same-byte GREEN6. Floor-only guard, public controls, docs/upgrade/both changelogs. | [x] |
-| R03l-V | D; accepted24279; fresh76+22, parent18PASS; full6017/7skip/10warn, raw95.5560%, combined97.7098%, direct4/4lines2/2exits; final docs43pages/Playground61. Qualifications in closure. | [x] |
-| R03l-C | Parent local `5b1022b`,237 authored lines; accepted bytes/modes; tracker/mirror separate. RDD OFF; no PR/push/tag/publication. | [x] |
+| R04a-I | D; accepted24375; local `0512657`; original RED3→same-byte GREEN3 plus bounded custom-argument RED1→same-byte GREEN1. Three paths/docs preserve original ORM semantics. | [x] |
+| R04a-V | D; accepted24375; fresh60+6+15checks,parent15PASS; full6032/7skip/10warn; raw95.5656%,combined97.7144%,direct27/27lines10/10exits; quality/docs43/Playground61. Closure retains all limits/failures. | [x] |
+| R04a-C | Parent local `0512657`,590authoredlines(advisory400);accepted13blobs/modes;tracker/mirror separate. RDD OFF,no remote/PR/tag/publication. | [x] |
 
-**R03l closure:** Accepted24279; local `5b1022b`; `lc11-floor-closeout/closure.md` SHA-256 `d4286096034abf682b8f67f512a78045721e75f386211de49230ab75094f26c9` retains exact TDD, manifests, failures/skips and historical isolation UNKNOWN. Prepared tracker archived as `lc11-floor-closeout/tracker-preclosure.md` (49,641 B;0644;SHA-256 `9cddc6d4a1f1e3a6c2393292887d129da38042c4ae86994b64033051e31fa1b9`). No prior scope or residual claim revised.
+**R04a closure:** Accepted24375;local `0512657`;`lc1-invalid-id-closeout/closure.md` SHA-256 `599dfa585b7425d8cce3735b2230fd3b9a1d6aa6610e6a0184dd6fa5d84c83fe` retains original/correction TDD, manifests, renamed-argument PARTIAL and all coverage/DB/SDL/guard qualifications. Exact prepared tracker: `lc1-invalid-id-closeout/tracker-preclosure.md` (48,305 B;0644;SHA-256 `e3c15074125591c493ce61cc06cca7229623147f7b9bb3a6aa9ab847ba95bff9`). Prior scope/history unchanged.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate L-C1 malformed IDs across get_node/retrieve/DjangoObjectField, distinguishing invalid numeric IDs from legitimate missing records; consult before incompatible policy. Wider T15/T17 open; no PR/push/tag/publication.
+**Next:** Investigate L-C3 base/enhanced HTTP status differences for NonNull root errors; consult before any public alignment change. Wider R04/T15/T17 open; no PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
