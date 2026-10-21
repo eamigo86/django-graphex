@@ -414,6 +414,12 @@ input is already capped at `Content-Length`) a multipart POST that declares no
 length at all is refused with **HTTP 411** instead. See
 [How the guard reads each content type](settings.md#how-the-guard-reads-each-content-type).
 
+The separate [`MAX_UPLOAD_SIZE`](settings.md#file-uploads) setting checks each
+received multipart file **after parsing**, including unused and repeated file
+parts. A file above that limit returns JSON HTTP 413 before any resolver or
+GraphiQL page succeeds. This per-file check does not replace the earlier
+whole-body guard or impose an ingress/memory limit.
+
 ## Subscriptions
 
 GraphQL subscriptions are served by a dedicated view (over Channels) — see the

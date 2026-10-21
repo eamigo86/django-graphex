@@ -146,12 +146,14 @@ DEFAULTS = {
     # this False to disable injection entirely without a code change.
     "OPTIMIZE_ANNOTATED_FIELDS": True,
     # ---------------------------------------------------------------------------
-    # File uploads (Base64FileInput — opt-in, import from django_graphex.uploads)
+    # File uploads (multipart parts and opt-in Base64FileInput)
     # ---------------------------------------------------------------------------
-    # Maximum decoded size (bytes) of a single base64 upload. REQUIRED when
-    # Base64FileInput is used; raises ImproperlyConfigured if unset and no
-    # per-field override is given. A per-field max_size= kwarg on
+    # Maximum size (bytes) of each received multipart file and decoded base64
+    # upload. REQUIRED when Base64FileInput is used; raises ImproperlyConfigured
+    # if unset and no per-field override is given. A per-field max_size= kwarg on
     # to_uploaded_file() / decode_base64_file() overrides this global cap.
+    # None leaves multipart files without a per-file cap; MAX_REQUEST_BODY_SIZE
+    # remains the separate whole-request limit.
     # Example: 5 * 1024 * 1024  →  5 MB
     "MAX_UPLOAD_SIZE": None,
     # Maximum total HTTP request body length (bytes) enforced by

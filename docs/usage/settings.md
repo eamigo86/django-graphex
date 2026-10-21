@@ -303,11 +303,13 @@ does **not** require `Base64FileInput` or any upload feature.
 
 ## File uploads
 
-These settings apply to `Base64FileInput` — an opt-in input type for sending files as base64 strings inside the GraphQL body. See [Mutations → File Upload Support](mutations.md#file-upload-support).
+These settings cover received multipart files and `Base64FileInput`, the opt-in
+input type for files encoded inside the GraphQL body. See
+[Mutations → File Upload Support](mutations.md#file-upload-support).
 
 | Setting | Default | Description |
 |---|---|---|
-| `MAX_UPLOAD_SIZE` | `None` | Maximum **decoded** size (bytes) of a single `Base64FileInput` field. **Required** when `Base64FileInput` is used — raises `ImproperlyConfigured` at call time when absent and no per-field `max_size` override is given. A per-field `max_size` kwarg on `.to_uploaded_file()` or `decode_base64_file()` overrides this global cap for that specific call. Example: `5 * 1024 * 1024` (5 MB). |
+| `MAX_UPLOAD_SIZE` | `None` | Maximum size (bytes) of **each received multipart file**, including unused or unmapped parts and repeated parts under one name. A file at the limit passes; a larger file returns JSON HTTP 413 before resolver execution. `None` leaves multipart files without this per-file cap. The same setting caps decoded `Base64FileInput` data and is **required** for that input unless a per-call `max_size` override is supplied; without either, Base64 decoding raises `ImproperlyConfigured`. The override affects only that Base64 call, not multipart files. Example: `5 * 1024 * 1024` (5 MB). |
 | `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**; a `multipart/form-data` POST that declares no `Content-Length` receives **HTTP 411** on a server whose request stream cannot be measured (WSGI), because it is then the one body whose size is unknowable. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). See [How the guard reads each content type](#how-the-guard-reads-each-content-type) below. |
 
 When `CACHE_ACTIVE=True`, `GraphQLView` applies the same configured POST body
@@ -404,6 +406,13 @@ whole multipart body — **on both servers**. Under WSGI a declared
 ASGI the spooled body is measured and refused the same way. Size that setting
 against the file plus its multipart envelope, not against the JSON overhead
 alone.
+
+When `MAX_UPLOAD_SIZE` is configured, the view also checks **each file part**
+after Django parses the multipart body and before a resolver or GraphiQL page
+can succeed. This is not an ingress or upload-memory limit: the server and
+Django have already received and parsed the parts. An unmatched part is still
+size-checked, even though mutation input mapping later ignores it. The
+whole-body cap above remains independent and can reject earlier.
 
 ### Choosing values
 

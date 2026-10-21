@@ -308,6 +308,13 @@ else — a number, a list, an object — comes back as a normal validation error
 and a path longer than the column's `max_length` is rejected before it reaches
 the database.
 
+If [`MAX_UPLOAD_SIZE`](settings.md#file-uploads) is configured, **every
+received file part** must fit that per-file byte limit, including unused parts
+and repeated parts with the same name. An oversized part returns JSON HTTP 413
+before any resolver runs; a file exactly at the limit is allowed. `None`
+leaves multipart files without this per-file cap. The separate
+`MAX_REQUEST_BODY_SIZE` still limits the whole request and can reject earlier.
+
 !!! warning "A multipart POST must carry `X-Requested-With`"
 
     `multipart/form-data` is a CORS-*simple* content type: a browser posts it
@@ -342,7 +349,8 @@ the database.
     on `Profile.profile_photo`, so there is nothing to remember. A part
     matching no exposed input field is ignored — the mutation still answers
     `ok: true` and simply saves no file — so a misspelled part name looks like
-    success with nothing written.
+    success with nothing written when the file fits the configured size limit.
+    An oversized unmatched part is rejected before input mapping.
 
     A field the type projects away with `Meta.exclude_fields`, or leaves out of
     `Meta.only_fields`, is not an exposed input field: a part named after it is

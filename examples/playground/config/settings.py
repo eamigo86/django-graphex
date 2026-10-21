@@ -156,7 +156,7 @@ DJANGO_GRAPHEX = {
     # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #
-    # MAX_UPLOAD_SIZE — maximum decoded size (bytes) of a single upload field.
+    # MAX_UPLOAD_SIZE — per received multipart file or decoded base64 field.
     # REQUIRED when Base64FileInput is used; raises ImproperlyConfigured if
     # absent and no per-field override is given in the resolver.
     # 5 MB is a reasonable default for the playground demo.

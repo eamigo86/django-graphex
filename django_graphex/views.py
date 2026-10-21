@@ -1102,6 +1102,30 @@ class BaseGraphQLView(View):
                         ),
                     )
 
+    def _enforce_multipart_file_size(self, request: Any) -> None:
+        """Reject any received multipart file above the configured size cap.
+
+        Args:
+            request: The parsed HTTP request.
+
+        Raises:
+            HttpError: If a received file exceeds the configured cap.
+        """
+        max_size = graphql_api_settings.MAX_UPLOAD_SIZE
+        if max_size is None or self.get_content_type(request) != "multipart/form-data":
+            return
+
+        for _, files in request.FILES.lists():
+            for uploaded_file in files:
+                if uploaded_file.size > max_size:
+                    raise HttpError(
+                        HttpResponse(status=413),
+                        message=(
+                            "Multipart file exceeds the MAX_UPLOAD_SIZE limit "
+                            f"of {max_size} bytes."
+                        ),
+                    )
+
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
         """Handle a GraphQL GET/POST request (and GraphiQL/batch).
@@ -1167,7 +1191,8 @@ class BaseGraphQLView(View):
 
         Raises:
             HttpError: When the method is unsupported, the body exceeds
-                "MAX_REQUEST_BODY_SIZE", or a batch endpoint receives a body that
+                "MAX_REQUEST_BODY_SIZE", a multipart file exceeds
+                "MAX_UPLOAD_SIZE", or a batch endpoint receives a body that
                 is not a list (any content type); caught internally and
                 serialized into the GraphQL error envelope before the response is
                 returned.
@@ -1186,6 +1211,7 @@ class BaseGraphQLView(View):
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
 
             if show_graphiql:
+                self._enforce_multipart_file_size(request)
                 return self.render_graphiql(request)
 
             if self.batch:
@@ -1218,6 +1244,7 @@ class BaseGraphQLView(View):
                             "disable the limit."
                         ),
                     )
+                self._enforce_multipart_file_size(request)
                 responses = []
                 for entry in data:
                     try:
@@ -1235,6 +1262,7 @@ class BaseGraphQLView(View):
                 result = "[{}]".format(",".join(r[0] for r in responses))
                 status_code = responses and max(responses, key=lambda r: r[1])[1] or 200
             else:
+                self._enforce_multipart_file_size(request)
                 result, status_code = self.get_response(request, data, show_graphiql)
 
             return HttpResponse(

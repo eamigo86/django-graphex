@@ -485,6 +485,13 @@ The request carries a **`query`** part with the document, an optional
 after the model field — the view reads a multipart body straight out of
 `request.POST`, so there is no `operations` / `map` envelope:
 
+With [`MAX_UPLOAD_SIZE`](../usage/settings.md#file-uploads) configured, every
+received multipart file must fit the per-file byte limit, even if its part
+name matches no input field or repeats another name. The view returns JSON
+HTTP 413 before resolver execution for an oversized file; a file at the limit
+is accepted. `None` leaves multipart files without this per-file cap.
+`MAX_REQUEST_BODY_SIZE` separately limits the full request.
+
 ```python
 requests.post(
     "https://app.example.com/graphql/",

@@ -14,6 +14,11 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Apply configured `MAX_UPLOAD_SIZE` to each received multipart file, including
+  unused and repeated parts. Files over the limit now receive JSON HTTP 413
+  before resolver execution; equality and `None` retain their documented
+  behavior. Base64 limits and the separate whole-request body cap are unchanged.
+
 - Return HTTP 200 with `data: null` and `errors` from the enhanced JSON view
   when a field execution error nulls a non-null root result. Syntax,
   validation, and variable-coercion failures remain HTTP 400 without data;

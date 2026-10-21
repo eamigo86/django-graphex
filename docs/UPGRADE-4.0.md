@@ -16,6 +16,21 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Multipart upload size limit
+
+If you configure `MAX_UPLOAD_SIZE`, it now limits **each received multipart
+file**, including unused or unmapped parts and repeated parts under one name.
+A file at the limit is accepted; a larger file receives a JSON HTTP 413 before
+resolver execution. This may reject requests that previously ignored an
+oversized extra part. Remove unwanted parts or raise the limit deliberately.
+`None` leaves multipart files without this per-file cap, while
+`MAX_REQUEST_BODY_SIZE` still controls the whole body independently.
+
+This does not change the `Base64FileInput` requirement for a limit or its
+per-call override. The multipart check occurs after Django parses the upload;
+configure server-level ingress limits separately. Malformed batch requests
+retain their existing HTTP 400 response before this per-file check.
+
 ### Distinguish malformed IDs from missing objects
 
 Model-backed single-object lookups now distinguish an ID the model cannot
