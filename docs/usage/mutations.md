@@ -262,7 +262,8 @@ The two hosts are **not** symmetric on authorization. `permission_classes` /
 `DjangoModelMutation` reads the name nowhere.
 
 Declaring `permission_classes` on a `DjangoModelMutation` therefore raises
-`ImproperlyConfigured` at class definition. It used to be worse than a no-op:
+`ImproperlyConfigured` at class definition without registering a model output
+type. It used to be worse than a no-op:
 the plain assignment tripped a raw Pydantic error telling you to annotate the
 attribute `ClassVar`, and taking that advice produced a class that builds fine
 with a permission that never fires. Reach for `DjangoModelType` when you need

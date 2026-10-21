@@ -132,6 +132,10 @@ needed to use the report.
   independent objects receive fresh values, while two aliases referencing
   one variable share that already-coerced object. SDL introspection does
   not evaluate the factory.
+- A `DjangoModelMutation` rejected for unsupported `permission_classes` or
+  `model_operations` no longer reserves a model output type. The existing
+  one-public-output-type rule still rejects distinct valid declarations in
+  one registry; this is not general registry rollback for every class error.
 
 ### Pagination and negative checks
 

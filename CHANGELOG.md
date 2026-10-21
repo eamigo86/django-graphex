@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Do not register a generated model output type for a `DjangoModelMutation`
+  rejected by unsupported `permission_classes` or `model_operations`.
+  This removes a test-order-dependent registry conflict without changing the
+  error messages, valid CRUD declarations, or the one-public-type rule.
+
 - Compile exact `dict[str, int]` input fields to the existing raw `JSON`
   scalar instead of `String`. Accept objects with string keys and plain
   integer values without implicit conversion; invalid values fail before

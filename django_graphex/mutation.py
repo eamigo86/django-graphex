@@ -610,15 +610,6 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             "skip_registry": False,
         }
 
-        output_type = registry.get_type_for_model(model)
-
-        if not output_type:
-            output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
-
-        django_fields = OrderedDict(
-            {output_field_name: NativeMountedField(output_type)}
-        )
-
         model_operations = tuple(op.lower() for op in model_operations)
         unknown = set(model_operations) - {"create", "update", "delete"}
         if unknown:
@@ -643,6 +634,16 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                     cls.__name__
                 )
             )
+
+        # A rejected mutation must not reserve the model's public output slot.
+        output_type = registry.get_type_for_model(model)
+
+        if not output_type:
+            output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
+
+        django_fields = OrderedDict(
+            {output_field_name: NativeMountedField(output_type)}
+        )
 
         global_arguments = {}
         for operation in ("create", "delete", "update"):

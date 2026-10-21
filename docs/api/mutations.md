@@ -49,7 +49,7 @@ class CustomerMutation(DjangoModelMutation):
     (`exclude_field` for `exclude_fields`, which used to leave the column it
     named writable) and the option that belongs to the other host: `queryset` is
     read by `DjangoModelType`, never here. Declaring `permission_classes` raises
-    for the same reason — see
+    for the same reason, before the mutation registers a model output type — see
     [Mutations](../usage/mutations.md#permissions-are-djangomodeltype-only).
 
     The one exception is the handful of keys the graphene `ObjectType` base
