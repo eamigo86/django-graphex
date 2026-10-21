@@ -28,12 +28,12 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 48,
+    "bounded-fixed": 49,
     "partial": 27,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 3,
+    "decision-deferred": 2,
 }
 
 
@@ -97,7 +97,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "48 does not mean 48 fully closed issues" in report
+    assert "49 does not mean 49 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
@@ -143,6 +143,7 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert "MAX_BATCH_SIZE" in rows["L-C5"][2]
     assert "MAX_REQUEST_BODY_SIZE" in rows["L-C5"][2]
     assert "DOCUMENT_CACHE_MAXSIZE" in rows["L-C5"][2]
+    assert rows["L-C5"][1] == "bounded-fixed"
     assert "negative" in rows["L-C5"][3] and "zero" in rows["L-C5"][3]
     assert rows["L-S2"][1] == "bounded-fixed"
     assert "optional" in rows["L-S2"][2]

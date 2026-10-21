@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reject negative integer `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and
+  `DOCUMENT_CACHE_MAXSIZE` values when each setting is read, using the existing
+  configuration error with a minimum of zero and a remedy. Zero, `None`,
+  positive values, defaults, and existing noninteger handling are unchanged;
+  this does not add eager startup validation.
+
 - Apply configured `MAX_UPLOAD_SIZE` to each received multipart file, including
   unused and repeated parts. Files over the limit now receive JSON HTTP 413
   before resolver execution; equality and `None` retain their documented

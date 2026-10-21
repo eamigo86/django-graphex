@@ -16,6 +16,17 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Negative operational limits
+
+`MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE` now
+raise `ImproperlyConfigured` when read with a negative integer. Correct a
+negative configuration to a meaningful nonnegative limit, or use `None` for
+the setting's existing uncapped behavior. Zero retains its distinct meaning:
+no batch operations, no request-body bytes, or disabled document caches,
+respectively. Defaults and positive values are unchanged. Validation occurs
+when the setting is read; it is not a new startup system check or a general
+type validator.
+
 ### Multipart upload size limit
 
 If you configure `MAX_UPLOAD_SIZE`, it now limits **each received multipart

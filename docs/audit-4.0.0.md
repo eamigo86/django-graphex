@@ -12,14 +12,14 @@ below describe bounded evidence, not universal guarantees.
 
 | Outcome | IDs | Meaning |
 |---|---:|---|
-| Bounded fix | 48 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
+| Bounded fix | 49 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
 | Partial or residual | 27 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
 | Contract or premise clarification | 9 | The reported expectation differs from the documented/current contract; no blanket runtime fix is implied. |
 | Recommendation | 7 | Maintainability or coverage work, not seven extra runtime bugs. |
 | Limited negative check | 6 | A proposed reassuring claim has only bounded evidence or is imprecisely worded; these are not six fixes. |
-| Decision deferred | 3 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
+| Decision deferred | 2 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
 
-Thus **48 does not mean 48 fully closed issues**. The 27 partial rows contain
+Thus **49 does not mean 49 fully closed issues**. The 27 partial rows contain
 additional decisions, and accepted work units do not automatically close their
 parent areas. This report preserves the report's IDs and order exactly once in
 the primary table. The status is the *primary disposition* of a multi-part ID,
@@ -247,7 +247,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | L-C2 | bounded-fixed | Two specific constructor validations now survive optimized Python (`-O`); no universal validation claim follows. | Two invalid constructor values under python -O → still rejected. | `tests/test_settings_boundary_values.py` |
 | L-C3 | bounded-fixed | Enhanced JSON view now matches the base view for a path-bearing non-null-root execution error: HTTP 200 with `data: null` and `errors`; syntax, validation, and variable-coercion errors remain HTTP 400 without data. Auth, transport, and other media policies are separate. | Non-null root execution error → both views return HTTP 200 with `data: null`; validation error → HTTP 400 without data. | `tests/test_http_execution_error_contract.py` |
 | L-C4 | bounded-fixed | Configured MAX_UPLOAD_SIZE now checks each received multipart file, including unused and repeated parts, after parsing and before resolver or successful GraphiQL rendering. A file at the cap passes; above it returns safe JSON HTTP 413. None leaves multipart without this cap. The independent whole-body limit and Base64 contract remain; malformed batches still return their existing HTTP 400. This is not ingress protection. | Cap 3 bytes: an unused 4-byte file → HTTP 413/no resolver in both views; two separate 2-byte files → pass; malformed multipart batch → HTTP 400 first. | `tests/test_multipart_file_size_http.py` |
-| L-C5 | decision-deferred | `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE` lack minimums; rejecting negative values would add fail-fast validation and must preserve meaningful zero behavior. | Configured negative MAX_BATCH_SIZE → no new fail-fast guard adopted; zero remains meaningful. | `odd/tasks/audit-400-remediation.md` |
+| L-C5 | bounded-fixed | `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE` now reject negative integers with `ImproperlyConfigured` when read, naming the setting, value, minimum zero, and remedy. Zero, `None`, positives, defaults, and existing noninteger handling retain their prior behavior. This is not eager startup validation. | Configured negative MAX_BATCH_SIZE on read → configuration error; zero remains meaningful. | `tests/test_settings_minimum_zero.py` |
 | L-C6 | contract | A cache miss reaches ensure_csrf_cookie and can set csrftoken; a cache hit returns earlier without Set-Cookie. A later cookie-bearing request bypasses the any-cookie cache policy. | Cookie-free miss can set csrftoken → next cookie request bypasses; hit does not set it. | `tests/test_views_cache_cookie_bypass.py` |
 | L-C7 | bounded-fixed | ambiguous enum members rejected; optional multiselect untested. | Two enum choices map to one ambiguous member → rejected. | `tests/core/test_choices_enum_member_ambiguity.py` |
 | L-C8 | contract | Negative page -1 means a fixed-size tail window, not the positive final page's short remainder. | page -1 with size 10 and 23 rows → last 10, not positive page 3's last 3. | `tests/test_pagination_page_null_http.py` |
@@ -316,7 +316,7 @@ because approving one does not silently approve another.
    failed Source retry was corrected, but backend cleanup remains best-effort.
 4. **HTTP, cache, and resource limits:** A2 retained AST/cache bytes and
    aggregate memory, A11 aggregate response quota, M-S2 other defaults and
-   Boolean width/depth, L-C5 zero-valued negative-configuration errors,
+   Boolean width/depth, other resource-limit policies,
    L-C6 any-cookie privacy override and cache byte limits must not be
    inferred from existing per-result/body caps. The accepted L-C4 multipart
    cap is post-parse, not an ingress or aggregate-upload limit.

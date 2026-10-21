@@ -177,7 +177,7 @@ session, tenant, locale or cookie value that can affect the response.
 
 | Setting | Default | Description |
 |---|---|---|
-| `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches; `None` leaves them unbounded. |
+| `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches; `None` leaves them unbounded. A negative integer raises `ImproperlyConfigured` when this setting is read. |
 
 graphql-core re-parses and re-revalidates the identical query document on every
 request; real APIs replay a small, stable set of documents (a handful of
@@ -233,7 +233,7 @@ the set of documents your clients send is finite, since nothing is ever evicted.
 
 | Setting | Default | Description |
 |---|---|---|
-| `MAX_BATCH_SIZE` | `10` | Maximum number of operations allowed in a single [batch request](https://www.apollographql.com/blog/apollo-client/performance/batching-client-graphql-queries/). Requests exceeding this limit receive **HTTP 400**. Set to `None` to allow batches of any length (disables the guard — use only when all clients are trusted and independent rate limiting is in place). |
+| `MAX_BATCH_SIZE` | `10` | Maximum number of operations allowed in a single [batch request](https://www.apollographql.com/blog/apollo-client/performance/batching-client-graphql-queries/). Requests exceeding this limit receive **HTTP 400**. `0` allows no batch operations; `None` removes the cap (use only with independent rate limiting). A negative integer raises `ImproperlyConfigured` when this setting is read. |
 | `REQUIRE_CSRF_HEADER` | `True` | Demand the **`X-Requested-With`** header on a POST whose content type a browser can send cross-site with **no CORS preflight** — `application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`, or no content type at all. The endpoint is `csrf_exempt`, so without it a cross-site `<form>` submit executes under the victim's session cookie; the header is not CORS-safelisted, so demanding it forces the preflight a forged request cannot pass. The value is never inspected. **This changes behaviour for existing form-encoded and multipart clients**, which must add the header or get **HTTP 403** before the body is read. `application/json` and `application/graphql` already force a preflight and are never asked for it. Set to `False` only if a client cannot add the header **and** the endpoint is protected another way. See [Security → Cross-site POST protection](security.md#cross-site-post-protection). |
 
 ### Choosing a `MAX_BATCH_SIZE` value
@@ -310,7 +310,7 @@ input type for files encoded inside the GraphQL body. See
 | Setting | Default | Description |
 |---|---|---|
 | `MAX_UPLOAD_SIZE` | `None` | Maximum size (bytes) of **each received multipart file**, including unused or unmapped parts and repeated parts under one name. A file at the limit passes; a larger file returns JSON HTTP 413 before resolver execution. `None` leaves multipart files without this per-file cap. The same setting caps decoded `Base64FileInput` data and is **required** for that input unless a per-call `max_size` override is supplied; without either, Base64 decoding raises `ImproperlyConfigured`. The override affects only that Base64 call, not multipart files. Example: `5 * 1024 * 1024` (5 MB). |
-| `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**; a `multipart/form-data` POST that declares no `Content-Length` receives **HTTP 411** on a server whose request stream cannot be measured (WSGI), because it is then the one body whose size is unknowable. `None` = disabled (not recommended for public-facing endpoints). Example: `20 * 1024 * 1024` (20 MB). See [How the guard reads each content type](#how-the-guard-reads-each-content-type) below. |
+| `MAX_REQUEST_BODY_SIZE` | `None` | Maximum total HTTP request **body length** (bytes), checked in `BaseGraphQLView.dispatch` **before** JSON parsing. This is the primary memory-safety cap: the entire base64 string is already in the HTTP body before any resolver runs, so rejecting here prevents full-body allocation above the threshold. The per-field decoded-size pre-check in `decode_base64_file` is a secondary guard that saves the decode allocation for payloads that slip past (e.g. when this setting is unset). Requests that exceed the limit receive **HTTP 413**; a `multipart/form-data` POST that declares no `Content-Length` receives **HTTP 411** on a server whose request stream cannot be measured (WSGI), because it is then the one body whose size is unknowable. `0` allows no body bytes; `None` disables the guard (not recommended for public-facing endpoints). A negative integer raises `ImproperlyConfigured` when this setting is read. Example: `20 * 1024 * 1024` (20 MB). See [How the guard reads each content type](#how-the-guard-reads-each-content-type) below. |
 
 When `CACHE_ACTIVE=True`, `GraphQLView` applies the same configured POST body
 limit **before** operation parsing or parse, validation, and response-cache
@@ -483,6 +483,12 @@ dependency). Changes are picked up automatically in tests via Django's
 `setting_changed` signal, so `@override_settings(DJANGO_GRAPHEX={...})`
 works as expected. Reading a setting name that does not exist raises
 `AttributeError` to catch typos early.
+
+`MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE` reject
+negative integers with `ImproperlyConfigured` when each setting is read, not
+at Django startup. The error names the setting, rejected value, minimum of
+zero, and remedy. Their existing `0`, `None`, positive, and default behaviors
+are unchanged; this is not a general setting-type validator.
 
 ## Typos in the `DJANGO_GRAPHEX` dict
 

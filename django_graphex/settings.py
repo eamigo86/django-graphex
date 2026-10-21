@@ -216,7 +216,8 @@ IMPORT_STRINGS = ("DEFAULT_PAGINATION_CLASS", "MIDDLEWARE", "SCHEMA")
 #: enforced a budget no query could meet while naming that negative in the
 #: error; the cache bound at zero quietly restored the default 64. Each is now
 #: refused where every reader routes through, so the mistake surfaces as a
-#: configuration error instead of as a guard that is not running.
+#: configuration error instead of as a guard that is not running. The batch,
+#: body, and document-cache bounds allow zero but reject negative integers.
 LIMIT_MINIMUMS = {
     "MAX_QUERY_DEPTH": (1, "Use None to disable the global depth guard."),
     "MAX_QUERY_COST": (1, "Use None to disable the cost budget."),
@@ -224,6 +225,18 @@ LIMIT_MINIMUMS = {
     "PERMISSION_SCHEMA_CACHE_MAXSIZE": (
         0,
         "Use 0 to cache nothing, or None to keep the calibrated default.",
+    ),
+    "MAX_BATCH_SIZE": (
+        0,
+        "Use 0 to allow no batch operations, or None to remove the cap.",
+    ),
+    "MAX_REQUEST_BODY_SIZE": (
+        0,
+        "Use 0 to allow no request-body bytes, or None to disable the body-size guard.",
+    ),
+    "DOCUMENT_CACHE_MAXSIZE": (
+        0,
+        "Use 0 to disable both document caches, or None to leave them unbounded.",
     ),
 }
 
