@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader SDL/input shapes; R08b string Literal slice approved24849, other forms open. | [ ] |
+| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader SDL/input shapes; R08b string Literal and R08c exact dict[str,int] JSON accepted; other forms and fixed JSON-object SDL metadata remain open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -221,7 +221,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
-| M-D10 | 133 | **Partial; approved pending R08b:** human24849 approves automatic enums for all-string Literal input annotations, including client-breaking SDL/wire migration. R08a warning-only21363 remains for unsupported numeric/mixed Literal, dict/set/Union; no automatic Pydantic validation or wider conversion. Current unchanged behavior and rejected broader scope: obs24838/24849; original triage `t09-md10-triage/README.md`/17017. | T09/R08a/R08b |
+| M-D10 | 133 | **Partial:** R08b all-string Literal enums accepted24884/local b5e4823; R08c exact dict[str,int] → shared JSON with strict object/string-key/plain-int validation accepted24987/local 7d0165c. Fixed JSON-object defaults still have pre-existing SDL/introspection metadata failure; factory workaround documented. Other dict/set/Union/numeric-mixed Literal and global Pydantic validation unchanged; whole ID open. Full R08c scope/proof/failures in closeout archive. | T09/R08a/R08b/R08c |
 
 ### Medium: filters, HTTP, optimizer, subscriptions, thread safety
 
@@ -339,7 +339,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03g-V | Accepted23933; checks archived. | [x] |
 | R03g-C | Accepted23933; local/no PR. | [x] |
 
-**R03h completed-history locator:** BP-MU6-NUMERIC-NULL-001 accepted24012; number/currency None stays null with format validation, unrelated behavior unchanged. The R04c preimage contains the R03h pre-edit archive, full TDD/checks/failures/UNKNOWNs and qualification chain; M-U6 stays partial.
+**R03h completed locator:** accepted24012 numeric-null only; full TDD/failures/UNKNOWNs/chain in R08c preimage; M-U6 partial.
 
 | Task | Retained completed scope | State |
 |---|---|---|
@@ -347,11 +347,11 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 156 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08b accepted string-only; M-D10 and wider R04/R08/T13/T15/T17 open.
+**Current audit state:** 158 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08b/R08c accepted in bounded scopes; M-D10 and wider R04/R08/T13/T15/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
-**R03i completed locator:** human24091/accepted24132: absent raw-JSON list variables become null, object keys omit; M-D6 open. Exact TDD, defaults and excluded policies in `md10-literal-enum-preparation/tracker-preedit.md` and `md6-list-null-closeout/closure.md`.
+**R03i completed locator:** accepted24132, JSON list-missing→null/object-missing→omit. Full scope/checks/UNKNOWNs in R08c preimage and `md6-list-null-closeout/closure.md`; M-D6 open.
 
 | Task | Retained completion | State |
 |---|---|---|
@@ -359,7 +359,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03i-V | D; independent proof in exact archive. | [x] |
 | R03i-C | Parent local/no PR. | [x] |
 
-**R03i–j completed locator:** R03i accepted24132 (missing list slots null/object omission retained); R03j accepted24168 (nonfinite raw-JSON input only). M-D6 remains open. Exact approvals, RED/GREEN, failures/UNKNOWNs, restrictions and archive chains in `lc6-csrf-cache-docs/tracker-preedit.md` and `md6-finite-input-closeout/closure.md`.
+**R03j completed locator:** accepted24168, nonfinite raw-JSON input only. Full approval/TDD/failures/UNKNOWNs in R08c preimage and `md6-finite-input-closeout/closure.md`; M-D6 open.
 
 | Task | Retained completed scope | State |
 |---|---|---|
@@ -369,7 +369,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R03j preclosure archive:** `md6-finite-input-closeout/tracker-preclosure.md` (49,739 B; SHA-256 `e3156ceef9b80a159c39907459180364cb43113f12c208a7ff38116168f1a2eb`, mode 0644) is preserved in R03k preimage.
 
-**R03k/l completed locator:** R03k accepted24230 FIELD-only library transforms; built-ins/fields inside fragments/raw third-party unchanged. R03l accepted24279 floor nonfinite error only; @title absent, other subclaims unproved. T15/T17 open. Full approvals/TDD/failures/UNKNOWNs/archive chain: `lc6-csrf-cache-docs/tracker-preedit.md`.
+**R03k/l completed locator:** accepted24230 FIELD-only transforms and 24279 floor nonfinite error, no wider directive policy. Full restrictions/TDD/failures/UNKNOWNs in R08c preimage and `lc6-csrf-cache-docs/tracker-preedit.md`; T15/T17 open.
 
 | Task | Retained outcome | State |
 |---|---|---|
@@ -380,7 +380,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03l-V | D independent; archive. | [x] |
 | R03l-C | Parent local; no PR. | [x] |
 
-**R04a completed locator:** L-C1 human24312/accepted24375/local `0512657`: malformed PK IDs safe INVALID_ID/format; valid missing/hidden IDs null; null-only rejected. One-prep/custom-PK and full RED/GREEN/PARTIAL/failures/UNKNOWN/chain in exact `md10-literal-enum-preparation/tracker-preedit.md` and `lc1-invalid-id-closeout/closure.md`; wider R04/T15/T17 open.
+**R04a completed locator:** L-C1 accepted24375/local `0512657`, malformed IDs safe INVALID_ID, valid missing/hidden null. Rejected null-only and full custom-PK/TDD/PARTIAL/UNKNOWN chain in R08c preimage and `lc1-invalid-id-closeout/closure.md`; R04/T15/T17 open.
 
 | Task | Retained completion | State |
 |---|---|---|
@@ -388,7 +388,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R04a-V | D; independent checks/qualifications archived. | [x] |
 | R04a-C | Parent local/no PR. | [x] |
 
-**R04b completed locator:** L-C3 human24396/accepted24437/local `276841a`: execution error HTTP200 data:null, request error400/no data; auth/transport/async and cache/batch/cost/success unchanged. Full TDD, failed/UNKNOWN checks, limits and approval chain in exact `md10-literal-enum-preparation/tracker-preedit.md` and `lc3-execution-http-closeout/closure.md`; wider R04/T13/T17 open.
+**R04b completed locator:** L-C3 accepted24437/local `276841a`, execution HTTP200/data:null versus request400/no data. Full restrictions/TDD/failures/UNKNOWNs in R08c preimage and `lc3-execution-http-closeout/closure.md`; R04/T13/T17 open.
 
 | Task | Retained completion | State |
 |---|---|---|
@@ -396,7 +396,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R04b-V | D; full6042/7skip/10warn, raw4461/4668, direct1/1line+2/2exits; failed checks/limits archived. | [x] |
 | R04b-C | Parent local/no PR; mirror readback archived. | [x] |
 
-**R04c completed locator:** L-C4 human24470/accepted24509/local `dfb47a0`: per-file multipart cap including unused/repeated, equality allowed; None/Base64/body cap and malformed-batch priority unchanged. Full TDD, rejected priority, failed/UNKNOWN/PARTIAL checks and chain in exact `md10-literal-enum-preparation/tracker-preedit.md` and `lc4-multipart-cap-closeout/closure.md`; wider R04/T13/T17 open.
+**R04c completed locator:** L-C4 accepted24509/local `dfb47a0`, per-file multipart cap only. Exact approval, priority, RED/GREEN, failures/UNKNOWNs and exclusions survive in R08c preimage and `lc4-multipart-cap-closeout/closure.md`; wider R04/T13/T17 open.
 
 | Task | Retained completion | State |
 |---|---|---|
@@ -404,7 +404,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R04c-V | D; accepted24509, checks/failures/limits in exact R04f preedit archive. | [x] |
 | R04c-C | Parent local `dfb47a0`+tracker commit/fullmirror15165/readback; no PR/remote/tag/release. | [x] |
 
-**R04d completed locator:** BP-LC5-MINIMUM-ZERO-001 accepted24573/local `9760b29`; three settings reject negative integers lazily, all other values/defaults retained. Full scope, TDD, failures/UNKNOWNs, checks, rollback and earlier archive chains are losslessly retained in exact `lc9-null-order-preparation/tracker-preedit.md` (48,712 B; SHA-256 `59fa93c0e61bceaec36df861a148b414ead0a580500a2a214f5fa76f892c13e2`; 0644) and `lc5-minimum-zero-closeout/closure.md`. RDD OFF; no wider closure.
+**R04d completed locator:** L-C5 accepted24573/local `9760b29`, three lazy minimum-zero settings only. Full scope, TDD, failures/UNKNOWNs and archive chain survive in R08c preimage and `lc5-minimum-zero-closeout/closure.md`; no wider closure.
 
 | Task | Route and required result | State |
 |---|---|---|
@@ -414,26 +414,38 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R04d limits:** Exact R04f preedit archive preserves failed docs, skips/warnings, N/A patch coverage, JUnit mismatch, source-only SDL/settings-hook limits, no PostgreSQL/live benchmark and prior states.
 
-**R04e completed locator:** L-C6 contract/docs clarified, accepted24614/local `f982bb9`, 94 authored lines; no runtime/browser policy or empirical browser claim. Full RED/GREEN, characterization, failures/UNKNOWNs, limits and archive chain are in exact R04f preedit archive and `lc6-csrf-cache-closeout/closure.md`. RDD OFF; no remote delivery or wider closure.
+**R04e completed locator:** L-C6 docs accepted24614/local `f982bb9`; no runtime/browser policy or empirical browser claim. Full RED/GREEN, failures/UNKNOWNs and chain survive in R08c preimage and `lc6-csrf-cache-closeout/closure.md`.
 
 | Task | Route and required result | State |
 |---|---|---|
 | R04e-I | D; accepted24614/localf982bb9, scope/TDD archived. | [x] |
 | R04e-V | D; accepted checks/failures/limits archived. | [x] |
 
-**R04f completed locator:** L-C9 approved human24662/accepted24747, local `ebeb63a`: automatic nullable concrete-column NULL-last ASC/FIRST DESC in offset/page direct and nested paths; explicit ORM/Cursor unchanged. Exact TDD, approvals, failed checks, UNKNOWNs, limits and archive chains survive in `md10-literal-enum-preparation/tracker-preedit.md` (49,031 B; SHA-256 `37ead78479aad3f99a951eefea0b764918f1bd8825611a96a1ac9af8ae9de75f`; 0644) and `lc9-null-order-closeout/closure.md`. Wider T12/R04/T17 open.
+**R04f completed locator:** L-C9 accepted24747/local `ebeb63a`, automatic concrete-column NULL placement only; explicit ORM/Cursor unchanged. Full TDD, failures/UNKNOWNs and archive chain survive in R08c preimage and `lc9-null-order-closeout/closure.md`; T12/R04/T17 open.
 
 | Task | Route and required result | State |
 |---|---|---|
 | R04f-I | D; accepted24747, local ebeb63a; scope/TDD archived. | [x] |
 | R04f-V | D; accepted checks/failures/limits archived, no PR. | [x] |
 
-**R08b M-D10 bounded completion (BP-MD10-STRING-LITERAL-ENUM-001):** human24849/root24884 accepted all-string Literal input enums, raw resolver strings and breaking client enum spellings; local `b5e4823` (436 coherent authored lines, 400 advisory). Delegated direct; strict RED1→same-byte GREEN1. Full checks and failures/UNKNOWNs/rollback in `md10-literal-enum-closeout/closure.md`. Numeric/mixed Literal, dict/set/Union, Python Enum and automatic Pydantic validation unchanged; M-D10 remains partial. No PR/remote/tag/publication.
+**R08b completed locator:** human24849/root24884/local `b5e4823`: string Literal enums/raw values only. Full 436-line coherent scope, RED/GREEN, checks, failures/UNKNOWNs and exclusions survive in R08c preimage and `md10-literal-enum-closeout/closure.md`. M-D10 remains partial; no PR.
 
 | Task | Route and accepted outcome | State |
 |---|---|---|
 | R08b-I | D; approved compiler, public TDD and docs; accepted24884/local `b5e4823`. | [x] |
 | R08b-V | D; independent/fresh parent checks accepted24884; exact limits in closure. | [x] |
+| R08c-I | D; human24915/root24987/local `7d0165c`; strict map, clone metadata, tests/docs; scope/proof archived. | [x] |
+| R08c-V | D; independent and root fresh checks accepted24987; failures/limits archived; no PR. | [x] |
+
+**R08c accepted correction:** Permission-scoped clones retain only surviving typed-map metadata; original independent two-fail finding and corrected RED/GREEN/functional proof remain in the exact preclosure archive and `md10-typed-dict-closeout/closure.md`. No broader M-D10 policy.
+
+**R08c metadata limit:** Fixed JSON-object defaults work at runtime but already fail SDL/default introspection, including bare JSON; factory workaround documented. No metadata API fix or wider shape approval; see `md10-typed-dict-default-sdl-investigation/investigation-summary.md`.
+
+**R08c accepted locator:** BP-MD10-TYPED-DICT-JSON-001/human24915/root24987; local `7d0165c` (699 coherent authored lines, 400 advisory). Strict public RED→same-byte GREEN for base/clone and doc contract; full 6143 PASS/7 skip/9 warn; raw4499/4706, combined16696/17084, direct32/32 lines+18/18 actual exits. Quality/docs43/Playground61/static5 PASS. Full exact approvals, limits, failed attempts, UNKNOWNs, proof and rollback: `md10-typed-dict-closeout/tracker-preclosure.md` and `md10-typed-dict-closeout/closure.md`. Local only; no PR.
+
+**R08c exact preclosure archive:** `md10-typed-dict-closeout/tracker-preclosure.md` (49,893 B; SHA-256 `c97f2e1e75b56e436fe58bdaeaa4deb674da117ce361d539c4510506f959a2fb`; 0644) preserves every prior row, scope, failure, UNKNOWN and archive chain losslessly.
+
+**R08c lossless pre-edit archive:** `md10-typed-dict-preparation/tracker-preedit.md` (49,435 B; SHA-256 `8d3e6ca6098d0184875d8511eca60061501c7df0ba4aca50bf39c1bcd07afd75`; 0644) preserves every prior state, approval, rejection, failure, PARTIAL/UNKNOWN, qualification and archive chain before completed-history compression.
 
 **R08b exact preclosure archive:** `md10-literal-enum-closeout/tracker-preclosure.md` (49,496 B, SHA-256 `231975b645a76100e05132a8b89132b30e1d074e319919885675af8118cf4e63`, 0644) retains every earlier scope, state, failed/PARTIAL/UNKNOWN check and archive chain. No wider audit closure.
 
@@ -441,7 +453,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** R08b implementation `b5e4823` is local and accepted. Investigate remaining M-D10 numeric/mixed Literal and dict/set/Union separately; obtain approval before further input-contract changes, and retain accepted warnings. L-M1 dynamic retention and L-C13/L-E3 remain read-only; wider R08/T12/T13/T17 and browser reuse open. No PR/push/tag/publication.
+**Next:** Investigate fixed JSON-object defaults in SDL/introspection before proposing a separate metadata policy; any incompatible change requires human approval. Other M-D10 forms remain unapproved; L-M1/L-C13/L-E3 stay read-only. Wider R08/T12/T13/T17 and browser reuse remain open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
