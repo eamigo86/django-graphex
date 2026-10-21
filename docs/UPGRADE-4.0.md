@@ -25,9 +25,30 @@ enums instead of `String`. For `ArticleInput.status: Literal["draft",
 `status: DRAFT`; update JSON variables from `"status": "draft"` to
 `"status": "DRAFT"`. Resolvers still receive the raw string `"draft"`.
 Invalid members are rejected before resolver execution. Numeric or mixed
-`Literal`, parameterized dictionaries and sets, and non-optional unions keep
-their existing warning and `String` fallback; this does not add automatic
-Pydantic validation.
+`Literal`, parameterized sets, other parameterized dictionaries, and
+non-optional unions keep their existing warning and `String` fallback; this
+does not add automatic Pydantic validation.
+
+### Typed integer-map input values
+
+`dict[str, int]` input fields change from GraphQL `String` to the existing
+raw `JSON` scalar. Change JSON variables from an encoded string such as
+`"mapping": "{\"count\":3}"` to an object, `"mapping": {"count": 3}`;
+inline GraphQL values use `mapping: {count: 3}`. The object must have string
+keys and plain integer values: booleans, numeric strings, floats, nested
+containers and non-object values fail before mutation execution. Empty
+objects and integers beyond 32-bit are valid. Bare `dict` remains permissive
+raw `JSON`; no global Pydantic validation or other typed-container conversion
+is introduced.
+
+A fixed object-valued JSON default still applies at runtime for an omitted
+input, but `print_schema` and default-value introspection currently fail when
+rendering that object. This retained JSON metadata limitation also affects
+bare `dict`; it is not a new typed-map validation rule. If clients or tools
+need SDL or introspection, replace the fixed object default with
+`Field(default_factory=lambda: {"views": 0})`. The factory supplies the value
+for each omitted input but does not publish a fixed SDL default. A nullable
+`None` default remains unaffected.
 
 ### Nullable ordering in offset and page results
 

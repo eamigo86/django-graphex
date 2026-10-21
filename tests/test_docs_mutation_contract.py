@@ -61,6 +61,34 @@ def test_guide_documents_string_literal_enum_client_migration() -> None:
     assert "automatically validated as Pydantic" in usage
 
 
+def test_guide_documents_typed_integer_map_json_migration() -> None:
+    """Keep the strict typed-map wire change distinct from bare JSON."""
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
+    for text in (usage, upgrade):
+        assert "dict[str, int]" in text
+        assert "JSON" in text
+        assert '"mapping": {"count": 3}' in text
+        assert "plain integer" in text
+        assert "Bare `dict`" in text or "bare `dict`" in text
+
+
+def test_docs_qualify_fixed_json_object_default_metadata() -> None:
+    """Keep the runtime default distinct from SDL metadata support."""
+    paths = (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "fixed object-valued json default" in text.lower()
+        assert "print_schema" in text
+        assert "introspection" in text
+        assert 'Field(default_factory=lambda: {"views": 0})' in text
+        assert "omitted input" in text.lower()
+
+
 @pytest.mark.parametrize(
     "relative", ["docs/usage/mutations.md", "docs/api/mutations.md"]
 )

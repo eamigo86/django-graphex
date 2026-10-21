@@ -1602,7 +1602,8 @@ omitted. It no longer runs while the schema is built or puts a fixed value in
 the SDL. For example, a `uid` factory previously rendered a snapshot such as
 `uid: String = "uid-1"`; it now renders `uid: String`, and each separately
 coerced `{}` input gets a fresh UID. Update clients that relied on the SDL's
-fixed factory value. Plain literal defaults still render as SDL defaults;
+fixed factory value. Plain scalar and enum defaults still render as SDL
+defaults; object-valued JSON defaults have the limitation below.
 explicit values and `null` still bypass a zero-argument factory. A resolver
 still receives a snake-keyed `dict`, not an automatically validated Pydantic
 instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
@@ -1626,9 +1627,32 @@ its plain input dictionary. A value outside the enum fails GraphQL input
 validation before the resolver. Fixed defaults render as enum members in SDL;
 factories still run for each newly coerced input object.
 
-Numeric or mixed `Literal`, `dict[str, int]`, `set[int]`, and non-optional
-`Union[int, str]` remain unsupported and warn when they fall back to GraphQL
-`String`. They are **not** automatically validated as Pydantic models. For
+An input field annotated `dict[str, int]` now uses the existing raw GraphQL
+`JSON` scalar instead of the legacy `String` fallback. Send an object, not
+JSON-encoded text: inline `mapping: {count: 3}` or the JSON variable
+`"mapping": {"count": 3}`. Every key must be a string and every value must
+be a plain integer; `true`, `3.5`, `"3"`, nested containers, and non-object
+values fail before the mutation resolver. An empty object and integers beyond
+GraphQL `Int`'s 32-bit range are accepted. Error messages name the declared
+field without echoing supplied keys or values. Optionality, omission, list
+wrapping, and fixed or factory defaults follow the field's existing input
+contract. A bare `dict` remains permissive raw `JSON`.
+
+!!! warning "Object-valued JSON defaults and schema metadata"
+
+    A fixed object-valued JSON default still supplies its value at runtime
+    for an omitted input, but `print_schema` and default-value introspection
+    currently fail when they try to render that object as SDL. This existing
+    JSON metadata limitation also affects bare `dict`; it does not mean the
+    runtime default or typed-map input validation is rejected. If schema
+    printing or introspection is required, use
+    `Field(default_factory=lambda: {"views": 0})` instead. The factory supplies
+    a value for each omitted input and intentionally has no fixed SDL default.
+    A nullable `None` default is unaffected.
+
+Numeric or mixed `Literal`, other parameterized dictionaries, `set[int]`, and
+non-optional `Union[int, str]` remain unsupported and warn when they fall back
+to GraphQL `String`. They are **not** automatically validated as Pydantic models. For
 other string-valued fields, annotate `str` and explicitly call the input
 model's `model_validate()` in the resolver if narrower validation is needed.
 A supported `int | None` remains `Int`, and `list[int]` remains `[Int!]!`.

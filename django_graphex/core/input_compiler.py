@@ -70,20 +70,26 @@ class GdxInputSpec:
 
 
 class _FactoryOutType:
-    """Populate omitted hand-authored fields after each GraphQL input coercion.
+    """Apply field-specific input checks and omitted-field factories.
 
-    The mapping contains callables, never factory results. A pruned input type
-    receives a new adapter with only its surviving fields.
+    A pruned input type receives a new adapter with only surviving fields.
 
     Args:
         factories: Zero-argument factories keyed by resolver-facing field name.
+        typed_maps: Surviving typed-map fields with their schema paths and
+            list-wrapping flags.
     """
 
-    def __init__(self, factories: dict[str, Callable[[], Any]]) -> None:
+    def __init__(
+        self,
+        factories: dict[str, Callable[[], Any]],
+        typed_maps: dict[str, tuple[str, bool]] | None = None,
+    ) -> None:
         self.factories = factories
+        self.typed_maps = typed_maps if typed_maps is not None else {}
 
     def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
-        """Apply each omitted field factory to this coerced input object.
+        """Apply omitted factories, then validate present typed maps.
 
         Args:
             values: The GraphQL-coerced mapping using field out-names.
@@ -92,7 +98,7 @@ class _FactoryOutType:
             The same mapping with fresh defaults for omitted fields.
 
         Raises:
-            GraphQLError: When a factory fails during input coercion.
+            GraphQLError: When a factory fails or a typed map has invalid shape.
         """
         for field_name, factory in self.factories.items():
             if field_name not in values:
@@ -102,7 +108,70 @@ class _FactoryOutType:
                     raise GraphQLError(
                         f"Could not resolve default for input field {field_name!r}."
                     ) from None
+        for field_name, (schema_path, is_list) in self.typed_maps.items():
+            value = values.get(field_name, Undefined)
+            if value is Undefined or value is None:
+                continue
+            if is_list:
+                for index, item in enumerate(value):
+                    if item is not None:
+                        _validate_typed_integer_map(item, f"{schema_path}[{index}]")
+            else:
+                _validate_typed_integer_map(value, schema_path)
         return values
+
+
+def _validate_typed_integer_map(value: Any, schema_path: str) -> None:
+    """Reject values outside the strict typed-map input contract.
+
+    Args:
+        value: GraphQL-coerced input value.
+        schema_path: Static field path for safe error reporting.
+
+    Raises:
+        GraphQLError: If the value is not an object with string keys and plain
+            integer values.
+    """
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or type(item) is not int for key, item in value.items()
+    ):
+        raise GraphQLError(
+            f"Input field '{schema_path}' requires an object with string keys "
+            "and integer values."
+        )
+
+
+def _is_typed_integer_map(py_type: Any) -> bool:
+    """Recognize only the approved typed dictionary annotation.
+
+    Args:
+        py_type: Unwrapped field annotation.
+
+    Returns:
+        Whether the annotation is exactly the supported typed dictionary.
+    """
+    return (
+        get_origin(py_type) is dict
+        and get_args(py_type) == (str, int)
+        and py_type == dict[str, int]
+    )
+
+
+def _has_wrapped_typed_integer_map(annotation: Any) -> bool:
+    """Recognize the approved map inside existing optional/list wrappers.
+
+    Args:
+        annotation: Field annotation to inspect.
+
+    Returns:
+        Whether the supported leaf occurs after the existing wrapper handling.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    element, is_list = _unwrap_list(inner)
+    if is_list:
+        element, _ = _unwrap_optional(element)
+        return _is_typed_integer_map(element)
+    return _is_typed_integer_map(inner)
 
 
 @dataclass(frozen=True)
@@ -334,6 +403,9 @@ def _python_type_to_gql(py_type: Any) -> Any:
     """
     if py_type is None:
         return GraphQLString
+
+    if _is_typed_integer_map(py_type):
+        return _native_scalar_map()[dict]
 
     # Direct builtins
     if py_type in _BUILTIN_MAP:
@@ -697,12 +769,14 @@ def compile_input_type(
         hasattr(model, "_gdx_opts") if emit_defaults is None else emit_defaults
     )
     factory_fields: dict[str, Callable[[], Any]] = {}
+    typed_map_fields: dict[str, tuple[str, bool]] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
         factory_candidates: dict[
             str, tuple[str, GraphQLInputField, Callable[[], Any]]
         ] = {}
+        typed_map_candidates: dict[str, tuple[str, GraphQLInputField, str, bool]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -809,6 +883,14 @@ def compile_input_type(
                 description=field_info.description,
                 default_value=default_value,
             )
+            typed_leaf = element_type if is_list else inner_type
+            if _is_typed_integer_map(typed_leaf):
+                typed_map_candidates[alias] = (
+                    field_name,
+                    gql_field,
+                    f"{name}.{alias}",
+                    is_list,
+                )
             if (
                 _emit_defaults
                 and field_info.default_factory is not None
@@ -947,6 +1029,19 @@ def compile_input_type(
                 if fields.get(alias) is gql_field
             }
         )
+        typed_map_fields.clear()
+        typed_map_fields.update(
+            {
+                field_name: (schema_path, is_list)
+                for alias, (
+                    field_name,
+                    gql_field,
+                    schema_path,
+                    is_list,
+                ) in typed_map_candidates.items()
+                if fields.get(alias) is gql_field
+            }
+        )
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation
@@ -954,7 +1049,15 @@ def compile_input_type(
         name=name,
         fields=lambda: _build_fields(),
         description=description,
-        out_type=_FactoryOutType(factory_fields) if _emit_defaults else None,
+        out_type=(
+            _FactoryOutType(factory_fields, typed_map_fields)
+            if _emit_defaults
+            or any(
+                _has_wrapped_typed_integer_map(info.annotation)
+                for info in getattr(model, "model_fields", {}).values()
+            )
+            else None
+        ),
         extensions={
             "gdx": GdxInputSpec(
                 pydantic_model=model,

@@ -399,6 +399,21 @@ send member names, while resolvers receive the original string values.
 Nullable/list/nested wrappers retain their usual input shape. Numeric or
 mixed `Literal` annotations still warn and use the `String` fallback.
 
+The exact `dict[str, int]` annotation compiles to the existing raw `JSON`
+input scalar, preserving the same scalar identity as a bare `dict`. Unlike
+bare `dict`, it accepts only objects with string keys and plain integer
+values, without Pydantic's numeric-string or boolean coercion. Its optional,
+list, nested and default wrappers keep their existing behavior; other
+parameterized dictionaries remain on the warning/`String` fallback.
+
+A fixed object-valued JSON default still reaches the resolver when its input
+is omitted, but `print_schema` and default-value introspection currently fail
+while rendering that object as SDL. This existing limitation also affects a
+bare `dict` JSON field. Where schema metadata must render, use
+`Field(default_factory=lambda: {"views": 0})`: it supplies a value for each
+omitted input without advertising a fixed SDL default. A nullable `None`
+default is unaffected.
+
 !!! note "Pydantic defaults on a hand-authored `InputType`"
 
     A plain default (`limit: int = 10`) remains a fixed SDL default

@@ -31,7 +31,7 @@ class UnsupportedTypingInput(InputType):
 
     literal: Literal[1, 2]
     mixed_literal: Literal["a", 1]
-    mapping: dict[str, int]
+    mapping: dict[str, str]
     numbers: set[int]
     choice: Union[int, str]
     maybe: int | None = None

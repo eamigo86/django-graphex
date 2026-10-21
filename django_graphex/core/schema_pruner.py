@@ -405,8 +405,9 @@ class _Pruner:
         Generated nested-object input fields carry explicit
         gdx_required_perms stamps. Dropping one is safe: a nested input field
         is never NonNull at the parent level. A hand-authored input field may
-        also be stamped; its factory callback must be restricted to surviving
-        out-names so pruning cannot reinsert a hidden field.
+        also be stamped; its factory callback and typed-map validator must be
+        restricted to surviving out-names so pruning cannot reinsert or inspect
+        a hidden field.
 
         A type that loses EVERY field is not cloned at all — the fixpoint has
         already dropped it from the survivors, and _field_survives has
@@ -419,9 +420,9 @@ class _Pruner:
         generated universe references an emptied input object.
         """
         kwargs = gtype.to_kwargs()
-        # A hand-authored input factory callback must not reinsert a field
+        # A hand-authored input callback must not inspect or reinsert a field
         # removed from this permission-scoped clone. Keep only the factories
-        # whose resolver-facing out-names survive the same field projection.
+        # and validators whose resolver-facing out-names survive projection.
         from django_graphex.core.input_compiler import _FactoryOutType
 
         if isinstance(gtype.out_type, _FactoryOutType):
@@ -435,7 +436,12 @@ class _Pruner:
                     name: factory
                     for name, factory in gtype.out_type.factories.items()
                     if name in surviving
-                }
+                },
+                {
+                    name: typed_map
+                    for name, typed_map in gtype.out_type.typed_maps.items()
+                    if name in surviving
+                },
             )
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)

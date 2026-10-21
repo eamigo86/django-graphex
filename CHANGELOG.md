@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Compile exact `dict[str, int]` input fields to the existing raw `JSON`
+  scalar instead of `String`. Accept objects with string keys and plain
+  integer values without implicit conversion; invalid values fail before
+  mutation resolution. Bare `dict` and other typed-container fallbacks stay
+  unchanged. Clients must replace JSON-encoded strings with objects.
+  Fixed object-valued JSON defaults retain runtime behavior but cannot
+  currently be rendered by SDL printing or default-value introspection; use
+  a zero-argument default factory when that metadata must render.
+
 - Compile all-string hand-authored input `Literal` annotations as generated
   GraphQL enums. Inline operations and JSON variables now send enum members
   rather than raw strings; resolvers still receive the original strings.
