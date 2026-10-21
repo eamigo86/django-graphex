@@ -158,6 +158,41 @@ def _is_typed_integer_map(py_type: Any) -> bool:
     )
 
 
+def _printable_json_list_default(
+    value: Any, element_type: Any, element_optional: bool
+) -> bool:
+    """Recognize fixed lists whose JSON elements can be printed unchanged.
+
+    Args:
+        value: Fixed input default.
+        element_type: Unwrapped list element annotation.
+        element_optional: Whether an element accepts null.
+
+    Returns:
+        Whether the list is eligible for external default metadata.
+    """
+    if type(value) is not list:
+        return False
+    json_scalar = _native_scalar_map()[dict]
+    typed_map = _is_typed_integer_map(element_type)
+    for item in value:
+        if item is None:
+            if not element_optional:
+                return False
+            continue
+        if json_scalar.value_to_literal(item) is None:
+            return False
+        if typed_map and (
+            not isinstance(item, dict)
+            or any(
+                not isinstance(key, str) or type(member) is not int
+                for key, member in item.items()
+            )
+        ):
+            return False
+    return True
+
+
 def _has_wrapped_typed_integer_map(annotation: Any) -> bool:
     """Recognize the approved map inside existing optional/list wrappers.
 
@@ -879,8 +914,8 @@ def compile_input_type(
                 _default_value_for(field_info) if _emit_defaults else Undefined
             )
             # External defaults allow SDL metadata for representable JSON
-            # values. Keep list-wrapped defaults internal: graphql-core would
-            # re-coerce them and change existing resolver value identity.
+            # values. A valid list may gain an outer copy during coercion;
+            # malformed list defaults retain their legacy internal path.
             gql_field_kwargs: dict[str, Any] = {
                 "type_": gql_type,
                 "out_name": field_name,
@@ -889,10 +924,21 @@ def compile_input_type(
             if (
                 default_value is not Undefined
                 and default_value is not None
-                and not is_list
-                and gql_base_type is _native_scalar_map()[dict]
-                and _native_scalar_map()[dict].value_to_literal(default_value)
-                is not None
+                and (
+                    (
+                        not is_list
+                        and gql_base_type is _native_scalar_map()[dict]
+                        and _native_scalar_map()[dict].value_to_literal(default_value)
+                        is not None
+                    )
+                    or (
+                        is_list
+                        and gql_element is _native_scalar_map()[dict]
+                        and _printable_json_list_default(
+                            default_value, element_type, element_optional
+                        )
+                    )
+                )
             ):
                 gql_field_kwargs["default"] = GraphQLDefaultInput(value=default_value)
             else:

@@ -1646,8 +1646,11 @@ contract. A bare `dict` remains permissive raw `JSON`.
     value to an omitted input, without JSON string encoding. Nested objects,
     lists, and finite scalar values inside that JSON value follow the same
     rule. This applies to JSON scalar fields, including those nested in an input
-    object; a field whose declared type is a list of JSON values retains its
-    earlier fixed-default metadata limitation to preserve resolver identity.
+    object. A fixed default for a list of JSON values also prints when the
+    outer value is a concrete list, every element is representable, and null
+    elements match the field type. The omitted input receives an equal outer
+    list copy with the same JSON elements. Malformed list defaults retain their
+    legacy runtime and metadata behavior.
 
     JSON objects may also contain keys that cannot be GraphQL Names, such as
     `"x-y"`. Those existing runtime defaults remain accepted, but

@@ -412,8 +412,10 @@ introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver
 for an omitted input as the original raw value. Nested representable JSON
 values work the same way. A fixed object with a key such as `"x-y"` keeps its
 existing runtime default but cannot be printed as a valid GraphQL object
-literal. A list-wrapped JSON field's fixed default also retains its earlier
-metadata limitation to preserve runtime identity. Where metadata must render,
+literal. A valid fixed list of JSON values also renders in SDL and introspection.
+Its omitted input receives an equal outer list copy with the same elements;
+malformed list defaults retain their legacy runtime and metadata behavior.
+Where metadata cannot render,
 use `Field(default_factory=lambda: {"views": 0})`: it supplies a value for each
 omitted input without advertising a fixed SDL default. A nullable `None`
 default is unaffected. Cyclic and non-JSON-native values, strings containing

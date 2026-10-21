@@ -240,16 +240,16 @@ def test_json_default_factory_is_not_frozen_in_sdl() -> None:
     assert input_type.out_type({}) == {"mapping": {"views": 2}}
 
 
-def test_nullable_list_defaults_keep_legacy_identity_and_scalar_coercion() -> None:
-    """Keep list-wrapper defaults internal to preserve their runtime identity."""
+def test_nullable_list_defaults_publish_metadata_and_preserve_elements() -> None:
+    """Expose eligible list metadata while retaining its JSON elements."""
 
     class ListJsonPayload(InputType):
         mappings: list[dict[str, int] | None] | None = [{"views": 1}, None]
 
     input_type = compile_input_type(ListJsonPayload, name="ListJsonPayload")
     field = input_type.fields["mappings"]
-    assert field.default is None
-    assert field.default_value == [{"views": 1}, None]
+    assert field.default is not None
+    assert field.default.value == [{"views": 1}, None]
     received: list[object] = []
 
     def resolve(_root: object, _info: object, payload: dict[str, object]) -> str:
@@ -270,7 +270,9 @@ def test_nullable_list_defaults_keep_legacy_identity_and_scalar_coercion() -> No
     )
     result = graphql_sync(schema, "{ probe(payload: {}) }")
     assert result.errors is None
-    assert received[0] is field.default_value
+    assert received[0] == field.default.value
+    assert received[0] is not field.default.value
+    assert received[0][0] is field.default.value[0]
     value = {"safe": [1, None]}
     assert GdxJSON.serialize(value) is value
     assert GdxJSON.parse_value(value) is value

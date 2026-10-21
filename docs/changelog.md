@@ -22,8 +22,10 @@ All notable changes to this library are documented here. The format is based on
   Fixed JSON defaults with GraphQL Name object keys now render in SDL and
   default-value introspection without changing runtime values. Defaults with
   non-Name keys retain runtime behavior and their metadata limitation; use
-  a zero-argument factory when metadata must render. List-wrapped JSON fields
-  retain their legacy default path to preserve resolver identity. Unpaired
+  a zero-argument factory when metadata must render. Valid fixed JSON list
+  defaults now render in SDL and introspection; their outer list may be copied
+  while elements stay unchanged. Malformed list defaults retain legacy behavior.
+  Unpaired
   Unicode surrogates and integers beyond Python's configured
   integer-to-string limit also retain runtime defaults without new SDL metadata.
 

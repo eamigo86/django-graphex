@@ -46,9 +46,10 @@ A fixed JSON default whose object keys are GraphQL Names, such as
 default-value introspection. The omitted input still receives the same raw
 value. Keys such as `"x-y"` cannot be GraphQL Names: their existing runtime
 default behavior is unchanged, but `print_schema` and introspection cannot
-render a valid GraphQL object literal for them. List-wrapped JSON fields also
-retain their fixed-default metadata limitation so their resolver value
-identity does not change. For these cases, when metadata must render,
+render a valid GraphQL object literal for them. Valid fixed list-wrapped JSON defaults also render in SDL and introspection.
+Their resolver receives an equal outer list copy with the same elements;
+malformed list defaults retain their prior runtime and metadata behavior.
+For defaults whose metadata cannot render,
 `Field(default_factory=lambda: {"views": 0})` supplies each omitted input
 without publishing a fixed SDL default. A nullable `None` default remains
 unaffected; cyclic and non-JSON-native fixed values, strings containing
