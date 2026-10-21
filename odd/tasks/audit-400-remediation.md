@@ -262,7 +262,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | L-C8 | 187 | page:-1 allegedly not last actual page. | T12 |
 | L-C9 | 188 | Null ordering allegedly differs between DB and memory cursor. | T12 |
 | L-C10 | 189 | R03k accepted24230; FIELD-only transform validation, preserving built-ins and fields inside fragments. Local 03cd107; bounded-fixed, wider T15 open. | T15/R03k |
-| L-C11 | 190 | @truncate, @title and @floor allegedly mishandle infinity; independently check each. | T15 |
+| L-C11 | 190 | R03l accepted24279; local 5b1022b normalizes floor-only non-finite errors. truncate/title_case stringification not a demonstrated bug; title alias nonexistent. Wider T15 open. | T15/R03l |
 | L-C12 | 191 | Split: confirmed GFK union-wrapper N+1 fixed T14e `c8bb0dd`; direct-member already optimized. Concrete parent fragment on child invalid absent explicit interface/union; broader MTI N+1 UNPROVEN, not whole-row closure/false positive. Controlled prewarmed2/5/5 causal; mixed4/5/5 diagnostic only. Full history in pre-T14g archive. | T14/T14e |
 | L-C13 | 192 | Naive/date-only scalar inputs allegedly assume local time without documentation. | T15 |
 | L-E1 | 195 | get_fields failure now aborts T14f with model/cause; healthy path unchanged; refs 0c5e320; archive. | T14/T14f |
@@ -353,7 +353,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 135 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 40 primary pending/limited ID records (not bugs)+7 recommendations. R03k closes only L-C10 FIELD-only placements; wider T15/T17 remain open.
+**Current audit state:** 138 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 39 primary pending/limited ID records (not bugs)+7 recommendations. R03l closes only L-C11 floor normalization/qualified subclaims; wider T15/T17 remain open.
 
 **BP-MD6-MISSING-LIST-NULL-001 (human24091):** An omitted variable inside a raw JSON literal list becomes Python `None` / GraphQL `null` in the same slot/order; an absent variable under an object literal key still omits the key. Supplied values/defaults, explicit null, nested shapes and ordinary typed lists remain unchanged. Direct missing-variable arguments, JSONString, nonfinite numbers, SDL/schema, settings, dependencies and other scalars are excluded. M-D6's nonfinite subcase and whole ID remain open. No remote/release/build/DB/timing/official-benchmark authority.
 
@@ -391,11 +391,25 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R03k closure:** Accepted24230; local behavior `03cd107`; `lc10-field-only-closeout/closure.md` SHA-256 `f65f6812d94ad5054ba7443f69b73a9dfac08c924001bbf901484992a903cdca` retains exact TDD provenance, proof manifests, failed attempts, skipped checks, inventory and coverage limits. Exact prepared tracker archived as `lc10-field-only-closeout/tracker-preclosure.md` (47,412 B; SHA-256 `636668e50247efbfc401300ab16de69a03a3d2f66a2437f9d6a6919f18a83cc4`; mode 0644). No prior acceptance or residual scope is revised.
 
+**R03l pre-edit archive:** `lc11-floor-preparation/tracker-preedit.md` (47,562 B; mode 0644; SHA-256 `72bdbb51bf328d8732f8d85532a6d15ab7397608bf829d52c166a7261b830136`) preserves exact earlier approvals, exclusions, proofs, failures/UNKNOWNs and archive chains.
+
+**BP-LC11-FLOOR-FINITE-001 (human24249; R03l accepted24279):** Only `@floor` rejects NaN and positive/negative infinity with `GraphQLError("@floor cannot operate on a non-finite value.")`. Preserve None, finite values including negative zero, malformed-value policy, other directives, SDL/settings/dependencies. Original L-C11 names `@title`, which is not registered; `@title_case`/`@truncate` stringification has no demonstrated bug and is not changed. No PR/push/tag/publication/build.
+
+**R03l route/TDD:** Delegated direct: multiple non-trivial files. Strict TDD per AGENTS.md, `.venv/bin/python -B -m pytest`, original RED→same-byte GREEN→REFACTOR. Full route/check criteria remain in the exact preclosure archive;237 authored lines, local-only delivery.
+
+| Task | Route and acceptance criteria | State |
+|---|---|---|
+| R03l-I | D; accepted24279; local `5b1022b`; original RED6→edit→same-byte GREEN6. Floor-only guard, public controls, docs/upgrade/both changelogs. | [x] |
+| R03l-V | D; accepted24279; fresh76+22, parent18PASS; full6017/7skip/10warn, raw95.5560%, combined97.7098%, direct4/4lines2/2exits; final docs43pages/Playground61. Qualifications in closure. | [x] |
+| R03l-C | Parent local `5b1022b`,237 authored lines; accepted bytes/modes; tracker/mirror separate. RDD OFF; no PR/push/tag/publication. | [x] |
+
+**R03l closure:** Accepted24279; local `5b1022b`; `lc11-floor-closeout/closure.md` SHA-256 `d4286096034abf682b8f67f512a78045721e75f386211de49230ab75094f26c9` retains exact TDD, manifests, failures/skips and historical isolation UNKNOWN. Prepared tracker archived as `lc11-floor-closeout/tracker-preclosure.md` (49,641 B;0644;SHA-256 `9cddc6d4a1f1e3a6c2393292887d129da38042c4ae86994b64033051e31fa1b9`). No prior scope or residual claim revised.
+
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate L-C11 separately: whether `@truncate`, `@title` and `@floor` mishandle non-finite inputs; confirm each before proposing a fix, and consult before incompatible changes. Wider T15/T17 open; no PR/push/tag/publication.
+**Next:** Investigate L-C1 malformed IDs across get_node/retrieve/DjangoObjectField, distinguishing invalid numeric IDs from legitimate missing records; consult before incompatible policy. Wider T15/T17 open; no PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
