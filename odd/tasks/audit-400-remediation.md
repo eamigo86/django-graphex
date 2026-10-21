@@ -256,7 +256,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | L-C2 | 181 | Two public constructor guards preserved under -O T14a; exact predicates only; refs 19162; archive. | T14/T14a |
 | L-C3 | 182 | Bounded-fixed R04b, accepted24437, local276841a: execution HTTP200/data:null/errors; request400/no data. General HTTP/media policy unchanged. | T13/R04b |
 | L-C4 | 183 | Bounded-fixed R04c accepted24509/localdfb47a0: each multipart file capped incl unmapped/repeated, exact allowed, over413 before success; None/Base64/body limits unchanged. | T13/R04c |
-| L-C5 | 184 | LIMIT_MINIMUMS allegedly skips three named settings. | T13 |
+| L-C5 | 184 | Bounded-fixed R04d, accepted24573/local9760b29: minimum0/negative-integer read errors for three named settings; 0/None/default/noninteger behavior unchanged. | T13/R04d |
 | L-C6 | 185 | ensure_csrf_cookie allegedly prevents browser cache reuse after first request. | T13 |
 | L-C7 | 186 | Ambiguous enum members rejected T06e; unique names unchanged, optional multiselect untested; refs c3a35a7,da31d91,16147,16210; archive. | T06e/T06 |
 | L-C8 | 187 | page:-1 allegedly not last actual page. | T12 |
@@ -347,11 +347,11 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 147 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 36 primary pending/limited ID records (not bugs)+7 recommendations. R04c closes bounded L-C4 only; wider R04/T13/T15/T17 open.
+**Current audit state:** 150 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 35 primary pending/limited ID records (not bugs)+7 recommendations. R04d closes bounded L-C5 only; wider R04/T13/T15/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
-**R03i accepted bounded raw-JSON list null (human24091/accepted24132):** Missing-variable list slots become null; absent object keys still omit. Defaults, supplied/null, typed lists, direct missing argument, JSONString and SDL remain as archived. M-D6 whole ID open. Exact TDD, full/coverage, failures and qualifications: this R04c preimage and `md6-list-null-closeout/closure.md`.
+**R03i bounded raw-JSON list null (human24091/accepted24132):** Missing list slots become null; absent object keys omit. M-D6 open; exact defaults/supplied/null/typed/direct/JSONString/SDL limits and TDD/failures remain in `lc5-minimum-zero-preparation/tracker-preedit.md` and `md6-list-null-closeout/closure.md`.
 
 | Task | Retained completion | State |
 |---|---|---|
@@ -380,7 +380,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03l-V | D independent; archive. | [x] |
 | R03l-C | Parent local; no PR. | [x] |
 
-**R04a bounded L-C1 (human24312/accepted24375; local `0512657`):** Malformed PK IDs get safe `INVALID_ID`/format hints; valid missing/hidden IDs remain null. Rejected null-only policy, one-prep/custom-PK provenance, exact RED/GREEN, independent PARTIAL correction and all limits are preserved in the R04c preimage and `lc1-invalid-id-closeout/closure.md`. No wider R04/T15/T17 closure.
+**R04a bounded L-C1 (human24312/accepted24375; local `0512657`):** Malformed PK IDs get safe `INVALID_ID`/format hints; valid missing/hidden IDs remain null. Rejected null-only policy; one-prep/custom-PK provenance, RED/GREEN, independent PARTIAL correction, failures/limits and archive chain are exact in `lc5-minimum-zero-preparation/tracker-preedit.md` and `lc1-invalid-id-closeout/closure.md`. Wider R04/T15/T17 open.
 
 | Task | Retained completion | State |
 |---|---|---|
@@ -388,31 +388,39 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R04a-V | D; independent checks/qualifications archived. | [x] |
 | R04a-C | Parent local/no PR. | [x] |
 
-**R04b bounded L-C3 (human24396/accepted24437; local `276841a`):** Current JSON view execution failure with `data:null` returns HTTP200+errors; syntax/validation/request errors remain400/no data. Auth/transport/async, rollback, cache, batch/multipart, cost and successful/empty-data semantics retain their exact archived qualifications. No general HTTP/media, SDL/settings/dependency/version or Q7 policy; R04/T13/T17 open. Exact RED/GREEN, initial failed checks, independent/parent proof, UNKNOWNs, coverage and readbacks are in the R04c preimage and `lc3-execution-http-closeout/closure.md` (SHA-256 `5a04ec8ba5e0e44b197a35f31c4995468d66b9adfdf0c0aa1b907f919d6e1230`).
+**R04b bounded L-C3 (human24396/accepted24437; local `276841a`):** Enhanced JSON execution failure with `data:null` yields HTTP200+errors; syntax/validation/request errors remain400/no data. Auth/transport/async, rollback, cache, batch/multipart, cost, success/empty-data, failures/UNKNOWNs and no wider HTTP/media/Q7 policy remain EXACT in `lc5-minimum-zero-preparation/tracker-preedit.md` and `lc3-execution-http-closeout/closure.md` (SHA-256 `5a04ec8ba5e0e44b197a35f31c4995468d66b9adfdf0c0aa1b907f919d6e1230`). No wider R04/T13/T17 closure.
 
 | Task | Retained completion | State |
 |---|---|---|
 | R04b-I | D; bounded public HTTP correction/docs. | [x] |
-| R04b-V | D; final full6042/7skip/10warn, raw4461/4668, direct1/1line+2/2exits; exact failed attempts/limits archived. | [x] |
-| R04b-C | Parent local/no PR; full mirror readback archived. | [x] |
+| R04b-V | D; full6042/7skip/10warn, raw4461/4668, direct1/1line+2/2exits; failed checks/limits archived. | [x] |
+| R04b-C | Parent local/no PR; mirror readback archived. | [x] |
 
-**BP-LC4-MULTIPART-CAP-001 (human24470; accepted24509):** Apply configured `MAX_UPLOAD_SIZE` to each received multipart file, including unmapped and repeated parts. At or below the cap passes; above it returns a safe JSON HTTP413 before any resolver. `None` leaves multipart uncapped. Base64 required-limit/per-call override and the independent total `MAX_REQUEST_BODY_SIZE` stay unchanged. No new setting/default or general upload protocol policy. L-C4 is bounded-fixed R04c; wider R04/T13/T17 remain open.
+**R04c bounded L-C4 (human24470/accepted24509; local `dfb47a0`):** Configured `MAX_UPLOAD_SIZE` caps every received multipart file, including unused/repeated parts; equal passes, excess yields safe JSON413 before resolver. `None`, Base64 and independent body cap unchanged. Malformed batch/MAX_BATCH_SIZE400 retains priority; no new multipart batch protocol. Route delegated direct, strict RED→same-byte GREEN; coherent477 authored lines (400 advisory), no PR or RDD receipt. **Lossless exact archive:** `lc5-minimum-zero-preparation/tracker-preedit.md` (48,382 B; SHA-256 `afd91d76e35349256a7ed9c4f8477f3bdc370cff35d3b77ca14b5081d46a1594`; 0644) preserves full R04c policy, rejected postparse priority, TDD/checks, all failed/UNKNOWN/PARTIAL qualifications and older archive chains; `lc4-multipart-cap-closeout/closure.md` SHA-256 `06034ee10fc5508da2756fd0c52d58c0254c19345b2d223bc5e370459a082cae` records acceptance. The archive is a locator, not broader R04/T13/T17 closure.
 
-**R04c route and checks:** Preserve existing malformed batch-shape/MAX_BATCH_SIZE HTTP400 before the file cap. Check otherwise-processable multipart files before GraphiQL render, validated batch execution or ordinary single execution; no new multipart batch protocol. The rejected immediate-postparse priority is archived in `lc4-multipart-cap-preparation/tracker-prepriority.md` (SHA-256 `d6bf2d517776f4cd1a8c31aa57f09a2e0e8087d0d11f4de0d621932e3aea3434`). Delegated direct, not SDD: one HTTP guard plus public tests and settings/multipart/migration/audit docs is multi-file substantive writing. Strict TDD from AGENTS/user, exact runner `.venv/bin/python -B -m pytest`: original public RED→first source edit→identical-test GREEN→refactor. Native graphql-core3.3 overlay/assertions; focal/related/full, raw+combined+nonempty direct branch >=95.01%, Ruff/format/mypy/strict docstrings, staged strict docs/anchors, isolated Playground, static benchmark SDL check, finite guards. Actual477 authored lines, 400 advisory only; one coherent local work unit, no PR or size exception needed. RDD OFF; native risk high/unassessable, ordinary independent verification, no receipt. Rollback: only R04c guard/tests/direct docs, not earlier HTTP fixes or tracker history.
-
-| Task | Route and acceptance | State |
+| Task | Retained completion | State |
 |---|---|---|
-| R04c-I | D; accepted24509, localdfb47a0; original RED2→same-byte GREEN2, final22PASS; all-file cap/priority parity and direct docs/changelogs/Playground comments+guide. | [x] |
-| R04c-V | D independent89PASS/1skip+12HTTP groups, parent22PASS; audited full6064/7skip/10warn, branch95.57314%,combined97.71698%,direct11/11lines8/8exits; quality/docs43/Playground61/static checks and limitations retained. | [x] |
-| R04c-C | Parent localdfb47a0 + separate tracker-only commit/fullmirror15165/readback; final checks in postcommit.json. No PR/remote/tag/release; wider audit open. | [x] |
+| R04c-I | D; RED2→same-byte GREEN2, final22PASS; accepted24509. | [x] |
+| R04c-V | D independent89PASS/1skip+12HTTP, parent22PASS; full6064/7skip/10warn, branch95.57314%, combined97.71698%, direct11/11lines8/8exits; quality/docs43/Playground61/static. Exact failures/limits archived. | [x] |
+| R04c-C | Parent local `dfb47a0`+tracker commit/fullmirror15165/readback; no PR/remote/tag/release. | [x] |
 
-**R04c closure:** `lc4-multipart-cap-closeout/closure.md` SHA-256 `06034ee10fc5508da2756fd0c52d58c0254c19345b2d223bc5e370459a082cae`. Exact prepared preclosure47,866B/0644/SHA-256 `7127e2c4f037e0eab8ce86efdf7bab40154939151292bacc7b03f3cede703b33` preserves full history and archives. Original RED, parent96-ID and independent107-ID helper failures, resumed operational interruption, seven skips/ten warnings retained. JUnit6071actual/6094metadata, source-only SDL, settings-hook not I/O, postparse not ingress/memory protection; no PostgreSQL or live benchmark claim.
+**BP-LC5-MINIMUM-ZERO-001 (human24532; accepted24573):** Add minimum 0 on *read* for only `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE`; negative integers raise existing `ImproperlyConfigured` with key, value, minimum and remedy. Preserve zero, `None`, positives, defaults, and existing bool/float/string handling. No strict-type validator, changed default, or eager startup check. L-C5 is bounded-fixed R04d; wider setting-validation scope remains open.
+
+**R04d route:** Delegated direct (multi-file settings/tests/docs), not SDD; actual162 authored lines,400 advisory. Strict TDD AGENTS/user `.venv/bin/python -B -m pytest`; original chronology and commands retained in closure/preclosure. Native3.3 checks and root acceptance24573; RDD OFF/high unassessable, ordinary independent verification/no receipt. Rollback only eight R04d paths; earlier accepted work and wider R04/T13/T17 unchanged.
+
+| Task | Route and required result | State |
+|---|---|---|
+| R04d-I | D; accepted24573/local9760b29; original RED3→same-byte GREEN3, final30PASS; three data entries and direct guide/upgrade/changelogs/audit updates only. | [x] |
+| R04d-V | D independent118PASS+4settings groups, root30PASS; audited6094/7skip/10warn, branch95.573139%,combined97.716976%,direct0lines/exits N/A; quality/docs43/Playground61/static checks and provenance limits retained. | [x] |
+| R04d-C | Parent local9760b29 + separate tracker-only commit/fullmirror15165/readback; postcommit.json verifies identity/refs. No PR/remote/tag/publication or wider audit closure. | [x] |
+
+**R04d closure:** `lc5-minimum-zero-closeout/closure.md` SHA-256 `50bc9f7baeb5704ece31280809cfae05eeed1005e27b8386cab7f9f8fb076b10`. Exact prepared preclosure48,855B/0644/SHA-256 `62a36a9ec4666e5d87b56cb4874448d2f6f3ad91a7f53fe3a87e2211972b87be` preserves all history/archives. Retain RED3, capitalization failure and incomplete docs-launch record (no finish/exit), corrected passes, seven skips/ten warnings. Direct coverage N/A; JUnit6101actual/6124metadata; source/test-only run hashes, no all-doc byte chain; sourceSDL/settings-hook NOT I/O. No PostgreSQL/live benchmark claim.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate L-C5 alleged LIMIT_MINIMUMS omissions; consult before any new incompatible setting validation. Wider R04/T13/T17 open; no PR/push/tag/publication.
+**Next:** Investigate L-C6 alleged CSRF-cookie/browser-cache reuse issue; consult before changing security or cache policy. Wider R04/T13/T17 open; no PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
