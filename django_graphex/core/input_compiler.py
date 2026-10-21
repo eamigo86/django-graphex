@@ -30,6 +30,7 @@ from typing import Any, Callable, Literal, get_args, get_origin
 
 from graphql import (
     GraphQLBoolean,
+    GraphQLDefaultInput,
     GraphQLEnumType,
     GraphQLEnumValue,
     GraphQLError,
@@ -877,12 +878,26 @@ def compile_input_type(
             default_value = (
                 _default_value_for(field_info) if _emit_defaults else Undefined
             )
-            gql_field = GraphQLInputField(
-                type_=gql_type,
-                out_name=field_name,
-                description=field_info.description,
-                default_value=default_value,
-            )
+            # External defaults allow SDL metadata for representable JSON
+            # values. Keep list-wrapped defaults internal: graphql-core would
+            # re-coerce them and change existing resolver value identity.
+            gql_field_kwargs: dict[str, Any] = {
+                "type_": gql_type,
+                "out_name": field_name,
+                "description": field_info.description,
+            }
+            if (
+                default_value is not Undefined
+                and default_value is not None
+                and not is_list
+                and gql_base_type is _native_scalar_map()[dict]
+                and _native_scalar_map()[dict].value_to_literal(default_value)
+                is not None
+            ):
+                gql_field_kwargs["default"] = GraphQLDefaultInput(value=default_value)
+            else:
+                gql_field_kwargs["default_value"] = default_value
+            gql_field = GraphQLInputField(**gql_field_kwargs)
             typed_leaf = element_type if is_list else inner_type
             if _is_typed_integer_map(typed_leaf):
                 typed_map_candidates[alias] = (

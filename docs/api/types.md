@@ -406,13 +406,20 @@ values, without Pydantic's numeric-string or boolean coercion. Its optional,
 list, nested and default wrappers keep their existing behavior; other
 parameterized dictionaries remain on the warning/`String` fallback.
 
-A fixed object-valued JSON default still reaches the resolver when its input
-is omitted, but `print_schema` and default-value introspection currently fail
-while rendering that object as SDL. This existing limitation also affects a
-bare `dict` JSON field. Where schema metadata must render, use
-`Field(default_factory=lambda: {"views": 0})`: it supplies a value for each
+A fixed JSON default with GraphQL Name object keys, such as
+`{"views": 0}`, now renders through `print_schema` and default-value
+introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver
+for an omitted input as the original raw value. Nested representable JSON
+values work the same way. A fixed object with a key such as `"x-y"` keeps its
+existing runtime default but cannot be printed as a valid GraphQL object
+literal. A list-wrapped JSON field's fixed default also retains its earlier
+metadata limitation to preserve runtime identity. Where metadata must render,
+use `Field(default_factory=lambda: {"views": 0})`: it supplies a value for each
 omitted input without advertising a fixed SDL default. A nullable `None`
-default is unaffected.
+default is unaffected. Cyclic and non-JSON-native values, strings containing
+unpaired Unicode surrogates, and integers beyond Python's configured
+integer-to-string limit gain no new metadata support; runtime defaults remain
+unchanged.
 
 !!! note "Pydantic defaults on a hand-authored `InputType`"
 

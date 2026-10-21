@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import graphql
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -458,7 +459,9 @@ assert Comment.objects.count() == 0
 """
     env = {
         **os.environ,
-        "PYTHONPATH": str(BENCHMARKS),
+        "PYTHONPATH": os.pathsep.join(
+            (str(Path(graphql.__file__).resolve().parent.parent), str(BENCHMARKS))
+        ),
         "DJANGO_SETTINGS_MODULE": "config.settings",
         "BENCH_LIB": "graphex",
         "BENCH_DATABASE": str(tmp_path / "bench.sqlite3"),

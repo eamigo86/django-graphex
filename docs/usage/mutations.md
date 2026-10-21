@@ -1603,7 +1603,7 @@ the SDL. For example, a `uid` factory previously rendered a snapshot such as
 `uid: String = "uid-1"`; it now renders `uid: String`, and each separately
 coerced `{}` input gets a fresh UID. Update clients that relied on the SDL's
 fixed factory value. Plain scalar and enum defaults still render as SDL
-defaults; object-valued JSON defaults have the limitation below.
+defaults; fixed JSON defaults have the representability rule below.
 explicit values and `null` still bypass a zero-argument factory. A resolver
 still receives a snake-keyed `dict`, not an automatically validated Pydantic
 instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
@@ -1638,17 +1638,28 @@ field without echoing supplied keys or values. Optionality, omission, list
 wrapping, and fixed or factory defaults follow the field's existing input
 contract. A bare `dict` remains permissive raw `JSON`.
 
-!!! warning "Object-valued JSON defaults and schema metadata"
+!!! note "Fixed JSON defaults and schema metadata"
 
-    A fixed object-valued JSON default still supplies its value at runtime
-    for an omitted input, but `print_schema` and default-value introspection
-    currently fail when they try to render that object as SDL. This existing
-    JSON metadata limitation also affects bare `dict`; it does not mean the
-    runtime default or typed-map input validation is rejected. If schema
-    printing or introspection is required, use
-    `Field(default_factory=lambda: {"views": 0})` instead. The factory supplies
-    a value for each omitted input and intentionally has no fixed SDL default.
-    A nullable `None` default is unaffected.
+    A fixed JSON default whose object keys are valid GraphQL Names (for
+    example, `{"views": 0}`) now prints as `mapping: JSON = { views: 0 }`
+    and appears in default-value introspection. It still supplies the same
+    value to an omitted input, without JSON string encoding. Nested objects,
+    lists, and finite scalar values inside that JSON value follow the same
+    rule. This applies to JSON scalar fields, including those nested in an input
+    object; a field whose declared type is a list of JSON values retains its
+    earlier fixed-default metadata limitation to preserve resolver identity.
+
+    JSON objects may also contain keys that cannot be GraphQL Names, such as
+    `"x-y"`. Those existing runtime defaults remain accepted, but
+    `print_schema` and default-value introspection cannot render them as
+    valid GraphQL object literals. If schema metadata must render for such a
+    value, use `Field(default_factory=lambda: {"views": 0})` with a suitable
+    object instead. A factory supplies each omitted input without publishing
+    a fixed SDL default. Cyclic or non-JSON-native fixed values likewise gain
+    no new metadata support. Strings containing unpaired Unicode surrogates or
+    integers beyond Python's configured integer-to-string limit likewise keep
+    their legacy runtime defaults without new SDL metadata. A nullable `None`
+    default is unaffected.
 
 Numeric or mixed `Literal`, other parameterized dictionaries, `set[int]`, and
 non-optional `Union[int, str]` remain unsupported and warn when they fall back

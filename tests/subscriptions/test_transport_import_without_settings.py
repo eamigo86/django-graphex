@@ -23,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import graphql
 import pytest
 
 pytest.importorskip("channels")
@@ -50,7 +51,9 @@ def _run_probe() -> subprocess.CompletedProcess[str]:
         for key, value in os.environ.items()
         if key not in ("DJANGO_SETTINGS_MODULE", "PYTHONSTARTUP")
     }
-    env["PYTHONPATH"] = str(_REPO_ROOT)
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(Path(graphql.__file__).resolve().parent.parent), str(_REPO_ROOT))
+    )
 
     return subprocess.run(
         [sys.executable, "-c", _PROBE],

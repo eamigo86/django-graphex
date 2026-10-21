@@ -19,9 +19,13 @@ All notable changes to this library are documented here. The format is based on
   integer values without implicit conversion; invalid values fail before
   mutation resolution. Bare `dict` and other typed-container fallbacks stay
   unchanged. Clients must replace JSON-encoded strings with objects.
-  Fixed object-valued JSON defaults retain runtime behavior but cannot
-  currently be rendered by SDL printing or default-value introspection; use
-  a zero-argument default factory when that metadata must render.
+  Fixed JSON defaults with GraphQL Name object keys now render in SDL and
+  default-value introspection without changing runtime values. Defaults with
+  non-Name keys retain runtime behavior and their metadata limitation; use
+  a zero-argument factory when metadata must render. List-wrapped JSON fields
+  retain their legacy default path to preserve resolver identity. Unpaired
+  Unicode surrogates and integers beyond Python's configured
+  integer-to-string limit also retain runtime defaults without new SDL metadata.
 
 - Compile all-string hand-authored input `Literal` annotations as generated
   GraphQL enums. Inline operations and JSON variables now send enum members

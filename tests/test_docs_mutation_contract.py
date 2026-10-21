@@ -74,7 +74,7 @@ def test_guide_documents_typed_integer_map_json_migration() -> None:
 
 
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
-    """Keep the runtime default distinct from SDL metadata support."""
+    """Distinguish printable JSON defaults from ineligible object keys."""
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -82,9 +82,11 @@ def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     )
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
-        assert "fixed object-valued json default" in text.lower()
+        assert "fixed JSON default" in text
         assert "print_schema" in text
         assert "introspection" in text
+        assert "GraphQL Name" in text
+        assert "list-wrapped" in text.lower() or "list of json" in text.lower()
         assert 'Field(default_factory=lambda: {"views": 0})' in text
         assert "omitted input" in text.lower()
 

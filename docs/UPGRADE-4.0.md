@@ -41,14 +41,20 @@ objects and integers beyond 32-bit are valid. Bare `dict` remains permissive
 raw `JSON`; no global Pydantic validation or other typed-container conversion
 is introduced.
 
-A fixed object-valued JSON default still applies at runtime for an omitted
-input, but `print_schema` and default-value introspection currently fail when
-rendering that object. This retained JSON metadata limitation also affects
-bare `dict`; it is not a new typed-map validation rule. If clients or tools
-need SDL or introspection, replace the fixed object default with
-`Field(default_factory=lambda: {"views": 0})`. The factory supplies the value
-for each omitted input but does not publish a fixed SDL default. A nullable
-`None` default remains unaffected.
+A fixed JSON default whose object keys are GraphQL Names, such as
+`{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
+default-value introspection. The omitted input still receives the same raw
+value. Keys such as `"x-y"` cannot be GraphQL Names: their existing runtime
+default behavior is unchanged, but `print_schema` and introspection cannot
+render a valid GraphQL object literal for them. List-wrapped JSON fields also
+retain their fixed-default metadata limitation so their resolver value
+identity does not change. For these cases, when metadata must render,
+`Field(default_factory=lambda: {"views": 0})` supplies each omitted input
+without publishing a fixed SDL default. A nullable `None` default remains
+unaffected; cyclic and non-JSON-native fixed values, strings containing
+unpaired Unicode surrogates, and integers beyond Python's configured
+integer-to-string limit gain no new metadata support. Their runtime defaults
+remain unchanged.
 
 ### Nullable ordering in offset and page results
 

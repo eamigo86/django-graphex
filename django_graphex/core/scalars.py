@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime
 import decimal
 import json
+import re
 import uuid as _uuid_module
 from math import isfinite
 from typing import Any
@@ -40,7 +41,9 @@ from graphql.language.ast import (
     FloatValueNode,
     IntValueNode,
     ListValueNode,
+    NameNode,
     NullValueNode,
+    ObjectFieldNode,
     ObjectValueNode,
     StringValueNode,
     VariableNode,
@@ -550,6 +553,68 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
     raise GraphQLError(f"JSON cannot represent literal: {ast!r}")
 
 
+_GRAPHQL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _json_raw_value_to_literal(value: Any) -> Any:
+    """Represent a JSON value as a GraphQL literal when possible.
+
+    Args:
+        value: Value to represent without changing the original object.
+
+    Returns:
+        A constant value node, or None for an ineligible value.
+    """
+    active: set[int] = set()
+
+    def convert(item: Any) -> Any:
+        if item is None:
+            return NullValueNode()
+        if type(item) is bool:
+            return BooleanValueNode(value=item)
+        if type(item) is str:
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return None
+            return StringValueNode(value=item)
+        if type(item) is int:
+            try:
+                return IntValueNode(value=str(item))
+            except ValueError:
+                return None
+        if type(item) is float:
+            return FloatValueNode(value=str(item)) if isfinite(item) else None
+        if type(item) not in (list, dict):
+            return None
+        identity = id(item)
+        if identity in active:
+            return None
+        active.add(identity)
+        try:
+            if type(item) is list:
+                values = [convert(child) for child in item]
+                if any(child is None for child in values):
+                    return None
+                return ListValueNode(values=tuple(values))
+            fields = []
+            for key, child in item.items():
+                if type(key) is not str or _GRAPHQL_NAME.fullmatch(key) is None:
+                    return None
+                node = convert(child)
+                if node is None:
+                    return None
+                fields.append(ObjectFieldNode(name=NameNode(value=key), value=node))
+            return ObjectValueNode(fields=tuple(fields))
+        finally:
+            active.remove(identity)
+
+    try:
+        return convert(value)
+    except (RecursionError, OverflowError):
+        return None
+
+
 GdxJSON = GraphQLScalarType(
     # The RAW structured-JSON scalar. v2 renders model ``JSONField``s (and the
     # default ``JSONField()`` descriptor) as this by design — objects / lists /
@@ -564,6 +629,7 @@ GdxJSON = GraphQLScalarType(
     serialize=_json_raw_serialize,
     parse_value=_json_raw_parse_value,
     parse_literal=_json_raw_parse_literal,
+    value_to_literal=_json_raw_value_to_literal,
 )
 
 
