@@ -150,10 +150,12 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
 | R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader shapes; R08b–e accepted boundedly. Other M-D10 forms remain open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
-| R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
+| R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring; R09d bounded rejected-mutation output leak accepted25084. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
 | R09b | D; approved22685; accepted22777; f931cb9/e740fb6 | Archived bounded outcome. | [x] |
 | R09c | D; human21002; accepted21591 | Archived bounded outcome. | [x] |
+| R09d-I | D; human25071/root25084; local `b84d359` | Rejected-mutation output-slot leak fixed after existing guards; RED→same-byte GREEN, valid CRUD/A4 preserved. Exact scope/failures in R09d closure and preclosure archive. | [x] |
+| R09d-V | D; accepted25084 | Independent and root spot plus seeded full/coverage/quality/docs/Playground/static passed; limits and failed attempts archived. Local only, no RDD receipt/PR. | [x] |
 | R10 | D; human21002; unchecked | Recommendation/negative-proof Q5–10, P1 and N1–5; classify evidence and reasons, not automatic code changes. | [ ] |
 | R10a | D; human21002; accepted21610 | Archived bounded outcome. | [x] |
 | R11 | D writer/verification, inline tracking; accepted21639; HISTORY_PARTIAL | Archived bounded outcome. | [x] |
@@ -347,7 +349,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 162 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08e boundedly accepted; M-D10 and wider R04/R08/T13/T15/T17 open.
+**Current audit state:** 164 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R09d boundedly accepted; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -441,29 +443,15 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R08e-I | D; human25042/root25065/local 75109ef; valid-list metadata, TDD/docs; accepted. | [x] |
 | R08e-V | D; independent correction/full/coverage/quality/docs/Playground/static accepted25065; local only. | [x] |
 
-**R08c metadata limit (historical):** Pre-R08d object-default SDL failure; its proof remains in the exact preclosure archive.
+**R09d lossless closure locator:** `native-root-registry-order-closeout/tracker-preclosure.md` (48,541 B; SHA-256 `279dc39693f4be0a34b0c4c35b4b930c445db08f0b18976c11e0db5df0ccf25e`; 0644) preserves all earlier task states, approvals, failures, PARTIAL/UNKNOWNs and archive chains. `native-root-registry-order-closeout/closure.md` (SHA-256 `7d24c05dbb3bd5aa8970af004fd8c05df450cd3286169378827f9826a295ba73`) records exact bounded acceptance/proof/limits; this pointer does not close wider T16/R09.
 
-**R08c accepted locator:** human24915/root24987/local `7d0165c`, typed dict JSON only. Full TDD/clone correction/default limit/failures/UNKNOWNs: `md10-typed-dict-closeout/closure.md` and exact R08e preimage. Local/no PR.
-
-**R08c archive:** `md10-typed-dict-closeout/tracker-preclosure.md` (49,893 B; SHA-256 `c97f2e1e75b56e436fe58bdaeaa4deb674da117ce361d539c4510506f959a2fb`; 0644); full prior scope/history in R08e preimage.
-
-**R08d completed locator:** human24998/root25036/local `f17e96f`, direct representable JSON defaults. Full TDD, correction, failures/PARTIAL/UNKNOWNs: `json-fixed-defaults-closeout/closure.md` and R08e preimage. No PR.
-
-**R08e accepted locator:** Human25042/root25065/local `75109ef`; valid fixed JSON-list SDL/introspection only, outer copy permitted, elements/typed-map/factory/omission preserved; malformed legacy. Delegated-direct TDD/gates, 304 authored lines (400 advisory), no PR. Full initial PARTIAL, fixture correction, baseline ordered follow-up, checks/limits: `json-list-defaults-closeout/closure.md` and exact preclosure archive.
-
-**R08e exact preclosure archive:** `json-list-defaults-closeout/tracker-preclosure.md` (49,640 B; SHA-256 `dd3cf10213aba887e8f6a542d25bca9a1ae325d1c38291c1acf65009fc4f41d5`; 0644) preserves all prior scope/state/proof/failure/PARTIAL/UNKNOWN/archive chains.
-
-**R08e exact pre-edit archive:** `json-list-defaults-preparation/tracker-preedit.md` (49,695 B; SHA-256 `49667e3fd1ae20594b3448efe754bd83a1f10fe82f5866df7e6dc5ff07b96ba6`; 0644) preserves prior scopes, states, approvals, failures/PARTIAL/UNKNOWNs and archive chains.
-
-**R08d archive:** `json-fixed-defaults-closeout/tracker-preclosure.md` (49,906 B; SHA-256 `7206712d8d0a45d740416b72fa502418bd4781ceb4affc0d1c169da623355419`; 0644); full chain in R08e preimage.
-
-**R08b exact preclosure archive:** `md10-literal-enum-closeout/tracker-preclosure.md` (49,496 B, SHA-256 `231975b645a76100e05132a8b89132b30e1d074e319919885675af8118cf4e63`, 0644) retains every earlier scope, state, failed/PARTIAL/UNKNOWN check and archive chain. No wider audit closure.
+**R08b–e completed-history locator:** Human approvals24849/24915/24998/25042 and accepted local commits `b5e4823`/`7d0165c`/`f17e96f`/`75109ef` remain bounded. Full scopes, exact TDD/checks, failures/PARTIAL/UNKNOWNs, limits, prior archives and rejected policies survive byte-for-byte in `native-root-registry-order-preparation/tracker-preedit.md` (49,652 B; SHA-256 `84cefd8192886a12525c4565d7854f5625bc1324ebce660f5d0c9c38d10205b6`; 0644), including its archive chain. R08e valid-list metadata only; M-D10 partial.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate T16/R09 selected-order GenericType/UserType interaction on base; root 18-case base control reproduces it, so not R08e closure. M-D10 other forms/non-Name keys need separate decisions; wider R08/T12/T13/T17 and L-M1/L-C13/L-E3 remain open. No PR/push/tag/publication.
+**Next:** R09d accepted25084/local `b84d359`; prior selected-order GenericType/UserType failure is historical/resolved for the rejected-mutation output leak, not broad Registry rollback. Investigate remaining M-D10 typed containers separately; incompatible changes require individual approval. Wider R08/R09/T12/T13/T16/T17 and L-M1/L-C13/L-E3 remain open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
