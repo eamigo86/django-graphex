@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader SDL/input shapes; R08b string Literal and R08c exact dict[str,int] JSON accepted; other forms and fixed JSON-object SDL metadata remain open. | [ ] |
+| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader shapes; R08b–d accepted in bounded scopes; other M-D10 forms and metadata limits remain open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -221,7 +221,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
-| M-D10 | 133 | **Partial:** R08b all-string Literal enums accepted24884/local b5e4823; R08c exact dict[str,int] → shared JSON with strict object/string-key/plain-int validation accepted24987/local 7d0165c. Fixed JSON-object defaults still have pre-existing SDL/introspection metadata failure; factory workaround documented. Other dict/set/Union/numeric-mixed Literal and global Pydantic validation unchanged; whole ID open. Full R08c scope/proof/failures in closeout archive. | T09/R08a/R08b/R08c |
+| M-D10 | 133 | **Partial:** R08b all-string Literal enums accepted24884/local b5e4823; R08c exact dict[str,int] → shared JSON with strict object/string-key/plain-int validation accepted24987/local 7d0165c. R08d direct representable JSON scalar default metadata accepted25036/local f17e96f; list-wrapped/nonrepresentable defaults retain legacy metadata; other dict/set/Union/numeric-mixed Literal and global validation unchanged; whole ID open. Full R08c scope/proof/failures in closeout archive. | T09/R08a/R08b/R08c/R08d |
 
 ### Medium: filters, HTTP, optimizer, subscriptions, thread safety
 
@@ -347,7 +347,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 158 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08b/R08c accepted in bounded scopes; M-D10 and wider R04/R08/T13/T15/T17 open.
+**Current audit state:** 160 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08b–d accepted boundedly; M-D10 and wider R04/R08/T13/T15/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -436,16 +436,18 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R08b-V | D; independent/fresh parent checks accepted24884; exact limits in closure. | [x] |
 | R08c-I | D; human24915/root24987/local `7d0165c`; strict map, clone metadata, tests/docs; scope/proof archived. | [x] |
 | R08c-V | D; independent and root fresh checks accepted24987; failures/limits archived; no PR. | [x] |
+| R08d-I | D; accepted25036/local f17e96f, direct JSON fixed-default metadata/TDD/docs; full scope archived. | [x] |
+| R08d-V | D; independent/native3.3 and parent fresh checks accepted25036; failures/limits archived. | [x] |
 
-**R08c accepted correction:** Permission-scoped clones retain only surviving typed-map metadata; original independent two-fail finding and corrected RED/GREEN/functional proof remain in the exact preclosure archive and `md10-typed-dict-closeout/closure.md`. No broader M-D10 policy.
+**R08c metadata limit (historical):** Pre-R08d object-default SDL failure; its proof remains in the exact preclosure archive.
 
-**R08c metadata limit:** Fixed JSON-object defaults work at runtime but already fail SDL/default introspection, including bare JSON; factory workaround documented. No metadata API fix or wider shape approval; see `md10-typed-dict-default-sdl-investigation/investigation-summary.md`.
-
-**R08c accepted locator:** BP-MD10-TYPED-DICT-JSON-001/human24915/root24987; local `7d0165c` (699 coherent authored lines, 400 advisory). Strict public RED→same-byte GREEN for base/clone and doc contract; full 6143 PASS/7 skip/9 warn; raw4499/4706, combined16696/17084, direct32/32 lines+18/18 actual exits. Quality/docs43/Playground61/static5 PASS. Full exact approvals, limits, failed attempts, UNKNOWNs, proof and rollback: `md10-typed-dict-closeout/tracker-preclosure.md` and `md10-typed-dict-closeout/closure.md`. Local only; no PR.
+**R08c accepted locator:** human24915/root24987/local `7d0165c` (699 coherent authored, 400 advisory), full6143/7skip/9warn, raw4499/4706, direct32/32 lines+18/18 exits. Exact RED/GREEN, clone correction, default limitation, failures/UNKNOWNs and archive chain: `md10-typed-dict-closeout/tracker-preclosure.md` and `closure.md`. Local/no PR.
 
 **R08c exact preclosure archive:** `md10-typed-dict-closeout/tracker-preclosure.md` (49,893 B; SHA-256 `c97f2e1e75b56e436fe58bdaeaa4deb674da117ce361d539c4510506f959a2fb`; 0644) preserves every prior row, scope, failure, UNKNOWN and archive chain losslessly.
 
-**R08c lossless pre-edit archive:** `md10-typed-dict-preparation/tracker-preedit.md` (49,435 B; SHA-256 `8d3e6ca6098d0184875d8511eca60061501c7df0ba4aca50bf39c1bcd07afd75`; 0644) preserves every prior state, approval, rejection, failure, PARTIAL/UNKNOWN, qualification and archive chain before completed-history compression.
+**R08d completed locator:** human24998/root25036/local `f17e96f`, direct representable JSON scalar fixed-default SDL/introspection only, including nested-input leaves. List-wrapped and ineligible values keep legacy runtime/metadata; M-D10 partial. TDD, correction, failures/PARTIAL/UNKNOWNs, 541 coherent authored lines, checks and rollback: `json-fixed-defaults-closeout/closure.md` (SHA-256 `c10f21837feeef71b9c7322d1be7dcc4ed44abbcceee78cecfb1534f650a6e24`). No PR.
+
+**R08d exact preclosure archive:** `json-fixed-defaults-closeout/tracker-preclosure.md` (49,906 B; SHA-256 `7206712d8d0a45d740416b72fa502418bd4781ceb4affc0d1c169da623355419`; 0644) preserves the prior full tracker, including the R08d pre-edit pointer, every scope/approval/failure/UNKNOWN and archive chain.
 
 **R08b exact preclosure archive:** `md10-literal-enum-closeout/tracker-preclosure.md` (49,496 B, SHA-256 `231975b645a76100e05132a8b89132b30e1d074e319919885675af8118cf4e63`, 0644) retains every earlier scope, state, failed/PARTIAL/UNKNOWN check and archive chain. No wider audit closure.
 
@@ -453,7 +455,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Investigate fixed JSON-object defaults in SDL/introspection before proposing a separate metadata policy; any incompatible change requires human approval. Other M-D10 forms remain unapproved; L-M1/L-C13/L-E3 stay read-only. Wider R08/T12/T13/T17 and browser reuse remain open. No PR/push/tag/publication.
+**Next:** Explain and seek individual approval before changing valid list-wrapped JSON default identity for metadata; mismatched default shapes stay legacy. Non-Name keys and other M-D10 forms need separate policy decisions. Wider R08/T12/T13/T17 and L-M1/L-C13/L-E3 remain open/read-only. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
