@@ -205,6 +205,13 @@ class Query(ObjectType):
 - No need to define custom resolve function
 - Built-in error handling for non-existent objects
 
+A well-formed ID with no visible row resolves to `null` without an error. If the
+model primary key cannot convert the supplied ID, the field instead resolves
+to `null` with a GraphQL error whose `extensions.code` is `INVALID_ID`. Integer
+and UUID keys receive an expected-format hint; custom keys receive a generic
+message. A text primary key such as `abc` remains valid when its model accepts
+it. Scope and permission failures keep their own behavior.
+
 **Usage in GraphQL:**
 ```graphql
 {

@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Distinguish malformed model primary-key IDs from well-formed missing or
+  scoped-out IDs in `get_node`, generated retrieve fields, and
+  `DjangoObjectField`. Malformed IDs now produce a safe `INVALID_ID` GraphQL
+  error with an expected-format hint; missing/hidden IDs still resolve to
+  `null` without an error. Valid text IDs and existing ORM coercion remain.
+
 - Report a stable GraphQL field error when `@floor` receives NaN or either
   infinity, including numeric strings that coerce to those values. Finite and
   null values, malformed-number errors, other directives, and schema metadata

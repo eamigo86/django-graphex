@@ -37,6 +37,7 @@ from .paginations.pagination import (
 from .utils import (
     _apply_field_hook,
     _compute_child_only,
+    _get_by_pk_or_none,
     _get_field_optimize_hook,
     apply_object_type_get_queryset,
     find_field,
@@ -198,7 +199,10 @@ class DjangoObjectField(NativeMountedField):
             **kwargs: query arguments, including the object "id".
 
         Returns:
-            The matching model instance, or None when it does not exist.
+            The matching model instance, or None for a well-formed missing ID.
+
+        Raises:
+            GraphQLError: If the ID fails the model primary key's conversion.
         """
         id = kwargs.pop("id", None)
 
@@ -206,7 +210,7 @@ class DjangoObjectField(NativeMountedField):
             qs = queryset_factory(
                 manager, root, info, output_type=output_type, **kwargs
             )
-            return qs.get(pk=id)
+            return _get_by_pk_or_none(qs, id)
         except manager.model.DoesNotExist:
             return None
 

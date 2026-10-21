@@ -48,6 +48,7 @@ from .settings import graphql_api_settings
 from .uploads import merge_uploaded_files
 from .utils import (
     _apply_optimizations,
+    _get_by_pk_or_none,
     apply_object_type_get_queryset,
     get_model_fields,
     get_Object_or_None,
@@ -1617,6 +1618,9 @@ class DjangoObjectType(NativeObjectType):
         Returns:
             The matching model instance, or None if it does not exist or the
             "get_queryset" scope excludes it.
+
+        Raises:
+            GraphQLError: If the ID fails the model primary key's conversion.
         """
         # SECURITY: the primary key comes straight from the caller, so this
         # lookup goes through the same "get_queryset" choke point every other
@@ -1626,7 +1630,7 @@ class DjangoObjectType(NativeObjectType):
             scoped = apply_object_type_get_queryset(
                 cls._meta.model._default_manager.all(), cls, info
             )
-            return scoped.get(pk=id)
+            return _get_by_pk_or_none(scoped, id)
         except cls._meta.model.DoesNotExist:
             return None
 
@@ -3769,7 +3773,10 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             **kwargs: Resolver arguments including the object "id".
 
         Returns:
-            The matching model instance, or None if it does not exist.
+            The matching model instance, or None for a well-formed missing ID.
+
+        Raises:
+            GraphQLError: If the ID fails the model primary key's conversion.
         """
         cls.authorize(info, "retrieve")
         pk = kwargs.pop("id", None)
@@ -3777,7 +3784,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         base = cls.get_queryset(manager, info, **kwargs)
         try:
             qs = queryset_factory(base, root, info, **kwargs)
-            return qs.get(pk=pk)
+            return _get_by_pk_or_none(qs, pk)
         except manager.model.DoesNotExist:
             return None
 

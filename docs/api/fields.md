@@ -107,6 +107,8 @@ Static method that resolves a single object by its ID.
 
 **Returns:** Model instance or `None` if not found
 
+**Raises:** `GraphQLError` with `extensions.code=INVALID_ID` for a primary-key conversion failure; unrelated resolver errors keep their own behavior.
+
 #### `wrap_resolve(parent_resolver)`
 
 Wraps the resolver with the object resolver functionality.

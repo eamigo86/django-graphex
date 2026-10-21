@@ -46,6 +46,12 @@ or as the output of a [mutation](mutations.md). Relations on the model are expos
 as nested lists with the uniform `results` / `totalCount` shape — see
 [Nested lists](nested-lists.md).
 
+`get_node(info, id)` uses the model primary key conversion after the type's
+`get_queryset` scope. A well-formed missing or hidden ID returns `None`;
+a malformed ID raises a safe GraphQL error with `extensions.code` set to
+`INVALID_ID`. For example, `abc` is malformed for an integer key but remains
+a valid text key when the model accepts it.
+
 ### One public output type per model and registry
 
 A `Registry` accepts one public `DjangoObjectType` class per exact Django model.

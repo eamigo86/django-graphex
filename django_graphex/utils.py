@@ -15,16 +15,19 @@ from typing import TYPE_CHECKING, Any
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db.models import (
     NOT_PROVIDED,
+    IntegerField,
     Manager,
     ManyToManyRel,
     ManyToOneRel,
     Model,
     Prefetch,
     QuerySet,
+    UUIDField,
 )
 from django.db.models.base import ModelBase
 from django.db.models.constants import LOOKUP_SEP
 from graphql import (
+    GraphQLError,
     GraphQLList,
     GraphQLNonNull,
     GraphQLObjectType,
@@ -52,6 +55,75 @@ from .settings import graphql_api_settings
 if TYPE_CHECKING:
     from django.db.models import Field
     from graphql import GraphQLResolveInfo, GraphQLType
+
+
+def _pk_preparation_failed_for_id(
+    error: ValueError | TypeError | ValidationError, pk_field: Any, raw_id: Any
+) -> bool:
+    """Identify a conversion failure for the ID passed to this PK lookup.
+
+    An unrelated queryset error can have the same exception class, and a custom
+    queryset can prepare another value for the same primary key. Match both the
+    field instance and the original positional argument in the preparation frame,
+    regardless of the custom method's parameter name.
+
+    Args:
+        error: The exception raised by the lookup.
+        pk_field: The model primary-key field used by that lookup.
+        raw_id: The original lookup argument.
+
+    Returns:
+        Whether this lookup's primary-key preparation raised the exception.
+    """
+    traceback = error.__traceback__
+    missing = object()
+    while traceback is not None:
+        frame = traceback.tb_frame
+        if (
+            frame.f_code.co_name in {"get_prep_value", "to_python"}
+            and frame.f_code.co_argcount >= 2
+            and frame.f_locals.get("self") is pk_field
+            and frame.f_locals.get(frame.f_code.co_varnames[1], missing) is raw_id
+        ):
+            return True
+        traceback = traceback.tb_next
+    return False
+
+
+def _get_by_pk_or_none(queryset: QuerySet, raw_id: Any) -> Model | None:
+    """Look up an ID while distinguishing malformed from missing primary keys.
+
+    The original queryset lookup performs primary-key preparation exactly once;
+    no precheck changes custom field coercion or custom queryset arguments.
+
+    Args:
+        queryset: The already scoped queryset to search.
+        raw_id: The original ID supplied by the caller.
+
+    Returns:
+        The matching model, or None for a well-formed missing ID.
+
+    Raises:
+        GraphQLError: If this ID fails the model primary key's preparation.
+        ValueError: If an unrelated queryset operation raises it.
+        TypeError: If an unrelated queryset operation raises it.
+        ValidationError: If an unrelated queryset operation raises it.
+    """
+    try:
+        return queryset.get(pk=raw_id)
+    except queryset.model.DoesNotExist:
+        return None
+    except (ValueError, TypeError, ValidationError) as error:
+        pk_field = queryset.model._meta.pk
+        if not _pk_preparation_failed_for_id(error, pk_field, raw_id):
+            raise
+        if isinstance(pk_field, IntegerField):
+            message = "Invalid ID: expected an integer."
+        elif isinstance(pk_field, UUIDField):
+            message = "Invalid ID: expected a UUID."
+        else:
+            message = "The ID format is invalid."
+        raise GraphQLError(message, extensions={"code": "INVALID_ID"}) from None
 
 
 # ``django.contrib.contenttypes.fields`` imports the ``ContentType`` MODEL at

@@ -12,14 +12,14 @@ below describe bounded evidence, not universal guarantees.
 
 | Outcome | IDs | Meaning |
 |---|---:|---|
-| Bounded fix | 45 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
-| Partial or residual | 29 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
+| Bounded fix | 46 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
+| Partial or residual | 28 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
 | Contract or premise clarification | 9 | The reported expectation differs from the documented/current contract; no blanket runtime fix is implied. |
 | Recommendation | 7 | Maintainability or coverage work, not seven extra runtime bugs. |
 | Limited negative check | 6 | A proposed reassuring claim has only bounded evidence or is imprecisely worded; these are not six fixes. |
 | Decision deferred | 4 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
 
-Thus **45 does not mean 45 fully closed issues**. The 29 partial rows contain
+Thus **46 does not mean 46 fully closed issues**. The 28 partial rows contain
 additional decisions, and accepted work units do not automatically close their
 parent areas. This report preserves the report's IDs and order exactly once in
 the primary table. The status is the *primary disposition* of a multi-part ID,
@@ -243,7 +243,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | M-U5 | bounded-fixed | Native async directive formatting waits for resolver values and preserves borrowed Future ownership; synchronous HTTP still returns its controlled JSON 500 rather than gaining async support. | Async directive resolver → awaited; borrowed Future not cancelled by formatter. | `tests/test_async_directive_middleware.py` |
 | M-U6 | partial | The directive guide clarifies `@date` formatting and bounded case behavior. Null passes through with ordinary NonNull bubbling. Accepted text fills omitted time components with zeros; missing dates still use the parser's current date. Absolute formats display originally aware Python datetime and explicit-offset/Z text in the active zone, preserving the instant; clock-adjacent `+00:00`/`+0000` now match equivalent `Z`. Genuinely timezone-less text now attaches the active zone to its written wall clock for absolute and relative formats, regardless of `USE_TZ`; explicit-offset/Z relative and named/unknown-zone behavior remains. The three case directives now normalize approved word forms and acronym blocks without renaming schema fields or changing shared helpers. `@number`/`@currency` now preserve null and normal NonNull bubbling while retaining format validation and caps; wider M-U6 remains open. | Nullable @date(None) → null; NonNull @date(None) → normal GraphQL error and bubbling. Text date-only → 00:00:00; partial text time → zero missing seconds/microseconds. `orderTotal` → `order_total`/`order-total` under the snake/kebab directives; `HTTPServer` → `httpServer`/`http_server`/`http-server`. Nullable `@number(None)`/`@currency(None)` → null; NonNull fields bubble normally. Explicit-offset text may cross a calendar boundary; timezone-less text retains its written hour but relative wording may change. | `docs/directives.md` |
 | M-T1 | bounded-fixed | fork-depth marker isolation; other registry races separate. | Fork in thread A → depth marker must not mutate ordinary schema B. | `tests/core/test_schema_fork_threads.py` |
-| L-C1 | partial | malformed abc IDs in get_node/retrieve/DjangoObjectField yield GraphQL null plus wrapped ValueError; well-typed missing ID yields null/no errors. Not raw HTTP500; null-only vs client error policy deferred. | Malformed ID abc → null plus wrapped error; well-typed missing ID → null without error. | `odd/tasks/audit-400-remediation.md` |
+| L-C1 | bounded-fixed | Malformed primary-key IDs in get_node/retrieve/DjangoObjectField now yield safe `INVALID_ID` GraphQL errors with integer, UUID or generic format hints; well-formed missing/hidden IDs remain null without errors. Valid text IDs and existing ORM coercion remain. No unrelated errors are relabeled. | Integer/UUID malformed ID → coded safe error; well-formed absent or hidden ID → null without error; text PK `abc` → valid lookup. | `tests/test_invalid_id_contract.py` |
 | L-C2 | bounded-fixed | Two specific constructor validations now survive optimized Python (`-O`); no universal validation claim follows. | Two invalid constructor values under python -O → still rejected. | `tests/test_settings_boundary_values.py` |
 | L-C3 | partial | public Base view non-null root error is HTTP200/data:null; enhanced view HTTP400/no data key. Contracts confirmed; alignment policy deferred. | Same non-null root error → Base HTTP 200 versus enhanced HTTP 400 today. | `odd/tasks/audit-400-remediation.md` |
 | L-C4 | decision-deferred | MAX_UPLOAD_SIZE/base64 request docs are separate; multipart per-file quota would be a new policy, not evidence of existing promise. | Multipart file over a proposed per-file quota → no such new quota was adopted. | `odd/tasks/audit-400-remediation.md` |

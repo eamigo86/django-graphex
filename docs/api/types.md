@@ -217,6 +217,8 @@ scope excludes is reported as missing — the ID comes straight from the caller.
 
 **Returns:** Model instance or `None`
 
+**Raises:** `GraphQLError` with `extensions.code=INVALID_ID` when the model primary key cannot convert the ID.
+
 ### Example Usage
 
 === "Basic Type"

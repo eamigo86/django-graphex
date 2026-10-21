@@ -28,8 +28,8 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 45,
-    "partial": 29,
+    "bounded-fixed": 46,
+    "partial": 28,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
@@ -97,7 +97,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "45 does not mean 45 fully closed issues" in report
+    assert "46 does not mean 46 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
@@ -114,6 +114,7 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert rows["M-U2"][1] == "partial" and "PK-only event" in rows["M-U2"][3]
     assert rows["L-C8"][1] == "contract" and "tail window" in rows["L-C8"][2]
     assert rows["L-C9"][1] == "partial" and "offset/page" in rows["L-C9"][2]
+    assert rows["L-C1"][1] == "bounded-fixed" and "INVALID_ID" in rows["L-C1"][2]
     assert rows["L-C10"][1] == "bounded-fixed"
     assert "FIELD only" in rows["L-C10"][2]
     assert rows["L-C11"][1] == "bounded-fixed"

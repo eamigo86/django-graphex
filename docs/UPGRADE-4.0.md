@@ -16,6 +16,23 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Distinguish malformed IDs from missing objects
+
+Model-backed single-object lookups now distinguish an ID the model cannot
+convert from a well-formed ID that finds no visible row. The malformed case
+returns a GraphQL field error with `extensions.code` set to `INVALID_ID` and a
+safe expected-format message: `Invalid ID: expected an integer.`, `Invalid ID:
+expected a UUID.`, or the generic `The ID format is invalid.` for other
+primary keys. The nullable field is `null` and a non-null parent follows
+ordinary GraphQL error bubbling. Missing or scoped-out rows still return
+`null` without an error. A text primary key such as `abc` is not rejected
+merely because it is not numeric.
+
+Clients that previously interpreted every `null` as "not found" should now
+check the GraphQL `errors` array and `extensions.code`. The input value and
+Django conversion details are not included in the public message. This does
+not change schema fields, argument types, or valid-ID coercion.
+
 ### Move transformation directives from fragments to fields
 
 The library's transformation directives now declare only the GraphQL `FIELD`
