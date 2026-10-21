@@ -112,22 +112,21 @@ def test_mutation_guide_distinguishes_input_semantics_from_sql_updates() -> None
     assert "custom save" in body and "derived fields" in body
 
 
-def test_pagination_guide_distinguishes_cursor_from_offset_page_nulls() -> None:
-    """Keep cursor parity separate from offset/page database NULL placement.
-
-    Offset and page queryset order inherits the backend default unless the
-    application supplies an explicit server-side NULL ordering expression.
-    """
+def test_pagination_guide_states_automatic_nullable_order_boundary() -> None:
+    """Document offset/page parity without promising arbitrary ORM rewrites."""
     body = section(
         "docs/usage/pagination.md", "### Null ordering across paginator types"
     )
     assert "CursorGraphqlPagination" in body
     assert "NULL last ascending" in body and "NULL first descending" in body
     assert "LimitOffsetGraphqlPagination" in body and "PageGraphqlPagination" in body
-    assert "database" in body and "in-memory" in body
-    assert "F(...).asc(nulls_last=True)" in body
-    assert "F(...).desc(nulls_first=True)" in body
-    assert "universal" in body
+    assert "nested SQL" in body and "materialized model lists" in body
+    assert "category_id" in body and "Previously, a SQLite queryset" in body
+    assert 'F("category_id").asc(nulls_first=True)' in body
+    assert 'F("category_id").desc(nulls_last=True)' in body
+    assert "does not rewrite custom expressions" in body
+    assert "blanket cross-backend parity" in body
+    assert "queryset ordering inherits the" not in body
 
 
 def test_both_changelogs_scope_these_clarifications_to_documentation() -> None:

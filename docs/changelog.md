@@ -14,6 +14,11 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Align automatic nullable-column ordering in limit/offset and page pagination
+  across queryset, nested SQL-window, and materialized-list paths: NULL last
+  ascending, first descending. Explicit ORM expressions, term priorities,
+  primary-key ties, and Cursor pagination retain their existing behavior.
+
 - Reject negative integer `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and
   `DOCUMENT_CACHE_MAXSIZE` values when each setting is read, using the existing
   configuration error with a minimum of zero and a remedy. Zero, `None`,

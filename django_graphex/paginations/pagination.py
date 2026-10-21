@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from django.core.exceptions import ValidationError
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from django.db.models.expressions import OrderBy
 from graphql import (
     GraphQLBoolean,
@@ -459,6 +459,43 @@ def _effective_queryset_ordering(qs: QuerySet) -> tuple[list[Any], bool]:
     return effective, from_extra
 
 
+def _automatic_null_ordering(model: Any, terms: list[Any]) -> list[Any]:
+    """Place nulls consistently for plain nullable model-column terms.
+
+    Explicit ORM expressions and non-column terms retain their original
+    ordering. The resulting expressions preserve each term's position and
+    direction, including the ascending primary-key tie-break.
+
+    Args:
+        model: The model whose concrete fields identify nullable columns.
+        terms: Effective ordering terms in their original priority order.
+
+    Returns:
+        Terms with automatic nullable-column placement made explicit.
+    """
+    fields = {field.attname: field for field in model._meta.concrete_fields}
+    result: list[Any] = []
+    for term in terms:
+        if not isinstance(term, str) or term == "?":
+            result.append(term)
+            continue
+        name = term.lstrip("-+")
+        if term not in (name, f"-{name}", f"+{name}"):
+            result.append(term)
+            continue
+        field = fields.get(name)
+        if field is None or not field.null:
+            result.append(term)
+            continue
+        expression = F(field.attname)
+        result.append(
+            expression.desc(nulls_first=True)
+            if term.startswith("-")
+            else expression.asc(nulls_last=True)
+        )
+    return result
+
+
 def projected_ordering_attnames(model: Any, compiled_type: Any) -> set[str]:
     """Return the concrete attnames the COMPILED type publishes.
 
@@ -715,14 +752,17 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
         qs.query.standard_ordering = True
     terms, from_extra = _effective_queryset_ordering(qs)
     total_terms = _append_model_pk_ordering(qs.model, terms)
-    if total_terms == terms:
+    ordered_terms = (
+        total_terms if from_extra else _automatic_null_ordering(qs.model, total_terms)
+    )
+    if ordered_terms == terms:
         return qs
     if from_extra:
         # order_by() would clear extra_order_by and reject its SQL aliases.
         ordered = qs.all()
         ordered.query.extra_order_by = total_terms
     else:
-        ordered = qs.order_by(*total_terms)
+        ordered = qs.order_by(*ordered_terms)
     ordered.query.standard_ordering = True
     return ordered
 

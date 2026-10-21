@@ -12,14 +12,14 @@ below describe bounded evidence, not universal guarantees.
 
 | Outcome | IDs | Meaning |
 |---|---:|---|
-| Bounded fix | 49 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
-| Partial or residual | 27 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
+| Bounded fix | 50 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
+| Partial or residual | 26 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
 | Contract or premise clarification | 9 | The reported expectation differs from the documented/current contract; no blanket runtime fix is implied. |
 | Recommendation | 7 | Maintainability or coverage work, not seven extra runtime bugs. |
 | Limited negative check | 6 | A proposed reassuring claim has only bounded evidence or is imprecisely worded; these are not six fixes. |
 | Decision deferred | 2 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
 
-Thus **49 does not mean 49 fully closed issues**. The 27 partial rows contain
+Thus **50 does not mean 50 fully closed issues**. The 26 partial rows contain
 additional decisions, and accepted work units do not automatically close their
 parent areas. This report preserves the report's IDs and order exactly once in
 the primary table. The status is the *primary disposition* of a multi-part ID,
@@ -135,14 +135,11 @@ needed to use the report.
 
 ### Pagination and negative checks
 
-- The bounded SQLite cursor case uses NULL last ascending / first descending
-  on DB and materialized-list paths, including pageInfo continuation.
-  `LimitOffsetGraphqlPagination` and `PageGraphqlPagination` inherit the
-  database's NULL placement for a queryset; their in-memory paths can differ.
-  Applications may pass an explicit server-side
-  `F(...).asc(nulls_last=True)` or
-  `F(...).desc(nulls_first=True)`. Uniform ordering would be a separate
-  compatibility decision, not a correction already made here.
+- Cursor retains its prior NULL last ascending / first descending behavior.
+  LimitOffset and Page now use that placement for automatic ordering by a
+  nullable concrete column on queryset, nested window, and materialized-list
+  paths. Explicit ORM expressions/null flags, custom terms, priority and PK
+  ties remain unchanged; no universal expression/backend claim follows.
 - `page: -1` is a fixed-size **tail window**, not necessarily the shorter
   final remainder of positive page numbering. The exact SITE-B filtered
   prefetch allegation was contradicted by a public SQLite witness: the child
@@ -254,7 +251,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | L-C6 | contract | A cache miss reaches ensure_csrf_cookie and can set csrftoken; a cache hit returns earlier without Set-Cookie. A later cookie-bearing request bypasses the any-cookie cache policy. | Cookie-free miss can set csrftoken → next cookie request bypasses; hit does not set it. | `tests/test_views_cache_cookie_bypass.py` |
 | L-C7 | bounded-fixed | ambiguous enum members rejected; optional multiselect untested. | Two enum choices map to one ambiguous member → rejected. | `tests/core/test_choices_enum_member_ambiguity.py` |
 | L-C8 | contract | Negative page -1 means a fixed-size tail window, not the positive final page's short remainder. | page -1 with size 10 and 23 rows → last 10, not positive page 3's last 3. | `tests/test_pagination_page_null_http.py` |
-| L-C9 | partial | Cursor DB/list paths agree on NULL last ascending/first descending in the bounded SQLite case; offset/page queryset order inherits backend NULL placement and can diverge. | NULL row in cursor ASC → last; offset/page queryset keeps backend NULL placement. | `docs/usage/pagination.md` |
+| L-C9 | bounded-fixed | Automatic nullable concrete-column order now places NULL last ascending/first descending for offset/page DB, nested window and list paths; Cursor already agreed. Explicit ORM expressions/null flags, custom terms and broader backend parity are separate. | SQLite nullable ASC → non-null rows before NULL; DESC → NULL first, including nested windows. | `tests/test_pagination_null_order_parity.py` |
 | L-C10 | bounded-fixed | Library transforms now declare FIELD only; fragment-spread and inline-fragment placements fail validation before resolver execution. Fields inside fragments still transform; spec built-ins and raw third-party directive locations are unchanged. | Transform on a fragment spread → named validation error, not silent no-op. | `tests/test_directive_field_locations.py` |
 | L-C11 | bounded-fixed | `@floor` now raises the approved GraphQL error for NaN and either infinity. The report's `@title` is not registered; actual `@title_case` and `@truncate` stringify non-finite values and have no demonstrated defect. Their behavior is unchanged. | `@floor("inf")` → named GraphQL field error; `@title_case(inf)` → `"Inf"`. | `tests/test_floor_nonfinite_error.py` |
 | L-C12 | partial | The covered GFK union-wrapper path no longer makes an N+1 query; broader multi-table-inheritance paths remain unproved. | Covered GFK union wrapper across rows → batched; wider inheritance path unproved. | `tests/test_optimizer_phase_e.py` |
@@ -328,7 +325,7 @@ because approving one does not silently approve another.
    M-D6 raw JSON output/non-JSON-native policy (the missing-list-variable and
    non-finite numeric input slices are corrected separately), M-D10 Literal/dict/set/Union
    conversion, M-F3 empty Boolean identities, L-C1 malformed-ID null/error
-   policy, L-C9 universal NULL ordering, M-U6 remaining
+   policy, L-C9 arbitrary-expression/backend NULL ordering, M-U6 remaining
    directive/date semantics beyond accepted bounded slices, and Q10 non-null SDL derivation all
    need design. Existing warning-only typing diagnostics are not conversion.
 6. **Quality and architecture:** Q5–Q7 and Q9 are structural recommendations,

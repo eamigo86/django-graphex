@@ -16,6 +16,21 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### Nullable ordering in offset and page results
+
+`LimitOffsetGraphqlPagination` and `PageGraphqlPagination` now place NULL last
+ascending and first descending for automatic ordering by a nullable concrete
+model column, including nested SQL-window pages and materialized lists. For
+example, `ordering: "categoryId"` on nullable `category_id` now returns
+category 1, category 2, then NULL; descending returns NULL first. On SQLite,
+queryset pages previously used the opposite implicit NULL placement, so a
+client that depended on that order will see a changed page boundary. Use an
+explicit queryset expression such as
+`F("category_id").asc(nulls_first=True)` to keep NULL first ascending.
+Explicit ORM expressions and their NULL flags, custom expressions, relation
+ordering, term priority, PK ties, and Cursor pagination are unchanged. The
+automatic policy is not a promise about arbitrary annotations or SQL aliases.
+
 ### Negative operational limits
 
 `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE` now

@@ -712,19 +712,26 @@ page's last row — so it stays fast and stable. The list type also exposes a
 
 ### Null ordering across paginator types
 
-`CursorGraphqlPagination` explicitly places **NULL last ascending** and
-**NULL first descending** for both queryset and in-memory paths. This cursor
-policy does not extend to `LimitOffsetGraphqlPagination` or
-`PageGraphqlPagination`: their queryset ordering inherits the **database**'s
-default NULL placement, while an **in-memory** list follows its own sort-key
-policy. Consequently, the same nullable field can yield a different sequence
-across those two offset/page paths on a given backend.
+`CursorGraphqlPagination`, `LimitOffsetGraphqlPagination`, and
+`PageGraphqlPagination` place **NULL last ascending** and
+**NULL first descending** for automatic ordering by a nullable concrete model column.
+Offset/page pagination applies this policy to queryset results, nested SQL
+window pages, and materialized model lists while keeping the requested term
+priority, direction, and primary-key tie-break.
 
-When the application needs one explicit server-side placement, a queryset
-ordering expression such as `F(...).asc(nulls_last=True)` or
-`F(...).desc(nulls_first=True)` is preserved by offset/page pagination. This
-documents the current distinction; it does not impose a **universal** NULL
-policy or change ordering for existing clients.
+For example, with a nullable `category_id`, `ordering: "categoryId"` returns
+category 1, category 2, then NULL; `ordering: "-categoryId"` returns NULL,
+category 2, then category 1. Previously, a SQLite queryset put NULL first
+ascending and last descending, while the materialized list used the order
+described above. Existing clients relying on SQLite's implicit placement
+should choose an explicit ORM ordering expression if they need that placement.
+
+An existing queryset expression such as `F("category_id").asc(nulls_first=True)`
+or `F("category_id").desc(nulls_last=True)` retains its explicit placement.
+This automatic policy does not rewrite custom expressions, annotations,
+random ordering, legacy SQL aliases, or relation-name ordering that may follow
+a related model's default. Those forms retain their ORM semantics; it is not
+a blanket cross-backend parity guarantee for every ordering expression.
 
 ### Basic Usage
 

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from django.db.models import Count, F, JSONField, Prefetch
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import Window
+from django.db.models.expressions import OrderBy, Window
 from django.db.models.functions import RowNumber
 from graphql import GraphQLID, GraphQLList, GraphQLNonNull
 
@@ -30,6 +30,7 @@ from .filtering.filter_field import apply_custom_filters
 from .paginations.pagination import (
     BaseDjangoGraphqlPagination,
     _append_model_pk_ordering,
+    _automatic_null_ordering,
     _effective_queryset_ordering,
     _split_ordering,
     projected_ordering_attnames,
@@ -1123,8 +1124,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # Build order expressions for the window ORDER BY.
         order_exprs = [
-            F(t.lstrip("-+")).desc() if t.startswith("-") else F(t.lstrip("-+")).asc()
-            for t in order_terms
+            term
+            if isinstance(term, OrderBy)
+            else (
+                F(term.lstrip("-+")).desc()
+                if term.startswith("-")
+                else F(term.lstrip("-+")).asc()
+            )
+            for term in _automatic_null_ordering(child, order_terms)
         ]
 
         # --- Phase-d §7: apply user concrete-column annotation BEFORE window exprs --

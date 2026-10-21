@@ -87,7 +87,11 @@ Bounded model-backed results retain the effective primary ordering and append an
 ascending primary-key tie-break when the key is not already an ordering term.
 Effective server queryset reversal and legacy extra-order precedence are retained.
 Explicit primary-key direction is preserved; client ordering validation runs
-before the internal key is added. See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results).
+before the internal key is added. Plain nullable concrete-column terms place
+NULL last ascending and first descending on queryset, nested window, and
+materialized-list paths; explicit ORM expressions retain their own NULL flags.
+See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results)
+and [NULL ordering](../usage/pagination.md#null-ordering-across-paginator-types).
 
 ```python
 class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination)
@@ -254,6 +258,8 @@ query GetPosts($limit: Int, $offset: Int, $ordering: String) {
 Model-backed pages use the same ascending primary-key tie-break as limit/offset
 pages, after preserving configured, queryset, or client ordering. An explicit
 primary-key term keeps its direction. See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results).
+The same automatic nullable-column placement and explicit-ORM-expression
+boundary described for limit/offset pagination applies to page results.
 
 Pagination implementation using page number and page size parameters.
 
