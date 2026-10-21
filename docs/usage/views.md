@@ -114,8 +114,15 @@ raise `GraphQLError` explicitly rather than a raw `ValueError`. Deliberate
 `GraphQLError`, native validation and request errors, and the generated
 mutation's existing generic/structured errors retain their contracts.
 
-GraphQL `locations`, `path`, null propagation, rollback, and each view's HTTP
-status policy are unchanged. `DEBUG=True`, the shared subscription formatter
+GraphQL `locations`, `path`, null propagation, and rollback are unchanged.
+For the current JSON endpoint, a field execution error returns HTTP 200 with
+`errors` and a `data` member, even when a non-null root field makes `data`
+`null`. For example, a failed `{ required }` request can return
+`{"data": null, "errors": [{"message": "Execution stopped.", "path": ["required"]}]}`.
+Syntax, validation, and variable-coercion errors remain HTTP 400 without a
+`data` member. An HTTP 200 response containing errors is not cached; a
+repeated request runs again. Clients must inspect `errors`, not only status.
+`DEBUG=True`, the shared subscription formatter
 used by WebSocket/SSE, and subclasses that override `format_error` retain
 their previous behavior; review a custom override's own production policy.
 
@@ -151,8 +158,9 @@ same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
 
 With `CACHE_ACTIVE` on, `GraphQLView` caches eligible **HTTP 200 GraphQL data
 responses without errors** (never mutations, batches, multipart,
-cookie-bearing queries or a GraphiQL render). Partial-data execution errors
-and validation failures are returned normally but not cached; old cached
+cookie-bearing queries or a GraphiQL render). Execution errors, including
+top-level `data: null`, and validation failures are returned normally but not
+cached; old cached
 failures are ignored so a repeated request can recover. See
 [successful responses only](caching.md#successful-responses-only).
 Every entry is
@@ -379,7 +387,9 @@ entry has no query:
 
 A successful mutation before the error remains committed. `ATOMIC_MUTATIONS`
 applies per mutation, **not to the entire batch**. Ordinary GraphQL validation
-errors still produce entries without stopping later operations. Malformed
+errors still produce HTTP 400 entries without stopping later operations. A
+field execution error that nulls the operation data produces a 200 entry with
+`data: null` and `errors`, also without stopping later operations. Malformed
 outer bodies and non-object entries are rejected before any operation runs and
 keep a request-level error object; non-batch and non-400 transport errors keep
 their existing envelopes.

@@ -195,6 +195,18 @@ per-operation, not batch-wide. Previously the same failure returned only a
 request-level error object, hiding completed results. Malformed batch bodies
 still return a request-level object. See [Batch endpoints](usage/views.md#batch-endpoints).
 
+The enhanced `GraphQLView` now returns HTTP 200 with `data: null` and `errors`
+when a field execution error bubbles through a non-null root field. Previously
+that case returned HTTP 400 with no `data` member; `BaseGraphQLView` already
+returned the execution envelope. Update clients that treated every HTTP 400 as
+an execution failure or assumed HTTP 200 implies no GraphQL errors. Syntax,
+validation, and variable-coercion failures still return HTTP 400 without
+`data`. Errored responses remain uncached. For batches, an execution-error
+entry has status 200 and retains its null data while a validation-result entry
+has status 400; neither alone stops later entries. A transport-level HTTP 400
+still stops the batch with completed entries. See
+[production execution errors](usage/views.md#production-execution-errors).
+
 If your deployment relies on disabled schema introspection, explicitly add
 `django_graphex.security.DisableIntrospectionMiddleware` to
 `DJANGO_GRAPHEX["MIDDLEWARE"]`. The default `ALLOW_INTROSPECTION=False` does not

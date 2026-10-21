@@ -197,23 +197,22 @@ def test_shared_formatter_is_unchanged_in_production() -> None:
 
 
 @pytest.mark.parametrize(
-    ("view_class", "status"),
-    ((BaseGraphQLView, 200), (GraphQLView, 400), (AuthenticatedGraphQLView, 400)),
+    "view_class",
+    (BaseGraphQLView, GraphQLView, AuthenticatedGraphQLView),
 )
 @override_settings(DEBUG=False)
-def test_nonnull_error_keeps_each_views_existing_null_and_status_policy(
-    view_class: type[BaseGraphQLView], status: int
+def test_nonnull_error_keeps_null_data_and_safe_message_in_every_view(
+    view_class: type[BaseGraphQLView],
 ) -> None:
-    """Keep GraphQL null propagation and each view's status policy.
+    """Keep null execution data while aligning each view's HTTP status.
 
     Args:
         view_class: Built-in HTTP view under test.
-        status: Expected status for an entirely null execution result.
     """
     response = _post(view_class, ValueError("private"), "{ requiredFailure }")
     payload = json.loads(response.content)
-    assert response.status_code == status
-    assert payload.get("data") is None
+    assert response.status_code == 200
+    assert "data" in payload and payload["data"] is None
     assert payload["errors"][0]["path"] == ["requiredFailure"]
     assert payload["errors"][0]["message"] == "An internal error occurred."
 

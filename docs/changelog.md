@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Return HTTP 200 with `data: null` and `errors` from the enhanced JSON view
+  when a field execution error nulls a non-null root result. Syntax,
+  validation, and variable-coercion failures remain HTTP 400 without data;
+  errored responses are not cached. Batch transport errors and other HTTP
+  policies are unchanged.
+
 - Distinguish malformed model primary-key IDs from well-formed missing or
   scoped-out IDs in `get_node`, generated retrieve fields, and
   `DjangoObjectField`. Malformed IDs now produce a safe `INVALID_ID` GraphQL

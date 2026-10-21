@@ -2634,8 +2634,10 @@ class GraphQLView(BaseGraphQLView):
                     self.format_error(e, request) for e in execution_result.errors
                 ]
 
-            if execution_result.errors and not execution_result.data:
-                # If there are errors and no data, consider it invalid.
+            if execution_result.errors and any(
+                not getattr(error, "path", None) for error in execution_result.errors
+            ):
+                # Request errors have no field path and no execution data.
                 status_code = 400
             else:
                 response["data"] = execution_result.data
@@ -2659,18 +2661,15 @@ class GraphQLView(BaseGraphQLView):
                 _settings.graphql_api_settings.EXPOSE_QUERY_COST
                 and query
                 and status_code == 200
+                and (not execution_result.errors or execution_result.data is not None)
             ):
                 # Reuse the already-parsed document to avoid a second parse()
                 # call. Fall back to string-based parsing only when
                 # parsed_document is None (malformed query — cost is skipped).
                 #
-                # Skipped entirely when the request produced errors and no data
-                # (status 400): the cost of a document that never validated is
-                # computed from the fields it NAMES, so attaching it to a
-                # "Cannot query field" error turns the payload into a
-                # schema-existence oracle — a field pruned out of the caller's
-                # permission-scoped schema costs more than one that never
-                # existed.
+                # Request errors still have status 400 and no data. Keep cost
+                # absent for an execution error with null data too, while
+                # preserving the existing partial-data error behavior.
                 cost = self.get_query_cost(
                     query,
                     variables,
