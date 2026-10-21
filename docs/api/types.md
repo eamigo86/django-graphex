@@ -390,6 +390,15 @@ Get the type when the unmounted type is mounted.
     `('profile', 'addresses')` is ignored and the relations keep their plain
     `ID` / `[ID!]` surface.
 
+An all-string `Literal` field on a hand-authored `InputType` compiles to an
+enum named from the compiled input type and the public field alias, such as
+`ArticleInputStatusEnum`. Its members use the existing choice-name
+normalization (`"draft"` becomes `DRAFT`); two values with the same generated
+member name fail schema construction. Inline documents and JSON variables
+send member names, while resolvers receive the original string values.
+Nullable/list/nested wrappers retain their usual input shape. Numeric or
+mixed `Literal` annotations still warn and use the `String` fallback.
+
 !!! note "Pydantic defaults on a hand-authored `InputType`"
 
     A plain default (`limit: int = 10`) remains a fixed SDL default

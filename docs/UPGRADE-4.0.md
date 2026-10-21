@@ -16,6 +16,19 @@ pip install "django-graphex==4.0.0"
 The Playground installs the parent checkout in editable mode, so it tests
 that source rather than an independently installed wheel.
 
+### String Literal input values
+
+All-string `Literal` annotations on hand-authored inputs now expose GraphQL
+enums instead of `String`. For `ArticleInput.status: Literal["draft",
+"published"]`, the generated `ArticleInputStatusEnum` accepts `DRAFT` and
+`PUBLISHED`. Update inline operations from `status: "draft"` to
+`status: DRAFT`; update JSON variables from `"status": "draft"` to
+`"status": "DRAFT"`. Resolvers still receive the raw string `"draft"`.
+Invalid members are rejected before resolver execution. Numeric or mixed
+`Literal`, parameterized dictionaries and sets, and non-optional unions keep
+their existing warning and `String` fallback; this does not add automatic
+Pydantic validation.
+
 ### Nullable ordering in offset and page results
 
 `LimitOffsetGraphqlPagination` and `PageGraphqlPagination` now place NULL last

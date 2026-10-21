@@ -222,7 +222,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | M-D7 | bounded-fixed | incompatible same-name choices rejected; reordered equivalent kept. | Same enum name with incompatible choices → rejected; equivalent reordering remains. | `tests/core/test_choices_enum_name_collisions.py` |
 | M-D8 | bounded-fixed | reserved-name construction fixed; inherited-hook history qualified. | Model field with reserved name → covered type construction now succeeds. | `tests/core/test_reserved_model_fields.py` |
 | M-D9 | bounded-fixed | interface implementor name honored; general type rename unapproved. | Named interface implementor → chosen type name appears; global renaming remains open. | `tests/test_model_type_list_type_name.py` |
-| M-D10 | partial | Unsupported Literal/dict/set/Union input annotations still fall back to String, now with a diagnostic warning; no conversion policy was added. | Unsupported Literal/dict input annotation → warning plus String fallback, not conversion. | `tests/core/test_input_typing_fallback_warnings.py` |
+| M-D10 | partial | Approved all-string Literal input annotations compile to named enums with raw string resolver values; numeric/mixed Literal, parameterized dict/set, and non-optional Union still warn and fall back to String. | String Literal member → enum input and raw resolver value; unsupported forms → warning plus String. | `tests/core/test_literal_string_enum_input.py` |
 | M-F1 | bounded-fixed | nested related datepart/PK shadow fixed; SDL/null/A12 separate. | Nested related date-part/PK shadow → correct lookup retained in covered case. | `tests/test_filter_lookup_boundaries.py` |
 | M-F2 | bounded-fixed | numeric Date/DateTime parts typed Int; whole-value/TimeField policy unchanged. | Date year or DateTime month filter → GraphQL Int input, not string. | `tests/test_datepart_filtering.py` |
 | M-F3 | partial | exact:null/omission only; broader Boolean identities open. | exact: null versus omitted exact → distinct covered behavior; empty Boolean open. | `tests/test_exact_null_filtering.py` |
@@ -323,8 +323,8 @@ because approving one does not silently approve another.
 5. **Inputs, scalars, pagination, and SDL:** M-D4 extreme
    `1E+999999999` was intentionally not run without a bounded witness;
    M-D6 raw JSON output/non-JSON-native policy (the missing-list-variable and
-   non-finite numeric input slices are corrected separately), M-D10 Literal/dict/set/Union
-   conversion, M-F3 empty Boolean identities, L-C1 malformed-ID null/error
+   non-finite numeric input slices are corrected separately), M-D10 remaining
+   numeric/mixed Literal and dict/set/Union conversion, M-F3 empty Boolean identities, L-C1 malformed-ID null/error
    policy, L-C9 arbitrary-expression/backend NULL ordering, M-U6 remaining
    directive/date semantics beyond accepted bounded slices, and Q10 non-null SDL derivation all
    need design. Existing warning-only typing diagnostics are not conversion.

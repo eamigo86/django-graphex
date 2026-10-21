@@ -1607,23 +1607,31 @@ explicit values and `null` still bypass a zero-argument factory. A resolver
 still receives a snake-keyed `dict`, not an automatically validated Pydantic
 instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
 
-### Unsupported hand-authored input annotations
+### String Literal input enums and unsupported annotations
 
-The native input compiler warns when an annotation such as
-`Literal["a", "b"]`, `dict[str, int]`, `set[int]`, or `Union[int, str]`
-falls back to GraphQL `String`. This is a diagnostic change, **not** new
-support for those shapes: the SDL and GraphQL coercion remain `String`
-(`String!` for required fields). A `Literal` value outside its declared
-choices can still reach a mutation resolver if it is a string. Resolvers
-receive a plain dictionary, not an automatically validated Pydantic model.
+An all-string `Literal` on a hand-authored input now compiles to a GraphQL
+enum. For `ArticleInput.status: Literal["draft", "published"]`, the generated
+type is `ArticleInputStatusEnum` with `DRAFT` and `PUBLISHED` members. The
+compiler uses the **compiled input type name** and **public field alias**;
+for example, `CustomArticleInput.publishState` generates
+`CustomArticleInputPublishStateEnum`. A member collision after name
+normalization rejects the schema instead of assigning a positional suffix.
+`Optional`, list, nested, and inherited fields keep their existing wrapping
+and resolver names.
 
-For a string-valued field, annotate it as `str` to match the wire contract.
-If the narrower Pydantic constraint is required, explicitly validate the
-resolver's dictionary with the input model's `model_validate()` method and
-handle its validation error. A supported `int | None` field remains nullable
-`Int`; a required `list[int]` remains `[Int!]!`. Neither emits this fallback
-warning. Do not treat the warning as an Enum, JSON, set, or input-union
-conversion.
+Clients must change inline values from `status: "draft"` to `status: DRAFT`,
+and JSON variables from `"status": "draft"` to `"status": "DRAFT"`. A
+mutation resolver still receives the original string value (`"draft"`) in
+its plain input dictionary. A value outside the enum fails GraphQL input
+validation before the resolver. Fixed defaults render as enum members in SDL;
+factories still run for each newly coerced input object.
+
+Numeric or mixed `Literal`, `dict[str, int]`, `set[int]`, and non-optional
+`Union[int, str]` remain unsupported and warn when they fall back to GraphQL
+`String`. They are **not** automatically validated as Pydantic models. For
+other string-valued fields, annotate `str` and explicitly call the input
+model's `model_validate()` in the resolver if narrower validation is needed.
+A supported `int | None` remains `Int`, and `list[int]` remains `[Int!]!`.
 
 !!! warning "Compile the input type before you declare the mutation"
     `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`

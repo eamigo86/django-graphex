@@ -47,6 +47,20 @@ def test_docs_say_forbidden_permission_classes_fail_loudly() -> None:
     assert "ImproperlyConfigured" in filtering
 
 
+def test_guide_documents_string_literal_enum_client_migration() -> None:
+    """Keep the new wire enum contract distinct from unsupported fallbacks."""
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
+    for text in (usage, upgrade):
+        assert "ArticleInputStatusEnum" in text
+        assert 'status: "draft"' in text
+        assert "status: DRAFT" in text
+        assert '"status": "DRAFT"' in text
+        assert "raw string" in text or "original string" in text
+    assert "Numeric or mixed" in usage
+    assert "automatically validated as Pydantic" in usage
+
+
 @pytest.mark.parametrize(
     "relative", ["docs/usage/mutations.md", "docs/api/mutations.md"]
 )

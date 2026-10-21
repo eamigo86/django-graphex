@@ -26,10 +26,12 @@ import decimal
 import uuid
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable, get_origin
+from typing import Any, Callable, Literal, get_args, get_origin
 
 from graphql import (
     GraphQLBoolean,
+    GraphQLEnumType,
+    GraphQLEnumValue,
     GraphQLError,
     GraphQLFloat,
     GraphQLID,
@@ -44,6 +46,8 @@ from graphql import (
 )
 from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
+
+from django_graphex.converter import get_choices
 
 # ---------------------------------------------------------------------------
 # GdxInputSpec — extensions["gdx"] payload for input types
@@ -387,6 +391,39 @@ def _python_type_to_gql(py_type: Any) -> Any:
 
     # Fallback
     return GraphQLString
+
+
+def _string_literal_enum(
+    py_type: Any, *, input_name: str, alias: str
+) -> GraphQLEnumType | None:
+    """Build an enum only for a Literal containing plain string members.
+
+    Args:
+        py_type: The unwrapped field annotation.
+        input_name: The compiled GraphQL input type name.
+        alias: The public GraphQL field name.
+
+    Returns:
+        An enum with original string values, or None for unsupported forms.
+
+    Raises:
+        ImproperlyConfigured: If members normalize to the same enum name.
+    """
+    if get_origin(py_type) is not Literal:
+        return None
+    members = get_args(py_type)
+    if not members or any(type(member) is not str for member in members):
+        return None
+    values = {
+        member_name: GraphQLEnumValue(value=raw_value)
+        for member_name, raw_value, _description in get_choices(
+            (member, member) for member in members
+        )
+    }
+    return GraphQLEnumType(
+        name=f"{input_name}{alias[:1].upper()}{alias[1:]}Enum",
+        values=values,
+    )
 
 
 def _is_required(field_info: Any) -> bool:
@@ -733,13 +770,17 @@ def compile_input_type(
                 # yields a nullable element and ``list[T]`` a non-null element,
                 # mirroring the relation-list inner-NonNull precedent (:503-504).
                 element_type, element_optional = _unwrap_optional(list_inner)
-                gql_element = _python_type_to_gql(element_type)
+                gql_element = _string_literal_enum(
+                    element_type, input_name=name, alias=alias
+                ) or _python_type_to_gql(element_type)
                 gql_base_type: Any = (
                     gql_element if element_optional else GraphQLNonNull(gql_element)
                 )
                 gql_base_type = GraphQLList(gql_base_type)
             else:
-                gql_base_type = _python_type_to_gql(inner_type)
+                gql_base_type = _string_literal_enum(
+                    inner_type, input_name=name, alias=alias
+                ) or _python_type_to_gql(inner_type)
 
             # Determine nullability: required = NonNull, optional = nullable
             required = _is_required(field_info)

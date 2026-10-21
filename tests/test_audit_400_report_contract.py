@@ -110,6 +110,9 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert rows["SD1"][1] == "partial" and "get_queryset" in rows["SD1"][2]
     assert rows["M-D5"][1] == "contract" and "JSONString" in rows["M-D5"][2]
     assert rows["M-D4"][1] == "partial" and "1E+999999999" in rows["M-D4"][2]
+    assert rows["M-D10"][1] == "partial"
+    assert "all-string Literal" in rows["M-D10"][2]
+    assert "numeric/mixed Literal" in rows["M-D10"][2]
     assert rows["M-U1"][1] == "partial" and "retry works" in rows["M-U1"][2]
     assert rows["M-U2"][1] == "partial" and "PK-only event" in rows["M-U2"][3]
     assert rows["L-C8"][1] == "contract" and "tail window" in rows["L-C8"][2]

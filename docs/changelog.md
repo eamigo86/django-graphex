@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile all-string hand-authored input `Literal` annotations as generated
+  GraphQL enums. Inline operations and JSON variables now send enum members
+  rather than raw strings; resolvers still receive the original strings.
+  Numeric/mixed literals and other unsupported typing forms retain their
+  warning and `String` fallback.
+
 - Align automatic nullable-column ordering in limit/offset and page pagination
   across queryset, nested SQL-window, and materialized-list paths: NULL last
   ascending, first descending. Explicit ORM expressions, term priorities,
@@ -244,7 +250,7 @@ All notable changes to this library are documented here. The format is based on
   caching. This is a test-documentation change only; library behavior is
   unchanged. Local ignored profiling scripts are outside the clean checkout.
 
-- Warn when unsupported hand-authored input annotations such as `Literal`,
+- Warn when unsupported hand-authored input annotations such as numeric or mixed `Literal`,
   parameterized `dict` or `set`, and non-optional `Union` fall back to GraphQL
   `String`. Existing SDL, coercion, and resolver dictionaries are unchanged;
   this does not add structured input conversion or automatic Pydantic validation.

@@ -29,7 +29,8 @@ class UnsupportedTypingInput(InputType):
     compilation and GraphQL execution rather than a private scalar helper.
     """
 
-    literal: Literal["a", "b"]
+    literal: Literal[1, 2]
+    mixed_literal: Literal["a", 1]
     mapping: dict[str, int]
     numbers: set[int]
     choice: Union[int, str]
@@ -51,14 +52,15 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         fields = input_type.fields
 
     messages = [str(item.message) for item in caught if item.category is UserWarning]
-    assert len(messages) == 4
-    for name in ("Literal", "dict", "set", "Union"):
-        assert sum(name in message for message in messages) == 1
+    assert len(messages) == 5
+    for name, count in (("Literal", 2), ("dict", 1), ("set", 1), ("Union", 1)):
+        assert sum(name in message for message in messages) == count
     assert all("GraphQLString" in message for message in messages)
     assert all("unsupported input field type" in message for message in messages)
     assert [
-        str(fields[name].type) for name in ("literal", "mapping", "numbers", "choice")
-    ] == ["String!"] * 4
+        str(fields[name].type)
+        for name in ("literal", "mixedLiteral", "mapping", "numbers", "choice")
+    ] == ["String!"] * 5
     assert str(fields["maybe"].type) == "Int"
     assert str(fields["values"].type) == "[Int!]!"
 
@@ -94,6 +96,7 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     )
     sdl = print_schema(schema)
     assert "literal: String!" in sdl
+    assert "mixedLiteral: String!" in sdl
     assert "mapping: String!" in sdl
     assert "numbers: String!" in sdl
     assert "choice: String!" in sdl
@@ -108,12 +111,13 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         entry["name"]: entry["type"]
         for entry in introspection.data["__type"]["inputFields"]
     }
-    for name in ("literal", "mapping", "numbers", "choice"):
+    for name in ("literal", "mixedLiteral", "mapping", "numbers", "choice"):
         assert names[name]["kind"] == "NON_NULL"
         assert names[name]["ofType"] == {"kind": "SCALAR", "name": "String"}
 
     values = {
         "literal": "not-a-member",
+        "mixedLiteral": "not-a-member",
         "mapping": "not-an-object",
         "numbers": "not-a-list",
         "choice": "not-a-union-value",
@@ -123,7 +127,10 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     query = "mutation($payload: UnsupportedTypingInput!) { echo(payload: $payload) { result } }"
     accepted = graphql_sync(schema, query, variable_values={"payload": values})
     assert accepted.errors is None
-    assert json.loads(accepted.data["echo"]["result"]) == values
+    assert json.loads(accepted.data["echo"]["result"]) == {
+        **{key: value for key, value in values.items() if key != "mixedLiteral"},
+        "mixed_literal": "not-a-member",
+    }
     for name, structured in (("mapping", {"x": 1}), ("numbers", [1, 2]), ("choice", 7)):
         rejected = graphql_sync(
             schema, query, variable_values={"payload": {**values, name: structured}}
