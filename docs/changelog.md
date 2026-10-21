@@ -14,6 +14,11 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Report a stable GraphQL field error when `@floor` receives NaN or either
+  infinity, including numeric strings that coerce to those values. Finite and
+  null values, malformed-number errors, other directives, and schema metadata
+  are unchanged.
+
 - Declare library transformation directives on GraphQL fields only. Placing
   them on fragment spreads or inline fragments now fails validation instead
   of silently doing nothing; place transforms on fields inside fragments.

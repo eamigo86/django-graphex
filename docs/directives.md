@@ -623,6 +623,13 @@ Perform mathematical operations on numbers:
     fields — when the field is a `String` the result comes back as a string. A
     `null` value passes through unchanged.
 
+    `@floor` rejects `NaN`, positive infinity, and negative infinity after
+    numeric coercion with
+    `GraphQLError('@floor cannot operate on a non-finite value.')`. This also
+    applies to numeric strings such as `"nan"` and `"inf"`. Finite values,
+    including negative zero, retain their existing rounding behavior. This
+    rule applies only to `@floor`, not to the other math directives.
+
 ## Combining Directives
 
 Chain multiple directives for complex transformations:
@@ -978,6 +985,7 @@ an unhandled 500 or an opaque `errors[]` entry):
 | `@base64(op:"decode")` | Non-base64 or non-UTF-8 bytes | `GraphQLError('@base64 could not decode value: ...')` |
 | `@currency` | Non-numeric field value | `GraphQLError('@currency could not format value ...: expected a numeric value.')` |
 | `@floor`, `@ceil`, `@round`, `@abs` | Non-numeric field value | `GraphQLError('@floor/@ceil/@round/@abs could not convert value ... to a number.')` |
+| `@floor` | Non-finite number or numeric string | `GraphQLError('@floor cannot operate on a non-finite value.')` |
 | `@center` | `fillchar` length ≠ 1 (empty or multi-char) | `GraphQLError('@center fillchar must be exactly one character; got ...')` |
 
 !!! info "Null and empty values"

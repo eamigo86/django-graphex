@@ -104,10 +104,16 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
 
         Returns:
             The floored value, or None when the value is None.
+
+        Raises:
+            GraphQLError: If the value is not numeric or is non-finite.
         """
         if value is None:
             return None
-        return _coerce(math.floor(_to_float(value, "@floor")), info)
+        number = _to_float(value, "@floor")
+        if not math.isfinite(number):
+            raise GraphQLError("@floor cannot operate on a non-finite value.")
+        return _coerce(math.floor(number), info)
 
 
 class CeilGraphQLDirective(BaseExtraGraphQLDirective):

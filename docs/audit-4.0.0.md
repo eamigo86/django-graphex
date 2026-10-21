@@ -12,14 +12,14 @@ below describe bounded evidence, not universal guarantees.
 
 | Outcome | IDs | Meaning |
 |---|---:|---|
-| Bounded fix | 44 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
+| Bounded fix | 45 | A particular demonstrated behavior was corrected and regression-tested; related subclaims may remain. |
 | Partial or residual | 29 | A slice is fixed or observed, but another subcase, backend, or policy remains open. |
 | Contract or premise clarification | 9 | The reported expectation differs from the documented/current contract; no blanket runtime fix is implied. |
 | Recommendation | 7 | Maintainability or coverage work, not seven extra runtime bugs. |
 | Limited negative check | 6 | A proposed reassuring claim has only bounded evidence or is imprecisely worded; these are not six fixes. |
-| Decision deferred | 5 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
+| Decision deferred | 4 | A new behavior, compatibility, security, or resource policy needs explicit design approval. |
 
-Thus **44 does not mean 44 fully closed issues**. The 29 partial rows contain
+Thus **45 does not mean 45 fully closed issues**. The 29 partial rows contain
 additional decisions, and accepted work units do not automatically close their
 parent areas. This report preserves the report's IDs and order exactly once in
 the primary table. The status is the *primary disposition* of a multi-part ID,
@@ -59,6 +59,11 @@ needed to use the report.
   `@skip`/`@include` and raw third-party directive locations are unchanged.
   See `tests/test_directive_field_locations.py` and the
   [directive migration guide](UPGRADE-4.0.md#move-transformation-directives-from-fragments-to-fields).
+- `@floor` now reports a stable GraphQL error for non-finite numeric values,
+  including numeric strings, rather than exposing Python's integer conversion
+  message. Nullable fields become `null` with an error path; non-null fields
+  bubble normally. This does not change finite values, other directives, or
+  the SDL. See `tests/test_floor_nonfinite_error.py`.
 - Generated FK/M2M mutation input checks reject a **hidden destination ID**.
   Automatic forward-FK, reverse-FK and both OneToOne output directions now
   apply the destination type's hook: a hidden nullable to-one target is
@@ -248,7 +253,7 @@ qualification. Each row gives a compact case, outcome or remaining limit.
 | L-C8 | contract | Negative page -1 means a fixed-size tail window, not the positive final page's short remainder. | page -1 with size 10 and 23 rows → last 10, not positive page 3's last 3. | `tests/test_pagination_page_null_http.py` |
 | L-C9 | partial | Cursor DB/list paths agree on NULL last ascending/first descending in the bounded SQLite case; offset/page queryset order inherits backend NULL placement and can diverge. | NULL row in cursor ASC → last; offset/page queryset keeps backend NULL placement. | `docs/usage/pagination.md` |
 | L-C10 | bounded-fixed | Library transforms now declare FIELD only; fragment-spread and inline-fragment placements fail validation before resolver execution. Fields inside fragments still transform; spec built-ins and raw third-party directive locations are unchanged. | Transform on a fragment spread → named validation error, not silent no-op. | `tests/test_directive_field_locations.py` |
-| L-C11 | decision-deferred | truncate/title/floor Infinity are distinct paths; error semantics require decision. | floor(Infinity) or title(Infinity) → error semantics not standardized. | `odd/tasks/audit-400-remediation.md` |
+| L-C11 | bounded-fixed | `@floor` now raises the approved GraphQL error for NaN and either infinity. The report's `@title` is not registered; actual `@title_case` and `@truncate` stringify non-finite values and have no demonstrated defect. Their behavior is unchanged. | `@floor("inf")` → named GraphQL field error; `@title_case(inf)` → `"Inf"`. | `tests/test_floor_nonfinite_error.py` |
 | L-C12 | partial | The covered GFK union-wrapper path no longer makes an N+1 query; broader multi-table-inheritance paths remain unproved. | Covered GFK union wrapper across rows → batched; wider inheritance path unproved. | `tests/test_optimizer_phase_e.py` |
 | L-C13 | contract | The guide distinguishes native DateTime scalar naive parsing from `@date`'s active-timezone interpretation, including `USE_TZ=False`; no scalar policy changed. | Naive DateTime scalar input → stays naive; naive @date value → active timezone. | `docs/directives.md` |
 | L-E1 | bounded-fixed | get_fields failure surfaces model/cause; healthy path unchanged. | get_fields raises while building a type → model and cause surface. | `tests/core/test_metadata_enumeration_failures.py` |
@@ -321,7 +326,7 @@ because approving one does not silently approve another.
    M-D6 raw JSON output/non-JSON-native policy (the missing-list-variable and
    non-finite numeric input slices are corrected separately), M-D10 Literal/dict/set/Union
    conversion, M-F3 empty Boolean identities, L-C1 malformed-ID null/error
-   policy, L-C9 universal NULL ordering, L-C11 non-finite directive errors, M-U6 remaining
+   policy, L-C9 universal NULL ordering, M-U6 remaining
    directive/date semantics beyond accepted bounded slices, and Q10 non-null SDL derivation all
    need design. Existing warning-only typing diagnostics are not conversion.
 6. **Quality and architecture:** Q5–Q7 and Q9 are structural recommendations,

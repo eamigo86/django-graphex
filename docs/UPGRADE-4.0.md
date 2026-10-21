@@ -41,6 +41,19 @@ Fields inside inline fragments work the same way. Standard `@skip` and
 does not make transformations inherit from a fragment or restrict locations
 declared by third-party raw GraphQL directives.
 
+### Handle non-finite values before applying `@floor`
+
+`@floor` now reports a GraphQL field error for `NaN`, positive infinity, or
+negative infinity, including numeric strings such as `"nan"` and `"inf"`.
+Nullable fields resolve to `null` with the error path; non-null fields follow
+ordinary GraphQL bubbling. Previously, Python's integer conversion error
+surfaced instead. If non-finite values are possible, handle them in the
+resolver before selecting `@floor`, or allow the client to handle the field
+error. `None`, finite values (including negative zero), malformed-number
+errors, and the behavior of `@ceil`, `@round`, `@abs`, `@truncate`, and
+`@title_case` are unchanged. This is a runtime error-message policy, not a
+schema or directive-location change.
+
 ### Review null values under numeric formatting directives
 
 `@number` and `@currency` now preserve a resolver's `None` as GraphQL `null`

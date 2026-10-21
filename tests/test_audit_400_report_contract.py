@@ -28,12 +28,12 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 44,
+    "bounded-fixed": 45,
     "partial": 29,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 5,
+    "decision-deferred": 4,
 }
 
 
@@ -97,7 +97,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "44 does not mean 44 fully closed issues" in report
+    assert "45 does not mean 45 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
@@ -116,6 +116,10 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert rows["L-C9"][1] == "partial" and "offset/page" in rows["L-C9"][2]
     assert rows["L-C10"][1] == "bounded-fixed"
     assert "FIELD only" in rows["L-C10"][2]
+    assert rows["L-C11"][1] == "bounded-fixed"
+    assert "@floor" in rows["L-C11"][2]
+    assert "@title_case" in rows["L-C11"][2]
+    assert "@truncate" in rows["L-C11"][2]
     assert rows["L-E3"][1] == "partial" and "SITE-B" in rows["L-E3"][2]
     assert (
         rows["Q8"][1] == "negative-limited" and "MUTATION_ERRORS_FLAG" in rows["Q8"][2]
