@@ -1683,6 +1683,15 @@ parameterized dictionaries remain unsupported and use the same warning and
 other string-valued fields, annotate `str` and explicitly call the input
 model's `model_validate()` in the resolver if narrower validation is needed.
 A supported `int | None` remains `Int`, and `list[int]` remains `[Int!]!`.
+Nested lists of already-supported input leaves preserve each list and nullable
+position. For example, `rows: list[list[int]]` exposes `rows: [[Int!]!]!`,
+accepts `[[1, 2], [3]]`, and uses ordinary GraphQL list coercion: `[1, 2]`
+becomes `[[1], [2]]` and `1` becomes `[[1]]`. GraphQL rejects invalid leaves
+before the resolver; it does not cast strings to integers. This also applies
+to supported JSON and strict typed-map leaves, all-string `Literal` enums,
+and nested input models. A nested list ending in an unsupported type still
+follows the earlier warning and `String` fallback, without automatic Pydantic
+validation.
 
 !!! warning "Compile the input type before you declare the mutation"
     `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`

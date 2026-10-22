@@ -412,15 +412,24 @@ permission-pruned input behavior. Other parameterized dictionaries remain
 unsupported and use the warning/`String` fallback; a bare `dict` remains
 permissive raw JSON.
 
+Nested `list`/`typing.List` wrappers around already-supported input leaves
+retain their annotated nullability at every level. For example,
+`list[list[int]]` compiles to `[[Int!]!]!`; GraphQL accepts nested values and
+wraps singleton values at each list level without casting leaf values.
+Strict typed-map validation still runs at the final JSON leaf and reports
+safe indexed field paths. Nested wrappers around unsupported leaves retain
+their existing warning/`String` fallback instead of gaining a new input type.
+
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value
 introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver
 for an omitted input as the original raw value. Nested representable JSON
 values work the same way. A fixed object with a key such as `"x-y"` keeps its
 existing runtime default but cannot be printed as a valid GraphQL object
-literal. A valid fixed list of JSON values also renders in SDL and introspection.
-Its omitted input receives an equal outer list copy with the same elements;
-malformed list defaults retain their legacy runtime and metadata behavior.
+literal. A valid fixed list of JSON values, including a correctly shaped
+nested list, also renders in SDL and introspection. Its omitted input receives
+an equal list value; raw JSON leaves retain their existing identity. Malformed
+list defaults retain their legacy runtime and metadata behavior.
 Where metadata cannot render,
 use `Field(default_factory=lambda: {"views": 0})`: it supplies a value for each
 omitted input without advertising a fixed SDL default. A nullable `None`

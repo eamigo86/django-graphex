@@ -51,13 +51,26 @@ other types are rejected before mutation resolution without conversion.
 Empty objects remain valid. Other parameterized dictionary forms remain
 unchanged, and a bare `dict` remains permissive raw JSON.
 
+### Nested supported input lists
+
+Nested lists of already-supported input leaves now expose their full GraphQL
+list shape instead of the earlier one-level `String` fallback. For example,
+`rows: list[list[int]]` changes from `[String!]!` to `[[Int!]!]!`; send
+`[[1, 2], [3]]` rather than encoded strings. GraphQL's normal coercion also
+wraps `[1, 2]` as `[[1], [2]]` and `1` as `[[1]]`, without casting leaf
+values. Optionality applies separately to the outer list, each inner list,
+and each leaf. Supported input objects, all-string `Literal` enums, JSON,
+and exact strict typed maps retain their existing leaf semantics inside these
+wrappers. Unsupported leaves still warn and use the earlier `String` fallback.
+
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
 default-value introspection. The omitted input still receives the same raw
 value. Keys such as `"x-y"` cannot be GraphQL Names: their existing runtime
 default behavior is unchanged, but `print_schema` and introspection cannot
-render a valid GraphQL object literal for them. Valid fixed list-wrapped JSON defaults also render in SDL and introspection.
-Their resolver receives an equal outer list copy with the same elements;
+render a valid GraphQL object literal for them. Valid fixed list-wrapped JSON defaults, including correctly shaped nested
+lists, also render in SDL and introspection. Their resolver receives an equal
+list value with unchanged JSON leaves;
 malformed list defaults retain their prior runtime and metadata behavior.
 For defaults whose metadata cannot render,
 `Field(default_factory=lambda: {"views": 0})` supplies each omitted input

@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile nested lists of already-supported input leaves with recursive
+  GraphQL list/nullability wrappers instead of a one-level String fallback.
+  GraphQL applies ordinary singleton-list coercion at each level; supported
+  JSON, strict typed-map, Literal enum, and nested input leaves keep their
+  existing contracts. Unsupported leaves keep the earlier fallback. Valid
+  nested JSON list defaults can now render in SDL and introspection.
+
 - Compile exact `dict[str, str]` and `typing.Dict[str, str]` input fields
   to the shared raw `JSON` scalar. Require object inputs with string keys
   and string values without conversion; invalid values fail before mutation

@@ -114,6 +114,7 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert "all-string Literal" in rows["M-D10"][2]
     assert "numeric/mixed Literal" in rows["M-D10"][2]
     assert "dict[str, int]" in rows["M-D10"][2]
+    assert "nested lists of already-supported input leaves" in rows["M-D10"][2]
     assert "other parameterized dict/set" in rows["M-D10"][2]
     assert rows["M-U1"][1] == "partial" and "retry works" in rows["M-U1"][2]
     assert rows["M-U2"][1] == "partial" and "PK-only event" in rows["M-U2"][3]

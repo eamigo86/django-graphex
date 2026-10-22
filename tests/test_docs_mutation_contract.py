@@ -101,6 +101,20 @@ def test_guide_documents_typed_string_map_json_migration() -> None:
         assert "Other parameterized dictionaries remain unsupported" in normalized
 
 
+def test_guide_documents_recursive_supported_input_lists() -> None:
+    """Keep recursive list migration distinct from unsupported leaves."""
+    paths = (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "list[list[int]]" in text
+        assert "[[Int!]!]!" in text
+        assert "unsupported" in text.lower()
+
+
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     """Distinguish printable JSON defaults from ineligible object keys."""
     paths = (

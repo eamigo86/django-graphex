@@ -79,13 +79,13 @@ class _FactoryOutType:
     Args:
         factories: Zero-argument factories keyed by resolver-facing field name.
         typed_maps: Surviving typed-map fields with their schema paths and
-            list-wrapping flags.
+            list-wrapper depths.
     """
 
     def __init__(
         self,
         factories: dict[str, Callable[[], Any]],
-        typed_maps: dict[str, tuple[str, bool, type]] | None = None,
+        typed_maps: dict[str, tuple[str, int, type]] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
@@ -110,17 +110,41 @@ class _FactoryOutType:
                     raise GraphQLError(
                         f"Could not resolve default for input field {field_name!r}."
                     ) from None
-        for field_name, (schema_path, is_list, value_type) in self.typed_maps.items():
+        for field_name, (
+            schema_path,
+            list_depth,
+            value_type,
+        ) in self.typed_maps.items():
             value = values.get(field_name, Undefined)
             if value is Undefined or value is None:
                 continue
-            if is_list:
-                for index, item in enumerate(value):
-                    if item is not None:
-                        _validate_typed_map(item, f"{schema_path}[{index}]", value_type)
-            else:
-                _validate_typed_map(value, schema_path, value_type)
+            _validate_wrapped_typed_map(value, schema_path, list_depth, value_type)
         return values
+
+
+def _validate_wrapped_typed_map(
+    value: Any, schema_path: str, list_depth: int, value_type: type
+) -> None:
+    """Validate a typed-map leaf after each GraphQL list wrapper.
+
+    Args:
+        value: GraphQL-coerced field or list element.
+        schema_path: Static public field path plus list indices.
+        list_depth: Remaining list wrappers before the map leaf.
+        value_type: Approved map value kind.
+
+    Raises:
+        GraphQLError: If a typed-map leaf violates its declared contract.
+    """
+    if value is None:
+        return
+    if list_depth:
+        for index, item in enumerate(value):
+            _validate_wrapped_typed_map(
+                item, f"{schema_path}[{index}]", list_depth - 1, value_type
+            )
+        return
+    _validate_typed_map(value, schema_path, value_type)
 
 
 def _validate_typed_map(value: Any, schema_path: str, value_type: type) -> None:
@@ -204,6 +228,43 @@ def _printable_json_list_default(
     return True
 
 
+def _printable_nested_json_list_default(
+    value: Any, leaf_type: Any, nullable_elements: tuple[bool, ...]
+) -> bool:
+    """Recognize concrete nested JSON lists with valid leaf metadata.
+
+    Args:
+        value: Fixed default to inspect without changing it.
+        leaf_type: Supported JSON leaf annotation.
+        nullable_elements: Element nullability at each list level.
+
+    Returns:
+        Whether the complete nested default has printable JSON literals.
+    """
+    if type(value) is not list:
+        return False
+    json_scalar = _native_scalar_map()[dict]
+    map_value_type = _typed_map_value_type(leaf_type)
+    for item in value:
+        if item is None:
+            if not nullable_elements[0]:
+                return False
+        elif len(nullable_elements) > 1:
+            if not _printable_nested_json_list_default(
+                item, leaf_type, nullable_elements[1:]
+            ):
+                return False
+        else:
+            if json_scalar.value_to_literal(item) is None:
+                return False
+            if map_value_type is not None:
+                try:
+                    _validate_typed_map(item, "", map_value_type)
+                except GraphQLError:
+                    return False
+    return True
+
+
 def _has_wrapped_typed_map(annotation: Any) -> bool:
     """Recognize the approved map inside existing optional/list wrappers.
 
@@ -213,12 +274,50 @@ def _has_wrapped_typed_map(annotation: Any) -> bool:
     Returns:
         Whether the supported leaf occurs after the existing wrapper handling.
     """
+    nested = _supported_nested_list(annotation)
+    if nested is not None:
+        return _typed_map_value_type(nested[0]) is not None
     inner, _ = _unwrap_optional(annotation)
     element, is_list = _unwrap_list(inner)
     if is_list:
         element, _ = _unwrap_optional(element)
         return _typed_map_value_type(element) is not None
     return _typed_map_value_type(inner) is not None
+
+
+def _supported_nested_list(annotation: Any) -> tuple[Any, tuple[bool, ...]] | None:
+    """Find nested list wrappers ending in an already-supported input leaf.
+
+    Args:
+        annotation: Field annotation with any outer optional wrapper.
+
+    Returns:
+        The leaf and element-nullability flags, or none for legacy fallback.
+    """
+    current, _ = _unwrap_optional(annotation)
+    nullable_elements: list[bool] = []
+    while True:
+        child, is_list = _unwrap_list(current)
+        if not is_list:
+            break
+        current, nullable = _unwrap_optional(child)
+        nullable_elements.append(nullable)
+    if len(nullable_elements) < 2:
+        return None
+    from django_graphex.core.fields import FileScalar
+
+    supported = (
+        _typed_map_value_type(current) is not None
+        or current in _BUILTIN_MAP
+        or current in _native_scalar_map()
+        or (isinstance(current, type) and issubclass(current, (BaseModel, FileScalar)))
+        or (
+            get_origin(current) is Literal
+            and bool(get_args(current))
+            and all(type(member) is str for member in get_args(current))
+        )
+    )
+    return (current, tuple(nullable_elements)) if supported else None
 
 
 @dataclass(frozen=True)
@@ -824,7 +923,7 @@ def compile_input_type(
             str, tuple[str, GraphQLInputField, Callable[[], Any]]
         ] = {}
         typed_map_candidates: dict[
-            str, tuple[str, GraphQLInputField, str, bool, type]
+            str, tuple[str, GraphQLInputField, str, int, type]
         ] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
@@ -888,7 +987,20 @@ def compile_input_type(
             inner_type, is_optional_flag = _unwrap_optional(annotation)
             list_inner, is_list = _unwrap_list(inner_type)
 
-            if is_list:
+            nested_list = _supported_nested_list(annotation) if is_list else None
+            if nested_list is not None:
+                element_type, nullable_elements = nested_list
+                gql_element = _string_literal_enum(
+                    element_type, input_name=name, alias=alias
+                ) or _python_type_to_gql(element_type)
+                gql_base_type: Any = gql_element
+                for element_optional in reversed(nullable_elements):
+                    gql_base_type = GraphQLList(
+                        gql_base_type
+                        if element_optional
+                        else GraphQLNonNull(gql_base_type)
+                    )
+            elif is_list:
                 # Element type: recurse the optionality strip so ``list[T | None]``
                 # yields a nullable element and ``list[T]`` a non-null element,
                 # mirroring the relation-list inner-NonNull precedent (:503-504).
@@ -896,7 +1008,7 @@ def compile_input_type(
                 gql_element = _string_literal_enum(
                     element_type, input_name=name, alias=alias
                 ) or _python_type_to_gql(element_type)
-                gql_base_type: Any = (
+                gql_base_type = (
                     gql_element if element_optional else GraphQLNonNull(gql_element)
                 )
                 gql_base_type = GraphQLList(gql_base_type)
@@ -946,9 +1058,17 @@ def compile_input_type(
                     )
                     or (
                         is_list
+                        and nested_list is None
                         and gql_element is _native_scalar_map()[dict]
                         and _printable_json_list_default(
                             default_value, element_type, element_optional
+                        )
+                    )
+                    or (
+                        nested_list is not None
+                        and gql_element is _native_scalar_map()[dict]
+                        and _printable_nested_json_list_default(
+                            default_value, element_type, nested_list[1]
                         )
                     )
                 )
@@ -960,11 +1080,14 @@ def compile_input_type(
             typed_leaf = element_type if is_list else inner_type
             value_type = _typed_map_value_type(typed_leaf)
             if value_type is not None:
+                list_depth = (
+                    len(nested_list[1]) if nested_list is not None else int(is_list)
+                )
                 typed_map_candidates[alias] = (
                     field_name,
                     gql_field,
                     f"{name}.{alias}",
-                    is_list,
+                    list_depth,
                     value_type,
                 )
             if (
@@ -1108,12 +1231,12 @@ def compile_input_type(
         typed_map_fields.clear()
         typed_map_fields.update(
             {
-                field_name: (schema_path, is_list, value_type)
+                field_name: (schema_path, list_depth, value_type)
                 for alias, (
                     field_name,
                     gql_field,
                     schema_path,
-                    is_list,
+                    list_depth,
                     value_type,
                 ) in typed_map_candidates.items()
                 if fields.get(alias) is gql_field
