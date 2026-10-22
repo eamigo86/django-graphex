@@ -31,8 +31,8 @@ does not add automatic Pydantic validation.
 
 ### Typed integer-map input values
 
-`dict[str, int]` input fields change from GraphQL `String` to the existing
-raw `JSON` scalar. Change JSON variables from an encoded string such as
+`dict[str, int]` and `typing.Dict[str, int]` input fields change from
+GraphQL `String` to the existing raw `JSON` scalar. Change JSON variables from an encoded string such as
 `"mapping": "{\"count\":3}"` to an object, `"mapping": {"count": 3}`;
 inline GraphQL values use `mapping: {count: 3}`. The object must have string
 keys and plain integer values: booleans, numeric strings, floats, nested

@@ -399,8 +399,8 @@ send member names, while resolvers receive the original string values.
 Nullable/list/nested wrappers retain their usual input shape. Numeric or
 mixed `Literal` annotations still warn and use the `String` fallback.
 
-The exact `dict[str, int]` annotation compiles to the existing raw `JSON`
-input scalar, preserving the same scalar identity as a bare `dict`. Unlike
+The exact `dict[str, int]` and `typing.Dict[str, int]` annotations compile
+to the existing raw `JSON` input scalar, preserving the same scalar identity as a bare `dict`. Unlike
 bare `dict`, it accepts only objects with string keys and plain integer
 values, without Pydantic's numeric-string or boolean coercion. Its optional,
 list, nested and default wrappers keep their existing behavior; other

@@ -1628,8 +1628,10 @@ its plain input dictionary. A value outside the enum fails GraphQL input
 validation before the resolver. Fixed defaults render as enum members in SDL;
 factories still run for each newly coerced input object.
 
-An input field annotated `dict[str, int]` now uses the existing raw GraphQL
-`JSON` scalar instead of the legacy `String` fallback. Send an object, not
+An input field annotated `dict[str, int]` or `typing.Dict[str, int]` now uses
+the existing raw GraphQL `JSON` scalar instead of the legacy `String` fallback.
+Both spellings have the same strict input behavior; clients using the typing
+alias must migrate from encoded text to an object. Send an object, not
 JSON-encoded text: inline `mapping: {count: 3}` or the JSON variable
 `"mapping": {"count": 3}`. Every key must be a string and every value must
 be a plain integer; `true`, `3.5`, `"3"`, nested containers, and non-object
@@ -1665,7 +1667,8 @@ contract. A bare `dict` remains permissive raw `JSON`.
     their legacy runtime defaults without new SDL metadata. A nullable `None`
     default is unaffected.
 
-Numeric or mixed `Literal`, other parameterized dictionaries, `set[int]`, and
+Numeric or mixed `Literal`, parameterized dictionaries other than these two
+exact integer-map spellings, `set[int]`, and
 non-optional `Union[int, str]` remain unsupported and warn when they fall back
 to GraphQL `String`. They are **not** automatically validated as Pydantic models. For
 other string-valued fields, annotate `str` and explicitly call the input

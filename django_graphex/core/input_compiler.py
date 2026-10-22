@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import typing
 import uuid
 import warnings
 from dataclasses import dataclass
@@ -154,7 +155,7 @@ def _is_typed_integer_map(py_type: Any) -> bool:
     return (
         get_origin(py_type) is dict
         and get_args(py_type) == (str, int)
-        and py_type == dict[str, int]
+        and py_type in (dict[str, int], typing.Dict[str, int])  # noqa: UP006
     )
 
 

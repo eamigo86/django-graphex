@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import warnings
+from typing import Any, Dict
 
 import pytest
 from django.test import RequestFactory, override_settings
@@ -34,6 +35,203 @@ class InvalidTypedMapPayload(InputType):
 
 class HttpTypedMapPayload(InputType):
     mapping: dict[str, int]
+
+
+class TypingAliasMapPayload(InputType):
+    mapping: Dict[str, int]
+    raw: dict
+
+
+class HttpTypingAliasMapPayload(InputType):
+    mapping: Dict[str, int]
+
+
+def test_typing_dict_alias_uses_strict_json_public_input() -> None:
+    """Give the approved typing alias the existing strict JSON contract."""
+    received: list[dict[str, object]] = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        input_type = compile_input_type(
+            TypingAliasMapPayload, name="TypingAliasMapPayload"
+        )
+        schema = _schema_for_payload(input_type, received).graphql_schema
+        assert str(input_type.fields["mapping"].type) == "JSON!"
+    assert not [item for item in caught if item.category is UserWarning]
+
+    mapping = {"count": 3}
+    raw = {1: True}
+    result = graphql_sync(
+        schema,
+        "mutation($payload: TypingAliasMapPayload!) "
+        "{ submit(payload: $payload) { result } }",
+        variable_values={"payload": {"mapping": mapping, "raw": raw}},
+    )
+    assert result.errors is None, result.errors
+    assert received == [{"mapping": mapping, "raw": raw}]
+    assert received[0]["mapping"] is mapping and received[0]["raw"] is raw
+    assert (
+        input_type.fields["mapping"].type.of_type
+        is input_type.fields["raw"].type.of_type
+    )
+
+    inline = graphql_sync(
+        schema,
+        "mutation { submit(payload: {mapping: {large: 9223372036854775808}, "
+        "raw: {enabled: true}}) { result } }",
+    )
+    assert inline.errors is None, inline.errors
+    assert received[-1] == {"mapping": {"large": 2**63}, "raw": {"enabled": True}}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        '{"count":3}',
+        3.5,
+        True,
+        [3],
+        {1: 3},
+        {"count": "3"},
+        {"count": True},
+        {"count": 3.5},
+        {"count": [3]},
+    ],
+)
+def test_typing_alias_invalid_map_stops_mutation(bad: object) -> None:
+    """Reject the same invalid shapes without echoing their supplied keys."""
+    received: list[dict[str, object]] = []
+    schema = _schema_for_payload(
+        compile_input_type(TypingAliasMapPayload, name="TypingAliasMapPayload"),
+        received,
+    ).graphql_schema
+    result = graphql_sync(
+        schema,
+        "mutation($payload: TypingAliasMapPayload!) "
+        "{ submit(payload: $payload) { result } }",
+        variable_values={"payload": {"mapping": bad, "raw": {}}},
+    )
+    assert result.errors and received == []
+    assert "TypingAliasMapPayload.mapping" in result.errors[0].message
+    assert "count" not in result.errors[0].message
+
+
+def test_typing_alias_wrappers_defaults_and_pruned_clone() -> None:
+    """Keep optional lists, fresh factories and surviving clone checks."""
+    calls: list[int] = []
+    received: list[dict[str, object]] = []
+
+    def fresh_map() -> dict[str, int]:
+        calls.append(len(calls) + 1)
+        return {"sequence": calls[-1]}
+
+    class TypingAliasWrappedPayload(InputType):
+        a_map: Dict[str, int] | None = None
+        maps: list[Dict[str, int] | None] | None = None
+        fixed: Dict[str, int] = {"base": 1}
+        fresh: Dict[str, int] = Field(default_factory=fresh_map)
+        removed_map: Dict[str, int] | None = None
+
+    input_type = compile_input_type(
+        TypingAliasWrappedPayload, name="TypingAliasWrappedPayload"
+    )
+    input_type.fields["removedMap"].extensions = {
+        "gdx_required_perms": frozenset({"test.hidden"})
+    }
+    full = _schema_for_payload(input_type, received).graphql_schema
+    clone = prune_schema(full, frozenset())
+    assert "fixed: JSON = { base: 1 }" in print_schema(full)
+    metadata = graphql_sync(
+        full,
+        '{ __type(name: "TypingAliasWrappedPayload") '
+        "{ inputFields { name defaultValue } } }",
+    )
+    assert metadata.errors is None
+    defaults = {
+        item["name"]: item["defaultValue"]
+        for item in metadata.data["__type"]["inputFields"]
+    }
+    assert defaults["fixed"] == "{ base: 1 }"
+    assert defaults["fresh"] is None and calls == []
+    assert set(clone.get_type("TypingAliasWrappedPayload").fields) == {
+        "aMap",
+        "maps",
+        "fixed",
+        "fresh",
+    }
+    query = "mutation { submit(payload: {}) { result } }"
+    for schema in (full, clone):
+        omitted = graphql_sync(schema, query)
+        assert omitted.errors is None, omitted.errors
+    assert received == [
+        {
+            "a_map": None,
+            "maps": None,
+            "fixed": {"base": 1},
+            "fresh": {"sequence": 1},
+            "removed_map": None,
+        },
+        {"a_map": None, "maps": None, "fixed": {"base": 1}, "fresh": {"sequence": 2}},
+    ]
+    assert calls == [1, 2]
+    valid_map = {"large": 2**63}
+    variables = {"payload": {"aMap": valid_map, "maps": [{"x": 1}, None]}}
+    variable_query = (
+        "mutation($payload: TypingAliasWrappedPayload!) "
+        "{ submit(payload: $payload) { result } }"
+    )
+    valid = graphql_sync(clone, variable_query, variable_values=variables)
+    assert valid.errors is None, valid.errors
+    assert received[-1]["a_map"] is valid_map
+    assert received[-1]["maps"] == [{"x": 1}, None]
+    explicit_null = graphql_sync(
+        clone, "mutation { submit(payload: {aMap: null, maps: null}) { result } }"
+    )
+    assert explicit_null.errors is None, explicit_null.errors
+    assert received[-1]["a_map"] is received[-1]["maps"] is None
+    before = len(received)
+    for payload in ({"aMap": {"secret": True}}, {"maps": [{"secret": True}]}):
+        invalid = graphql_sync(
+            clone, variable_query, variable_values={"payload": payload}
+        )
+        assert invalid.errors and len(received) == before
+        assert "secret" not in invalid.errors[0].message
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_typing_alias_http_error_is_safe(inline: bool) -> None:
+    """Expose deliberate alias validation errors under production settings.
+
+    Args:
+        inline: Whether to supply an invalid GraphQL literal.
+    """
+    received: list[dict[str, object]] = []
+    schema = _schema_for_payload(
+        compile_input_type(HttpTypingAliasMapPayload, name="HttpTypingAliasMapPayload"),
+        received,
+    )
+    query = (
+        "mutation { submit(payload: {mapping: {secret: true}}) { result } }"
+        if inline
+        else "mutation($payload: HttpTypingAliasMapPayload!) "
+        "{ submit(payload: $payload) { result } }"
+    )
+    body: dict[str, object] = {"query": query}
+    if not inline:
+        body["variables"] = {"payload": {"mapping": {"secret": True}}}
+    request = RequestFactory().post(
+        "/graphql/", data=json.dumps(body), content_type="application/json"
+    )
+    with override_settings(DEBUG=False):
+        response = GraphQLView.as_view(schema=schema)(request)
+    payload = json.loads(response.content)
+    assert response.status_code != 500
+    assert payload["errors"] and received == []
+    assert "HttpTypingAliasMapPayload.mapping" in payload["errors"][0]["message"]
+    assert "secret" not in payload["errors"][0]["message"]
+    assert (
+        payload["errors"][0].get("extensions", {}).get("code")
+        != "INTERNAL_SERVER_ERROR"
+    )
 
 
 def test_typed_dictionary_accepts_json_object_before_mutation() -> None:

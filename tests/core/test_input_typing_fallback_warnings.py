@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from typing import Literal, Union
+from typing import Dict, Literal, Union
 
 from graphql import (
     GraphQLArgument,
@@ -32,6 +32,7 @@ class UnsupportedTypingInput(InputType):
     literal: Literal[1, 2]
     mixed_literal: Literal["a", 1]
     mapping: dict[str, str]
+    alias_mapping: Dict[str, str]
     numbers: set[int]
     choice: Union[int, str]
     maybe: int | None = None
@@ -52,15 +53,28 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         fields = input_type.fields
 
     messages = [str(item.message) for item in caught if item.category is UserWarning]
-    assert len(messages) == 5
-    for name, count in (("Literal", 2), ("dict", 1), ("set", 1), ("Union", 1)):
+    assert len(messages) == 6
+    for name, count in (
+        ("Literal", 2),
+        ("dict", 1),
+        ("Dict", 1),
+        ("set", 1),
+        ("Union", 1),
+    ):
         assert sum(name in message for message in messages) == count
     assert all("GraphQLString" in message for message in messages)
     assert all("unsupported input field type" in message for message in messages)
     assert [
         str(fields[name].type)
-        for name in ("literal", "mixedLiteral", "mapping", "numbers", "choice")
-    ] == ["String!"] * 5
+        for name in (
+            "literal",
+            "mixedLiteral",
+            "mapping",
+            "aliasMapping",
+            "numbers",
+            "choice",
+        )
+    ] == ["String!"] * 6
     assert str(fields["maybe"].type) == "Int"
     assert str(fields["values"].type) == "[Int!]!"
 
@@ -98,6 +112,7 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     assert "literal: String!" in sdl
     assert "mixedLiteral: String!" in sdl
     assert "mapping: String!" in sdl
+    assert "aliasMapping: String!" in sdl
     assert "numbers: String!" in sdl
     assert "choice: String!" in sdl
     assert "maybe: Int" in sdl
@@ -111,7 +126,14 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         entry["name"]: entry["type"]
         for entry in introspection.data["__type"]["inputFields"]
     }
-    for name in ("literal", "mixedLiteral", "mapping", "numbers", "choice"):
+    for name in (
+        "literal",
+        "mixedLiteral",
+        "mapping",
+        "aliasMapping",
+        "numbers",
+        "choice",
+    ):
         assert names[name]["kind"] == "NON_NULL"
         assert names[name]["ofType"] == {"kind": "SCALAR", "name": "String"}
 
@@ -119,6 +141,7 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         "literal": "not-a-member",
         "mixedLiteral": "not-a-member",
         "mapping": "not-an-object",
+        "aliasMapping": "not-an-object",
         "numbers": "not-a-list",
         "choice": "not-a-union-value",
         "maybe": 7,
@@ -128,10 +151,20 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     accepted = graphql_sync(schema, query, variable_values={"payload": values})
     assert accepted.errors is None
     assert json.loads(accepted.data["echo"]["result"]) == {
-        **{key: value for key, value in values.items() if key != "mixedLiteral"},
+        **{
+            key: value
+            for key, value in values.items()
+            if key not in ("mixedLiteral", "aliasMapping")
+        },
         "mixed_literal": "not-a-member",
+        "alias_mapping": "not-an-object",
     }
-    for name, structured in (("mapping", {"x": 1}), ("numbers", [1, 2]), ("choice", 7)):
+    for name, structured in (
+        ("mapping", {"x": 1}),
+        ("aliasMapping", {"x": 1}),
+        ("numbers", [1, 2]),
+        ("choice", 7),
+    ):
         rejected = graphql_sync(
             schema, query, variable_values={"payload": {**values, name: structured}}
         )
@@ -151,6 +184,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         name: str
         maybe: int | None = None
         values: list[int]
+        integer_map: Dict[str, int]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -160,4 +194,5 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         "name": "String!",
         "maybe": "Int",
         "values": "[Int!]!",
+        "integerMap": "JSON!",
     }

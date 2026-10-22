@@ -67,6 +67,7 @@ def test_guide_documents_typed_integer_map_json_migration() -> None:
     upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     for text in (usage, upgrade):
         assert "dict[str, int]" in text
+        assert "typing.Dict[str, int]" in text
         assert "JSON" in text
         assert '"mapping": {"count": 3}' in text
         assert "plain integer" in text

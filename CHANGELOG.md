@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Treat exact `typing.Dict[str, int]` input fields like `dict[str, int]`: shared
+  JSON scalar, strict plain-integer object checks before mutation resolution,
+  and the same wrapper/default behavior. Clients using the typing alias must
+  replace legacy encoded String values with JSON objects. Other typing forms
+  remain unchanged.
+
 - Do not register a generated model output type for a `DjangoModelMutation`
   rejected by unsupported `permission_classes` or `model_operations`.
   This removes a test-order-dependent registry conflict without changing the
