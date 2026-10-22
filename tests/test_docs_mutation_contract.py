@@ -116,7 +116,7 @@ def test_guide_documents_recursive_supported_input_lists() -> None:
 
 
 def test_guide_documents_exact_integer_set_migration() -> None:
-    """Distinguish the one approved set annotation from other set forms."""
+    """Distinguish the two approved integer-set forms from other sets."""
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -132,6 +132,8 @@ def test_guide_documents_exact_integer_set_migration() -> None:
     usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
     assert '"numbers": [2, 1, 2]' in usage
     assert "iteration order is not" in usage
+    assert "Exact `set[int]` and `typing.Set[int]` input fields" in usage
+    assert "Other set leaves and sets" in usage
 
 
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:

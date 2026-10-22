@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from typing import Dict, Literal, Union
+from typing import Dict, Literal, Set, Union
 
 from graphql import (
     GraphQLArgument,
@@ -178,6 +178,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         maybe: int | None = None
         values: list[int]
         numbers: set[int]
+        alias_numbers: Set[int]  # noqa: UP006
         integer_map: Dict[str, int]
         string_map: Dict[str, str]
 
@@ -190,6 +191,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         "maybe": "Int",
         "values": "[Int!]!",
         "numbers": "[Int!]!",
+        "aliasNumbers": "[Int!]!",
         "integerMap": "JSON!",
         "stringMap": "JSON!",
     }

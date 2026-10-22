@@ -264,12 +264,12 @@ def test_permission_clone_keeps_only_surviving_set_conversion() -> None:
 
 
 def test_unapproved_set_forms_keep_legacy_fallback() -> None:
-    """Do not expand the approval to other spellings, leaves or wrappers."""
+    """Do not expand integer-set support to other leaves or wrappers."""
 
     class UnsupportedSetPayload(InputType):
         """Collect representative unapproved container annotations."""
 
-        typing_alias: Set[int]  # noqa: UP006
+        typing_string_alias: Set[str]  # noqa: UP006
         string_set: set[str]
         wrapped_set: list[set[int]]
         nested_set: list[list[set[int]]]
@@ -280,7 +280,7 @@ def test_unapproved_set_forms_keep_legacy_fallback() -> None:
             UnsupportedSetPayload, name="UnsupportedSetPayload"
         ).fields
     assert {key: str(item.type) for key, item in fields.items()} == {
-        "typingAlias": "String!",
+        "typingStringAlias": "String!",
         "stringSet": "String!",
         "wrappedSet": "[String!]!",
         "nestedSet": "[String!]!",

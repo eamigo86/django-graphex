@@ -65,15 +65,16 @@ wrappers. Unsupported leaves still warn and use the earlier `String` fallback.
 
 ### Exact integer-set input values
 
-An exact `set[int]` input field changes from GraphQL `String!` to `[Int!]!`.
+An exact `set[int]` or `typing.Set[int]` input field changes from GraphQL
+`String!` to `[Int!]!`.
 Replace the old encoded string with an integer array, for example
 `"numbers": [2, 1, 2]`; GraphQL also accepts a singleton integer
 `"numbers": 3`. The mutation resolver now receives a Python set (`{1, 2}`
 or `{3}`), with duplicates removed and no promised iteration order. Native
 `GraphQLInt` rejects booleans and numeric strings before resolution; there is
 no custom cast or automatic Pydantic validation. Existing optionality and
-default behavior remain. `typing.Set[int]`, other set leaves, and sets inside
-lists keep their warning and `String` fallback.
+default behavior remain. Other set leaves and sets inside lists keep their
+warning and `String` fallback.
 
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in

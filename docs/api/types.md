@@ -420,12 +420,12 @@ Strict typed-map validation still runs at the final JSON leaf and reports
 safe indexed field paths. Nested wrappers around unsupported leaves retain
 their existing warning/`String` fallback instead of gaining a new input type.
 
-The exact `set[int]` input annotation exposes `[Int!]!`. GraphQL accepts an
-integer list or a singleton integer and validates each value with `GraphQLInt`
-before resolution. The resolver receives a Python set: duplicate values are
-removed, and set iteration order is unspecified. Existing outer optionality
-and defaults are retained. This does not apply to `typing.Set[int]`, other set
-leaves, or sets nested inside lists; those retain their legacy fallback.
+The exact `set[int]` and `typing.Set[int]` input annotations expose `[Int!]!`.
+GraphQL accepts an integer list or a singleton integer and validates each
+value with `GraphQLInt` before resolution. The resolver receives a Python set:
+duplicate values are removed, and set iteration order is unspecified.
+Existing outer optionality and defaults are retained. Other set leaves and
+sets nested inside lists retain their legacy fallback.
 
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value

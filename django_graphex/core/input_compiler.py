@@ -730,16 +730,21 @@ def _unwrap_list(annotation: Any) -> tuple[Any, bool]:
 
 
 def _is_exact_int_set(annotation: Any) -> bool:
-    """Recognize only the approved PEP 585 integer-set input annotation.
+    """Recognize only the approved integer-set input annotations.
 
     Args:
         annotation: The field annotation, possibly wrapped in Optional.
 
     Returns:
-        Whether the unwrapped annotation is exactly set[int].
+        Whether the unwrapped annotation is exactly set[int] or its typing alias.
     """
     inner, _ = _unwrap_optional(annotation)
-    return type(inner) is GenericAlias and inner == set[int]
+    if type(inner) is GenericAlias and inner == set[int]:
+        return True
+    if type(inner) is not type(typing.Set[int]) or get_origin(inner) is not set:  # noqa: UP006
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is int
 
 
 def _default_value_for(field_info: Any) -> Any:
