@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile exact `set[str]` and `typing.Set[str]` mutation inputs as
+  `[String!]!` instead of `String!`. Native GraphQLString validation and
+  list/singleton coercion apply; resolvers receive a deduplicated Python set
+  with no ordering guarantee. A singleton `"ab"` stays one member, not
+  two characters. Existing outer optional/default behavior remains; other
+  set forms keep their fallback. Clients must migrate encoded strings to
+  string arrays or singleton strings.
+
 - Compile exact `set[int]` and `typing.Set[int]` inputs as `[Int!]!` rather
   than `String!`.
   GraphQL applies its standard integer validation and singleton-list coercion;

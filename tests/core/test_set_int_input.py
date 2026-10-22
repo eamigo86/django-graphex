@@ -263,8 +263,8 @@ def test_permission_clone_keeps_only_surviving_set_conversion() -> None:
     assert received == [{"public_numbers": {1, 2}}]
 
 
-def test_unapproved_set_forms_keep_legacy_fallback() -> None:
-    """Do not expand integer-set support to other leaves or wrappers."""
+def test_other_set_forms_keep_legacy_fallback() -> None:
+    """Approve string leaves only; retain nested-set legacy fallback."""
 
     class UnsupportedSetPayload(InputType):
         """Collect representative unapproved container annotations."""
@@ -280,9 +280,9 @@ def test_unapproved_set_forms_keep_legacy_fallback() -> None:
             UnsupportedSetPayload, name="UnsupportedSetPayload"
         ).fields
     assert {key: str(item.type) for key, item in fields.items()} == {
-        "typingStringAlias": "String!",
-        "stringSet": "String!",
+        "typingStringAlias": "[String!]!",
+        "stringSet": "[String!]!",
         "wrappedSet": "[String!]!",
         "nestedSet": "[String!]!",
     }
-    assert len([item for item in caught if item.category is UserWarning]) == 4
+    assert len([item for item in caught if item.category is UserWarning]) == 2

@@ -136,6 +136,25 @@ def test_guide_documents_exact_integer_set_migration() -> None:
     assert "Other set leaves and sets" in usage
 
 
+def test_guide_documents_exact_string_set_migration() -> None:
+    """Document both string-set spellings and whole-string singleton input."""
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[str]" in text
+        assert "typing.Set[str]" in text
+        assert "[String!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"colors": ["red", "red", "blue"]' in usage
+    assert '"colors": "ab"' in usage
+    assert "never the characters" in usage
+
+
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     """Distinguish printable JSON defaults from ineligible object keys."""
     paths = (

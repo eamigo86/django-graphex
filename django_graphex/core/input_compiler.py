@@ -82,6 +82,7 @@ class _FactoryOutType:
         typed_maps: Surviving typed-map fields with their schema paths and
             list-wrapper depths.
         set_int_fields: Surviving exact integer-set fields to materialize.
+        set_str_fields: Surviving exact string-set fields to materialize.
     """
 
     def __init__(
@@ -89,10 +90,12 @@ class _FactoryOutType:
         factories: dict[str, Callable[[], Any]],
         typed_maps: dict[str, tuple[str, int, type]] | None = None,
         set_int_fields: set[str] | None = None,
+        set_str_fields: set[str] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
         self.set_int_fields = set_int_fields if set_int_fields is not None else set()
+        self.set_str_fields = set_str_fields if set_str_fields is not None else set()
 
     def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
         """Apply omitted factories and approved field-local coercion.
@@ -131,6 +134,12 @@ class _FactoryOutType:
             if isinstance(value, list) and all(
                 type(item) is int and -(2**31) <= item < 2**31 for item in value
             ):
+                values[field_name] = set(value)
+        for field_name in self.set_str_fields:
+            value = values.get(field_name, Undefined)
+            # GraphQLString has validated supplied items. Preserve its accepted
+            # str subclasses and leave malformed legacy defaults unchanged.
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
                 values[field_name] = set(value)
         return values
 
@@ -747,6 +756,24 @@ def _is_exact_int_set(annotation: Any) -> bool:
     return len(args) == 1 and args[0] is int
 
 
+def _is_exact_str_set(annotation: Any) -> bool:
+    """Recognize only the two approved string-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation is exactly set[str] or its typing alias.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[str])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is str
+
+
 def _default_value_for(field_info: Any) -> Any:
     """Resolve the graphql-core default_value for a Pydantic FieldInfo.
 
@@ -948,6 +975,7 @@ def compile_input_type(
     factory_fields: dict[str, Callable[[], Any]] = {}
     typed_map_fields: dict[str, tuple[str, bool, type]] = {}
     set_int_fields: set[str] = set()
+    set_str_fields: set[str] = set()
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -958,6 +986,7 @@ def compile_input_type(
             str, tuple[str, GraphQLInputField, str, int, type]
         ] = {}
         set_int_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_str_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -1035,6 +1064,8 @@ def compile_input_type(
                     )
             elif _is_exact_int_set(annotation):
                 gql_base_type = GraphQLList(GraphQLNonNull(GraphQLInt))
+            elif _is_exact_str_set(annotation):
+                gql_base_type = GraphQLList(GraphQLNonNull(GraphQLString))
             elif is_list:
                 # Element type: recurse the optionality strip so ``list[T | None]``
                 # yields a nullable element and ``list[T]`` a non-null element,
@@ -1114,6 +1145,8 @@ def compile_input_type(
             gql_field = GraphQLInputField(**gql_field_kwargs)
             if _is_exact_int_set(annotation):
                 set_int_candidates[alias] = (field_name, gql_field)
+            if _is_exact_str_set(annotation):
+                set_str_candidates[alias] = (field_name, gql_field)
             typed_leaf = element_type if is_list else inner_type
             value_type = _typed_map_value_type(typed_leaf)
             if value_type is not None:
@@ -1285,6 +1318,12 @@ def compile_input_type(
             for alias, (field_name, gql_field) in set_int_candidates.items()
             if fields.get(alias) is gql_field
         )
+        set_str_fields.clear()
+        set_str_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_str_candidates.items()
+            if fields.get(alias) is gql_field
+        )
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation
@@ -1293,11 +1332,14 @@ def compile_input_type(
         fields=lambda: _build_fields(),
         description=description,
         out_type=(
-            _FactoryOutType(factory_fields, typed_map_fields, set_int_fields)
+            _FactoryOutType(
+                factory_fields, typed_map_fields, set_int_fields, set_str_fields
+            )
             if _emit_defaults
             or any(
                 _has_wrapped_typed_map(info.annotation)
                 or _is_exact_int_set(info.annotation)
+                or _is_exact_str_set(info.annotation)
                 for info in getattr(model, "model_fields", {}).values()
             )
             else None

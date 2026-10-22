@@ -1688,6 +1688,17 @@ Optional, required, and defaulted outer fields keep their existing behavior.
 Both spellings have the same resolver behavior. Other set leaves and sets
 inside lists remain unsupported.
 
+Exact `set[str]` and `typing.Set[str]` mutation inputs now expose
+`[String!]!` instead of `String!`. Send a string list such as
+`"colors": ["red", "red", "blue"]`; GraphQL also accepts the singleton
+`"colors": "ab"`. The resolver receives an actual Python set:
+`{"red", "blue"}` or `{"ab"}`, never the characters of `"ab"`.
+Duplicates are removed and iteration order is not part of the contract.
+Native `GraphQLString` rejects non-string values before resolution without
+custom casting. Optional, required, fixed-default and fresh-factory behavior
+remains unchanged. Other set leaves and sets inside lists still use the
+legacy warning/`String` fallback.
+
 Numeric or mixed `Literal` and non-optional `Union[int, str]`
 remain unsupported and warn when they fall back to GraphQL `String`. Other
 parameterized dictionaries remain unsupported and use the same warning and

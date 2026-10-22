@@ -76,6 +76,18 @@ no custom cast or automatic Pydantic validation. Existing optionality and
 default behavior remain. Other set leaves and sets inside lists keep their
 warning and `String` fallback.
 
+### Exact string-set input values
+
+Exact `set[str]` and `typing.Set[str]` mutation inputs change from
+`String!` to `[String!]!`. Replace an encoded string with a string array,
+for example `"colors": ["red", "red", "blue"]`. A singleton
+`"colors": "ab"` is also valid and reaches the resolver as `{"ab"}`,
+not separate characters. Duplicate list values become one Python set member;
+iteration order is not promised. Native `GraphQLString` rejects invalid
+non-string inputs before resolution without custom casts. Outer optionality
+and default behavior stay unchanged; other set leaves and nested sets retain
+the warning and `String` fallback.
+
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
 default-value introspection. The omitted input still receives the same raw

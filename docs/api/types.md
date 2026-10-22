@@ -427,6 +427,14 @@ duplicate values are removed, and set iteration order is unspecified.
 Existing outer optionality and defaults are retained. Other set leaves and
 sets nested inside lists retain their legacy fallback.
 
+Exact `set[str]` and `typing.Set[str]` mutation inputs expose
+`[String!]!`. GraphQL accepts a string list or a whole-string singleton and
+validates each item with native `GraphQLString`. The resolver receives a
+deduplicated Python set: `["red", "red", "blue"]` becomes
+`{"red", "blue"}`, while `"ab"` becomes `{"ab"}`, not two characters.
+No iteration order is guaranteed. Existing outer optionality and defaults
+remain; other set leaves and nested sets still retain fallback behavior.
+
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value
 introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver
