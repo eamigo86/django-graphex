@@ -115,6 +115,25 @@ def test_guide_documents_recursive_supported_input_lists() -> None:
         assert "unsupported" in text.lower()
 
 
+def test_guide_documents_exact_integer_set_migration() -> None:
+    """Distinguish the one approved set annotation from other set forms."""
+    paths = (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[int]" in text
+        assert "[Int!]!" in text
+        assert "typing.Set[int]" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"numbers": [2, 1, 2]' in usage
+    assert "iteration order is not" in usage
+
+
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     """Distinguish printable JSON defaults from ineligible object keys."""
     paths = (

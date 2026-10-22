@@ -405,7 +405,7 @@ class _Pruner:
         Generated nested-object input fields carry explicit
         gdx_required_perms stamps. Dropping one is safe: a nested input field
         is never NonNull at the parent level. A hand-authored input field may
-        also be stamped; its factory callback and typed-map validator must be
+        also be stamped; its factory, typed-map and set callbacks must be
         restricted to surviving out-names so pruning cannot reinsert or inspect
         a hidden field.
 
@@ -442,6 +442,7 @@ class _Pruner:
                     for name, typed_map in gtype.out_type.typed_maps.items()
                     if name in surviving
                 },
+                gtype.out_type.set_int_fields & surviving,
             )
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)

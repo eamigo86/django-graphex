@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile exact `set[int]` inputs as `[Int!]!` rather than `String!`.
+  GraphQL applies its standard integer validation and singleton-list coercion;
+  resolvers receive a deduplicated Python set with no ordering guarantee.
+  Existing optional/default behavior remains, while other set forms keep
+  their earlier fallback. Clients must replace encoded strings with integer
+  arrays or singleton integers.
+
 - Compile nested lists of already-supported input leaves with recursive
   GraphQL list/nullability wrappers instead of a one-level String fallback.
   GraphQL applies ordinary singleton-list coercion at each level; supported

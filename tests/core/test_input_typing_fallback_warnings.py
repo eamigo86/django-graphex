@@ -33,7 +33,6 @@ class UnsupportedTypingInput(InputType):
     mixed_literal: Literal["a", 1]
     mapping: dict[str, float]
     alias_mapping: Dict[str, float]
-    numbers: set[int]
     choice: Union[int, str]
     maybe: int | None = None
     values: list[int]
@@ -53,12 +52,11 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         fields = input_type.fields
 
     messages = [str(item.message) for item in caught if item.category is UserWarning]
-    assert len(messages) == 6
+    assert len(messages) == 5
     for name, count in (
         ("Literal", 2),
         ("dict", 1),
         ("Dict", 1),
-        ("set", 1),
         ("Union", 1),
     ):
         assert sum(name in message for message in messages) == count
@@ -71,10 +69,9 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
             "mixedLiteral",
             "mapping",
             "aliasMapping",
-            "numbers",
             "choice",
         )
-    ] == ["String!"] * 6
+    ] == ["String!"] * 5
     assert str(fields["maybe"].type) == "Int"
     assert str(fields["values"].type) == "[Int!]!"
 
@@ -113,7 +110,6 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     assert "mixedLiteral: String!" in sdl
     assert "mapping: String!" in sdl
     assert "aliasMapping: String!" in sdl
-    assert "numbers: String!" in sdl
     assert "choice: String!" in sdl
     assert "maybe: Int" in sdl
     assert "values: [Int!]!" in sdl
@@ -131,7 +127,6 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         "mixedLiteral",
         "mapping",
         "aliasMapping",
-        "numbers",
         "choice",
     ):
         assert names[name]["kind"] == "NON_NULL"
@@ -142,7 +137,6 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         "mixedLiteral": "not-a-member",
         "mapping": "not-an-object",
         "aliasMapping": "not-an-object",
-        "numbers": "not-a-list",
         "choice": "not-a-union-value",
         "maybe": 7,
         "values": [1, 2],
@@ -162,7 +156,6 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     for name, structured in (
         ("mapping", {"x": 1}),
         ("aliasMapping", {"x": 1}),
-        ("numbers", [1, 2]),
         ("choice", 7),
     ):
         rejected = graphql_sync(
@@ -184,6 +177,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         name: str
         maybe: int | None = None
         values: list[int]
+        numbers: set[int]
         integer_map: Dict[str, int]
         string_map: Dict[str, str]
 
@@ -195,6 +189,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         "name": "String!",
         "maybe": "Int",
         "values": "[Int!]!",
+        "numbers": "[Int!]!",
         "integerMap": "JSON!",
         "stringMap": "JSON!",
     }

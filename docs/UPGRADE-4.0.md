@@ -25,7 +25,7 @@ enums instead of `String`. For `ArticleInput.status: Literal["draft",
 `status: DRAFT`; update JSON variables from `"status": "draft"` to
 `"status": "DRAFT"`. Resolvers still receive the raw string `"draft"`.
 Invalid members are rejected before resolver execution. Numeric or mixed
-`Literal`, parameterized sets, other parameterized dictionaries, and
+`Literal`, other parameterized sets, other parameterized dictionaries, and
 non-optional unions keep their existing warning and `String` fallback; this
 does not add automatic Pydantic validation.
 
@@ -62,6 +62,18 @@ values. Optionality applies separately to the outer list, each inner list,
 and each leaf. Supported input objects, all-string `Literal` enums, JSON,
 and exact strict typed maps retain their existing leaf semantics inside these
 wrappers. Unsupported leaves still warn and use the earlier `String` fallback.
+
+### Exact integer-set input values
+
+An exact `set[int]` input field changes from GraphQL `String!` to `[Int!]!`.
+Replace the old encoded string with an integer array, for example
+`"numbers": [2, 1, 2]`; GraphQL also accepts a singleton integer
+`"numbers": 3`. The mutation resolver now receives a Python set (`{1, 2}`
+or `{3}`), with duplicates removed and no promised iteration order. Native
+`GraphQLInt` rejects booleans and numeric strings before resolution; there is
+no custom cast or automatic Pydantic validation. Existing optionality and
+default behavior remain. `typing.Set[int]`, other set leaves, and sets inside
+lists keep their warning and `String` fallback.
 
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in

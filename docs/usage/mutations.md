@@ -1676,7 +1676,17 @@ permission-pruned input behavior applies; bare `dict` stays permissive.
     their legacy runtime defaults without new SDL metadata. A nullable `None`
     default is unaffected.
 
-Numeric or mixed `Literal`, `set[int]`, and non-optional `Union[int, str]`
+Exact `set[int]` input fields now expose `[Int!]!` instead of `String!`.
+Send an integer list such as `"numbers": [2, 1, 2]` rather than an encoded
+string. GraphQL also accepts a singleton integer such as `"numbers": 3`
+and wraps it as a list. The resolver receives a Python `set`, so both inputs
+deduplicate (`{1, 2}` and `{3}` respectively) and iteration order is not
+part of the contract. Native `GraphQLInt` rejects booleans and numeric strings
+before the resolver; this does not add Pydantic validation or custom casts.
+Optional, required, and defaulted outer fields keep their existing behavior.
+`typing.Set[int]`, other set leaves, and sets inside lists remain unsupported.
+
+Numeric or mixed `Literal` and non-optional `Union[int, str]`
 remain unsupported and warn when they fall back to GraphQL `String`. Other
 parameterized dictionaries remain unsupported and use the same warning and
 `String` fallback. They are **not** automatically validated as Pydantic models. For
