@@ -403,8 +403,14 @@ The exact `dict[str, int]` and `typing.Dict[str, int]` annotations compile
 to the existing raw `JSON` input scalar, preserving the same scalar identity as a bare `dict`. Unlike
 bare `dict`, it accepts only objects with string keys and plain integer
 values, without Pydantic's numeric-string or boolean coercion. Its optional,
-list, nested and default wrappers keep their existing behavior; other
-parameterized dictionaries remain on the warning/`String` fallback.
+list, nested and default wrappers keep their existing behavior.
+
+Exact `dict[str, str]` and `typing.Dict[str, str]` fields use that same
+`JSON` scalar and require string keys and string values, without implicit
+conversion. They retain the existing optional, list, nested, default, and
+permission-pruned input behavior. Other parameterized dictionaries remain
+unsupported and use the warning/`String` fallback; a bare `dict` remains
+permissive raw JSON.
 
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value

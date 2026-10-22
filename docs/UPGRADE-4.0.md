@@ -41,6 +41,16 @@ objects and integers beyond 32-bit are valid. Bare `dict` remains permissive
 raw `JSON`; no global Pydantic validation or other typed-container conversion
 is introduced.
 
+### Typed string-map input values
+
+Exact `dict[str, str]` and `typing.Dict[str, str]` input fields now use
+`JSON` instead of the legacy `String` fallback. Replace encoded-string
+variables with JSON objects, for example `"mapping": {"name": "Ada"}`,
+or use `mapping: {name: "Ada"}` inline. Both string keys and string values are required;
+other types are rejected before mutation resolution without conversion.
+Empty objects remain valid. Other parameterized dictionary forms remain
+unchanged, and a bare `dict` remains permissive raw JSON.
+
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
 default-value introspection. The omitted input still receives the same raw

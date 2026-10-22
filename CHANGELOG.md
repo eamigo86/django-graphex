@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Compile exact `dict[str, str]` and `typing.Dict[str, str]` input fields
+  to the shared raw `JSON` scalar. Require object inputs with string keys
+  and string values without conversion; invalid values fail before mutation
+  resolution. Clients must replace legacy encoded String values with JSON
+  objects. Other dictionary forms remain unchanged.
+
 - Treat exact `typing.Dict[str, int]` input fields like `dict[str, int]`: shared
   JSON scalar, strict plain-integer object checks before mutation resolution,
   and the same wrapper/default behavior. Clients using the typing alias must

@@ -1641,6 +1641,15 @@ field without echoing supplied keys or values. Optionality, omission, list
 wrapping, and fixed or factory defaults follow the field's existing input
 contract. A bare `dict` remains permissive raw `JSON`.
 
+Exact `dict[str, str]` and `typing.Dict[str, str]` input fields also use the
+shared `JSON` scalar instead of `String`. Send an object such as
+`"mapping": {"name": "Ada"}` in variables or `mapping: {name: "Ada"}`
+inline. Object string keys and string values are required: numbers, booleans, null, nested
+containers, non-object values, and non-string keys fail before mutation
+resolution without conversion. Empty objects are valid. The same
+optional, list, nested, omission, fixed-default, factory-default, and
+permission-pruned input behavior applies; bare `dict` stays permissive.
+
 !!! note "Fixed JSON defaults and schema metadata"
 
     A fixed JSON default whose object keys are valid GraphQL Names (for
@@ -1667,10 +1676,10 @@ contract. A bare `dict` remains permissive raw `JSON`.
     their legacy runtime defaults without new SDL metadata. A nullable `None`
     default is unaffected.
 
-Numeric or mixed `Literal`, parameterized dictionaries other than these two
-exact integer-map spellings, `set[int]`, and
-non-optional `Union[int, str]` remain unsupported and warn when they fall back
-to GraphQL `String`. They are **not** automatically validated as Pydantic models. For
+Numeric or mixed `Literal`, `set[int]`, and non-optional `Union[int, str]`
+remain unsupported and warn when they fall back to GraphQL `String`. Other
+parameterized dictionaries remain unsupported and use the same warning and
+`String` fallback. They are **not** automatically validated as Pydantic models. For
 other string-valued fields, annotate `str` and explicitly call the input
 model's `model_validate()` in the resolver if narrower validation is needed.
 A supported `int | None` remains `Int`, and `list[int]` remains `[Int!]!`.

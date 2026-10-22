@@ -85,7 +85,7 @@ class _FactoryOutType:
     def __init__(
         self,
         factories: dict[str, Callable[[], Any]],
-        typed_maps: dict[str, tuple[str, bool]] | None = None,
+        typed_maps: dict[str, tuple[str, bool, type]] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
@@ -110,53 +110,66 @@ class _FactoryOutType:
                     raise GraphQLError(
                         f"Could not resolve default for input field {field_name!r}."
                     ) from None
-        for field_name, (schema_path, is_list) in self.typed_maps.items():
+        for field_name, (schema_path, is_list, value_type) in self.typed_maps.items():
             value = values.get(field_name, Undefined)
             if value is Undefined or value is None:
                 continue
             if is_list:
                 for index, item in enumerate(value):
                     if item is not None:
-                        _validate_typed_integer_map(item, f"{schema_path}[{index}]")
+                        _validate_typed_map(item, f"{schema_path}[{index}]", value_type)
             else:
-                _validate_typed_integer_map(value, schema_path)
+                _validate_typed_map(value, schema_path, value_type)
         return values
 
 
-def _validate_typed_integer_map(value: Any, schema_path: str) -> None:
-    """Reject values outside the strict typed-map input contract.
+def _validate_typed_map(value: Any, schema_path: str, value_type: type) -> None:
+    """Reject values outside an approved strict typed-map input contract.
 
     Args:
         value: GraphQL-coerced input value.
         schema_path: Static field path for safe error reporting.
+        value_type: Approved value kind.
 
     Raises:
-        GraphQLError: If the value is not an object with string keys and plain
-            integer values.
+        GraphQLError: If the value is not an object with the declared values.
     """
-    if not isinstance(value, dict) or any(
-        not isinstance(key, str) or type(item) is not int for key, item in value.items()
-    ):
+    if value_type is int:
+        invalid = not isinstance(value, dict) or any(
+            not isinstance(key, str) or type(item) is not int
+            for key, item in value.items()
+        )
+        kind = "integer"
+    else:
+        invalid = not isinstance(value, dict) or any(
+            not isinstance(key, str) or not isinstance(item, str)
+            for key, item in value.items()
+        )
+        kind = "string"
+    if invalid:
         raise GraphQLError(
             f"Input field '{schema_path}' requires an object with string keys "
-            "and integer values."
+            f"and {kind} values."
         )
 
 
-def _is_typed_integer_map(py_type: Any) -> bool:
-    """Recognize only the approved typed dictionary annotation.
+def _typed_map_value_type(py_type: Any) -> type | None:
+    """Recognize only approved typed-dictionary spellings and value kinds.
 
     Args:
         py_type: Unwrapped field annotation.
 
     Returns:
-        Whether the annotation is exactly the supported typed dictionary.
+        The declared value kind, or none for an unsupported annotation.
     """
-    return (
-        get_origin(py_type) is dict
-        and get_args(py_type) == (str, int)
-        and py_type in (dict[str, int], typing.Dict[str, int])  # noqa: UP006
-    )
+    if get_origin(py_type) is not dict:
+        return None
+    args = get_args(py_type)
+    if args == (str, int) and py_type in (dict[str, int], typing.Dict[str, int]):  # noqa: UP006
+        return int
+    if args == (str, str) and py_type in (dict[str, str], typing.Dict[str, str]):  # noqa: UP006
+        return str
+    return None
 
 
 def _printable_json_list_default(
@@ -175,7 +188,7 @@ def _printable_json_list_default(
     if type(value) is not list:
         return False
     json_scalar = _native_scalar_map()[dict]
-    typed_map = _is_typed_integer_map(element_type)
+    typed_map_value_type = _typed_map_value_type(element_type)
     for item in value:
         if item is None:
             if not element_optional:
@@ -183,18 +196,15 @@ def _printable_json_list_default(
             continue
         if json_scalar.value_to_literal(item) is None:
             return False
-        if typed_map and (
-            not isinstance(item, dict)
-            or any(
-                not isinstance(key, str) or type(member) is not int
-                for key, member in item.items()
-            )
-        ):
-            return False
+        if typed_map_value_type is not None:
+            try:
+                _validate_typed_map(item, "", typed_map_value_type)
+            except GraphQLError:
+                return False
     return True
 
 
-def _has_wrapped_typed_integer_map(annotation: Any) -> bool:
+def _has_wrapped_typed_map(annotation: Any) -> bool:
     """Recognize the approved map inside existing optional/list wrappers.
 
     Args:
@@ -207,8 +217,8 @@ def _has_wrapped_typed_integer_map(annotation: Any) -> bool:
     element, is_list = _unwrap_list(inner)
     if is_list:
         element, _ = _unwrap_optional(element)
-        return _is_typed_integer_map(element)
-    return _is_typed_integer_map(inner)
+        return _typed_map_value_type(element) is not None
+    return _typed_map_value_type(inner) is not None
 
 
 @dataclass(frozen=True)
@@ -441,7 +451,7 @@ def _python_type_to_gql(py_type: Any) -> Any:
     if py_type is None:
         return GraphQLString
 
-    if _is_typed_integer_map(py_type):
+    if _typed_map_value_type(py_type) is not None:
         return _native_scalar_map()[dict]
 
     # Direct builtins
@@ -806,14 +816,16 @@ def compile_input_type(
         hasattr(model, "_gdx_opts") if emit_defaults is None else emit_defaults
     )
     factory_fields: dict[str, Callable[[], Any]] = {}
-    typed_map_fields: dict[str, tuple[str, bool]] = {}
+    typed_map_fields: dict[str, tuple[str, bool, type]] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
         factory_candidates: dict[
             str, tuple[str, GraphQLInputField, Callable[[], Any]]
         ] = {}
-        typed_map_candidates: dict[str, tuple[str, GraphQLInputField, str, bool]] = {}
+        typed_map_candidates: dict[
+            str, tuple[str, GraphQLInputField, str, bool, type]
+        ] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -946,12 +958,14 @@ def compile_input_type(
                 gql_field_kwargs["default_value"] = default_value
             gql_field = GraphQLInputField(**gql_field_kwargs)
             typed_leaf = element_type if is_list else inner_type
-            if _is_typed_integer_map(typed_leaf):
+            value_type = _typed_map_value_type(typed_leaf)
+            if value_type is not None:
                 typed_map_candidates[alias] = (
                     field_name,
                     gql_field,
                     f"{name}.{alias}",
                     is_list,
+                    value_type,
                 )
             if (
                 _emit_defaults
@@ -1094,12 +1108,13 @@ def compile_input_type(
         typed_map_fields.clear()
         typed_map_fields.update(
             {
-                field_name: (schema_path, is_list)
+                field_name: (schema_path, is_list, value_type)
                 for alias, (
                     field_name,
                     gql_field,
                     schema_path,
                     is_list,
+                    value_type,
                 ) in typed_map_candidates.items()
                 if fields.get(alias) is gql_field
             }
@@ -1115,7 +1130,7 @@ def compile_input_type(
             _FactoryOutType(factory_fields, typed_map_fields)
             if _emit_defaults
             or any(
-                _has_wrapped_typed_integer_map(info.annotation)
+                _has_wrapped_typed_map(info.annotation)
                 for info in getattr(model, "model_fields", {}).values()
             )
             else None

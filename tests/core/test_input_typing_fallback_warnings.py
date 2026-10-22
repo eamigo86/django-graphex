@@ -31,8 +31,8 @@ class UnsupportedTypingInput(InputType):
 
     literal: Literal[1, 2]
     mixed_literal: Literal["a", 1]
-    mapping: dict[str, str]
-    alias_mapping: Dict[str, str]
+    mapping: dict[str, float]
+    alias_mapping: Dict[str, float]
     numbers: set[int]
     choice: Union[int, str]
     maybe: int | None = None
@@ -185,6 +185,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         maybe: int | None = None
         values: list[int]
         integer_map: Dict[str, int]
+        string_map: Dict[str, str]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -195,4 +196,5 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         "maybe": "Int",
         "values": "[Int!]!",
         "integerMap": "JSON!",
+        "stringMap": "JSON!",
     }

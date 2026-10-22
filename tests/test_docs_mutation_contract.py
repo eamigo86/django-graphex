@@ -74,6 +74,33 @@ def test_guide_documents_typed_integer_map_json_migration() -> None:
         assert "Bare `dict`" in text or "bare `dict`" in text
 
 
+def test_guide_documents_typed_string_map_json_migration() -> None:
+    """Keep exact string-valued maps distinct from unsupported forms."""
+    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "dict[str, str]" in text
+        assert "typing.Dict[str, str]" in text
+        assert "JSON" in text
+        assert "string keys" in text and "string values" in text
+        assert "without conversion" in text or "without implicit" in text
+    for relative in ("docs/usage/mutations.md", "docs/api/types.md"):
+        normalized = " ".join((ROOT / relative).read_text(encoding="utf-8").split())
+        assert "dict[str, int]" in normalized
+        assert "typing.Dict[str, int]" in normalized
+        assert "dict[str, str]" in normalized
+        assert "typing.Dict[str, str]" in normalized
+        assert (
+            "parameterized dictionaries other than these two exact integer-map spellings"
+            not in normalized
+        )
+        assert (
+            "other parameterized dictionaries remain on the warning/`String` fallback"
+            not in normalized
+        )
+        assert "Other parameterized dictionaries remain unsupported" in normalized
+
+
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     """Distinguish printable JSON defaults from ineligible object keys."""
     paths = (
