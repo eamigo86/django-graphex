@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader shapes; R08b–g accepted boundedly; exact string-valued typed maps R08g accepted25147/local b4c0e71. Other M-D10 forms remain open. | [ ] |
+| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader shapes; R08b–h accepted boundedly. R08h only nests already-supported input leaves with GraphQL nullability/coercion; other M-D10 forms remain open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring; R09d bounded rejected-mutation output leak accepted25084. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -223,7 +223,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
-| M-D10 | 133 | **Partial:** R08b all-string Literal enums accepted24884/local b5e4823; R08c exact dict[str,int] → shared JSON with strict object/string-key/plain-int validation accepted24987/local 7d0165c. R08d direct JSON defaults accepted25036/local f17e96f; R08e valid fixed JSON-list metadata accepted25065/local 75109ef. R08f typing.Dict[str,int] parity accepted25116/local fc7ac7b. Human25122 exact dict[str,str]/typing.Dict[str,str] strict JSON accepted25147/local b4c0e71 after bounded docs correction. Other parameterized dictionaries remain unsupported. Malformed/default-ineligible values and other dict/set/Union/numeric-mixed Literal/global validation remain unchanged; whole ID open. Full limits/proof in closeout. | T09/R08a/R08b/R08c/R08d/R08e/R08f/R08g |
+| M-D10 | 133 | **Partial:** R08b all-string Literal enums accepted24884/local b5e4823; R08c exact dict[str,int] → shared JSON with strict object/string-key/plain-int validation accepted24987/local 7d0165c. R08d direct JSON defaults accepted25036/local f17e96f; R08e valid fixed JSON-list metadata accepted25065/local 75109ef. R08f typing.Dict[str,int] parity accepted25116/local fc7ac7b. Human25122 exact dict[str,str]/typing.Dict[str,str] strict JSON accepted25147/local b4c0e71 after bounded docs correction. Human25155 recursive supported-leaf lists accepted25179/local 85f8dc3 with qualified auxiliary coverage-helper history; unsupported leaves and other dict/set/Union/numeric-mixed Literal/global validation remain unchanged. Whole ID open; exact prior limits in closeout. | T09/R08a/R08b/R08c/R08d/R08e/R08f/R08g/R08h |
 
 ### Medium: filters, HTTP, optimizer, subscriptions, thread safety
 
@@ -349,7 +349,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 168 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08g boundedly accepted; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
+**Current audit state:** 170 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08h boundedly accepted; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -357,59 +357,66 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | Task | Retained completion | State |
 |---|---|---|
-| R03i-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03i-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03i-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03j-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03j-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03j-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03k-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03k-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03k-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03l-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03l-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R03l-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
+| R03i-I | Exact R08h preimage. | [x] |
+| R03i-V | Exact R08h preimage. | [x] |
+| R03i-C | Exact R08h preimage. | [x] |
+| R03j-I | Exact R08h preimage. | [x] |
+| R03j-V | Exact R08h preimage. | [x] |
+| R03j-C | Exact R08h preimage. | [x] |
+| R03k-I | Exact R08h preimage. | [x] |
+| R03k-V | Exact R08h preimage. | [x] |
+| R03k-C | Exact R08h preimage. | [x] |
+| R03l-I | Exact R08h preimage. | [x] |
+| R03l-V | Exact R08h preimage. | [x] |
+| R03l-C | Exact R08h preimage. | [x] |
 
 **R04a–f completed history:** Bounded L-C1/3/4/5/6/9 slices accepted; claim-ledger rows retain policy boundaries. Exact approvals, failed attempts, UNKNOWNs and older closure links remain in the R08g pre-edit archive. Wider R04/T13 open.
 
 | Task | Retained completion | State |
 |---|---|---|
-| R04a-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04a-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04a-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04b-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04b-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04b-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04c-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04c-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04c-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04d-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04d-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04d-C | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04e-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04e-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04f-I | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
-| R04f-V | Accepted bounded scope; exact R08g pre-edit archive. | [x] |
+| R04a-I | Exact R08h preimage. | [x] |
+| R04a-V | Exact R08h preimage. | [x] |
+| R04a-C | Exact R08h preimage. | [x] |
+| R04b-I | Exact R08h preimage. | [x] |
+| R04b-V | Exact R08h preimage. | [x] |
+| R04b-C | Exact R08h preimage. | [x] |
+| R04c-I | Exact R08h preimage. | [x] |
+| R04c-V | Exact R08h preimage. | [x] |
+| R04c-C | Exact R08h preimage. | [x] |
+| R04d-I | Exact R08h preimage. | [x] |
+| R04d-V | Exact R08h preimage. | [x] |
+| R04d-C | Exact R08h preimage. | [x] |
+| R04e-I | Exact R08h preimage. | [x] |
+| R04e-V | Exact R08h preimage. | [x] |
+| R04f-I | Exact R08h preimage. | [x] |
+| R04f-V | Exact R08h preimage. | [x] |
 
 **R08b completed locator:** human24849/root24884/local `b5e4823`, string Literal enums only. Full TDD, failures/UNKNOWNs and limits: `md10-literal-enum-closeout/closure.md` and exact R08e preimage; M-D10 partial.
 
 | Task | Route and accepted outcome | State |
 |---|---|---|
-| R08b-I | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08b-V | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08c-I | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08c-V | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08d-I | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08d-V | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08e-I | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
-| R08e-V | Accepted bounded slice; exact R08g pre-edit archive. | [x] |
+| R08b-I | Exact R08h preimage. | [x] |
+| R08b-V | Exact R08h preimage. | [x] |
+| R08c-I | Exact R08h preimage. | [x] |
+| R08c-V | Exact R08h preimage. | [x] |
+| R08d-I | Exact R08h preimage. | [x] |
+| R08d-V | Exact R08h preimage. | [x] |
+| R08e-I | Exact R08h preimage. | [x] |
+| R08e-V | Exact R08h preimage. | [x] |
 | R08f-I | D; human25100/root25116; local `fc7ac7b` | Exact typing.Dict[str,int] strict-JSON parity; public RED→same-byte GREEN, tests/docs. Scope/failed attempts in R08f closure. | [x] |
 | R08f-V | D; accepted25116 | Independent and root fresh checks passed; 7 skips/9 warnings and limits archived. Local-only, no RDD/PR. | [x] |
 
-| R08g-I | D; human25122/root25147; local `b4c0e71` | Exact string-valued built-in/typing maps → strict JSON; public RED→same-byte GREEN, docs RED→same-byte GREEN correction. 491 coherent authored lines (400 advisory); no other typing policy. | [x] |
-| R08g-V | D; accepted25147 | Independent/root fresh checks passed; full6212/7skip/9warn, raw4545/4752, direct33/33lines+18/18exits; failures and limits in closeout. Local-only, RDD OFF/no PR. | [x] |
+| R08g-I | Accepted25147/local `b4c0e71`; exact R08h preimage. | [x] |
+| R08g-V | Accepted25147; exact R08h preimage/closeout. | [x] |
 
-**R08g accepted closeout:** `md10-string-map-closeout/closure.md` (SHA `4bcc8db8aa11e70c58028f91e1dd0d8f93432ba86f245e5c8bc0c0bc8209a09b`) holds root acceptance25147, local source commit `b4c0e71`, original+docs RED/GREEN, final/failed gates, independent PARTIAL→complete, finite limits and next-case witness. Exact preclosure archive `md10-string-map-closeout/tracker-preclosure.md` (48,358 B; SHA `2e0616e0ef092bd1f1f5e08131d90f41a685dcebb5a0211b2eacabfa44f7e093`; 0644) preserves all prior rows/states and archive chains.
+**R08g accepted:** human25122/root25147/local `b4c0e71`; exact proof/failures/limits in `md10-string-map-closeout/closure.md` (SHA `4bcc8db8aa11e70c58028f91e1dd0d8f93432ba86f245e5c8bc0c0bc8209a09b`). Its preclosure archive preserves older chains; exact current preedit below preserves this paragraph.
+
+| R08h-I | D; human25155/root25179/local `85f8dc3` | Supported-leaf recursive lists only; public RED→same-byte GREEN, tests/docs; 773 coherent authored lines (400 advisory). Exact limitations in R08h closeout. | [x] |
+| R08h-V | D; accepted25179 | Independent/current gates pass: full 6233/7skip/9warn; raw4571/4778, direct57/57 lines+36/36 exits. Auxiliary historical same-byte proof qualified in closeout; local only/no RDD/PR. | [x] |
+
+**R08h accepted closeout:** human25155/root25179/local `85f8dc3`; exact preclosure archive `md10-nested-lists-closeout/tracker-preclosure.md` (48,202 B; SHA `ff7217324042a88bf7b076f9e295bde2700efd7b0ab5a41c1a98e05d95610811`; 0644). Proof/failures and auxiliary helper same-byte qualification: `md10-nested-lists-closeout/closure.md` (SHA `7cae038126a2ae23bb3a02c4c1b6212ee63f97862b41441ea98960e4fc319b73`). M-D10 remains partial.
+
+**R08h pre-edit archive:** `md10-nested-lists-preparation/tracker-preedit.md` (49,039 B; SHA `e2c08437e339d5e3088871a26e244f2f4e4a6425ea5a1574dce9d643769f7b06`; 0644) preserves all 193 prior tasks/states, 100 claim IDs/order, approvals/rejections, failures/PARTIAL/UNKNOWNs and archive chains. Exact scope/commands: `md10-nested-lists-preparation/preparation.md`.
 
 **R08g pre-edit archive:** `md10-string-map-preparation/tracker-preedit.md` (49,810 B; SHA `865b4caedfef895d074f6ce9f4025dd7a87f453ba648e3991fd0a68ec9f03a64`; 0644) preserves every prior task row/state, approval/rejection, proof failure/PARTIAL/UNKNOWN and older archive chain before completed-history compression. Exact scope/commands: `md10-string-map-preparation/preparation.md`.
 
@@ -423,7 +430,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Read-only `md10-string-map-closeout/next-case.json` finds `list[list[int]]` currently `[String!]!` and rejects structured variables; plain graphql-core nested-list control accepts them with standard list coercion. Nested-list support is NOT approved; seek individual human policy approval before implementation. M-D10 and wider R08/R09/T12/T13/T16/T17/L-M1/L-C13/L-E3 remain open. No PR/push/tag/publication.
+**Next:** Proposal only: `set[int]` currently falls back to String with warning/array rejection in the existing public typing-fallback test. `[Int!]!` with Python-set duplicate/order semantics needs separate human approval; do not implement yet. Other M-D10/R08/R09/T12/T13/T16/T17/L-M1/L-C13/L-E3 remain open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
