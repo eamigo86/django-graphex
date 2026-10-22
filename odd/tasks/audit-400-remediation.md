@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | Memory/input L-M1 and M-D10 broader shapes; R08b–h accepted boundedly. R08h only nests already-supported input leaves with GraphQL nullability/coercion; other M-D10 forms remain open. | [ ] |
+| R08 | D; human21002; unchecked | L-M1/M-D10 broader shapes; R08b–i boundedly accepted. R08h nests supported leaves; R08i covers exact `set[int]` only. Other M-D10 forms remain open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring; R09d bounded rejected-mutation output leak accepted25084. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -349,7 +349,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 170 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08h boundedly accepted; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
+**Current audit state:** 172 checked/25 overlap-unchecked; 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08i boundedly accepted; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -413,6 +413,10 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 | R08h-I | D; human25155/root25179/local `85f8dc3` | Supported-leaf recursive lists only; public RED→same-byte GREEN, tests/docs; 773 coherent authored lines (400 advisory). Exact limitations in R08h closeout. | [x] |
 | R08h-V | D; accepted25179 | Independent/current gates pass: full 6233/7skip/9warn; raw4571/4778, direct57/57 lines+36/36 exits. Auxiliary historical same-byte proof qualified in closeout; local only/no RDD/PR. | [x] |
+| R08i-I | D; human25186/root25205; `384e3cd` | Exact `set[int]`→`[Int!]!`; RED→same-byte GREEN, tests/docs. R08i closure. | [x] |
+| R08i-V | D; accepted25205 | Independent fresh and reused gates; failures/skips/limits in R08i closure. No RDD receipt/PR. | [x] |
+
+**R08i closeout:** human25186/root25205/local `384e3cd`. Exact preclosure `md10-set-int-closeout/tracker-preclosure.md` (48,933 B; SHA `aef8f7fd7b705af6afe4f30d3c5e9af38f5ad17b56f0491c2f509b7b4e12ad13`; 0644). Full proof/failures: `md10-set-int-closeout/closure.md`. M-D10 partial.
 
 **R08h accepted closeout:** human25155/root25179/local `85f8dc3`; exact preclosure archive `md10-nested-lists-closeout/tracker-preclosure.md` (48,202 B; SHA `ff7217324042a88bf7b076f9e295bde2700efd7b0ab5a41c1a98e05d95610811`; 0644). Proof/failures and auxiliary helper same-byte qualification: `md10-nested-lists-closeout/closure.md` (SHA `7cae038126a2ae23bb3a02c4c1b6212ee63f97862b41441ea98960e4fc319b73`). M-D10 remains partial.
 
@@ -430,7 +434,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** Proposal only: `set[int]` currently falls back to String with warning/array rejection in the existing public typing-fallback test. `[Int!]!` with Python-set duplicate/order semantics needs separate human approval; do not implement yet. Other M-D10/R08/R09/T12/T13/T16/T17/L-M1/L-C13/L-E3 remain open. No PR/push/tag/publication.
+**Next:** R08i accepted locally; propose `typing.Set[int]` parity only after separate human approval. Other M-D10/R08/R09/T12/T13/T16/T17/L-M1/L-C13/L-E3 remain open. No PR/push/tag/publication.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
