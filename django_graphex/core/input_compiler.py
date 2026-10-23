@@ -87,6 +87,7 @@ class _FactoryOutType:
         set_bool_fields: Surviving exact boolean-set fields to materialize.
         set_float_fields: Surviving exact float-set fields to materialize.
         set_float_defaults: Fixed float-set defaults kept by object identity.
+        set_uuid_fields: Surviving exact UUID-set fields to materialize.
     """
 
     def __init__(
@@ -98,6 +99,7 @@ class _FactoryOutType:
         set_bool_fields: set[str] | None = None,
         set_float_fields: set[str] | None = None,
         set_float_defaults: dict[str, Any] | None = None,
+        set_uuid_fields: set[str] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
@@ -110,6 +112,7 @@ class _FactoryOutType:
         self.set_float_defaults = (
             set_float_defaults if set_float_defaults is not None else {}
         )
+        self.set_uuid_fields = set_uuid_fields if set_uuid_fields is not None else set()
 
     def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
         """Apply omitted factories and approved field-local coercion.
@@ -184,6 +187,14 @@ class _FactoryOutType:
             # floats. Leave malformed legacy defaults and factories unchanged.
             if isinstance(value, list) and all(
                 type(item) is float and math.isfinite(item) for item in value
+            ):
+                values[field_name] = set(value)
+        for field_name in self.set_uuid_fields:
+            value = values.get(field_name, Undefined)
+            # The existing UUID scalar has already normalized supplied items.
+            # Leave malformed legacy defaults and factories unchanged.
+            if isinstance(value, list) and all(
+                type(item) is uuid.UUID for item in value
             ):
                 values[field_name] = set(value)
         return values
@@ -855,6 +866,24 @@ def _is_exact_float_set(annotation: Any) -> bool:
     return len(args) == 1 and args[0] is float
 
 
+def _is_exact_uuid_set(annotation: Any) -> bool:
+    """Recognize only the two approved UUID-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation has the exact UUID-set form.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[uuid.UUID])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is uuid.UUID
+
+
 def _default_value_for(field_info: Any) -> Any:
     """Resolve the graphql-core default_value for a Pydantic FieldInfo.
 
@@ -1060,6 +1089,7 @@ def compile_input_type(
     set_bool_fields: set[str] = set()
     set_float_fields: set[str] = set()
     set_float_defaults: dict[str, Any] = {}
+    set_uuid_fields: set[str] = set()
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -1073,6 +1103,7 @@ def compile_input_type(
         set_str_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_bool_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_float_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_uuid_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -1156,6 +1187,10 @@ def compile_input_type(
                 gql_base_type = GraphQLList(GraphQLNonNull(GraphQLBoolean))
             elif _is_exact_float_set(annotation):
                 gql_base_type = GraphQLList(GraphQLNonNull(GraphQLFloat))
+            elif _is_exact_uuid_set(annotation):
+                gql_base_type = GraphQLList(
+                    GraphQLNonNull(_native_scalar_map()[uuid.UUID])
+                )
             elif is_list:
                 # Element type: recurse the optionality strip so ``list[T | None]``
                 # yields a nullable element and ``list[T]`` a non-null element,
@@ -1241,6 +1276,8 @@ def compile_input_type(
                 set_bool_candidates[alias] = (field_name, gql_field)
             if _is_exact_float_set(annotation):
                 set_float_candidates[alias] = (field_name, gql_field)
+            if _is_exact_uuid_set(annotation):
+                set_uuid_candidates[alias] = (field_name, gql_field)
             typed_leaf = element_type if is_list else inner_type
             value_type = _typed_map_value_type(typed_leaf)
             if value_type is not None:
@@ -1437,6 +1474,12 @@ def compile_input_type(
             if fields.get(alias) is gql_field
             and gql_field.default_value is not Undefined
         )
+        set_uuid_fields.clear()
+        set_uuid_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_uuid_candidates.items()
+            if fields.get(alias) is gql_field
+        )
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation
@@ -1453,6 +1496,7 @@ def compile_input_type(
                 set_bool_fields,
                 set_float_fields,
                 set_float_defaults,
+                set_uuid_fields,
             )
             if _emit_defaults
             or any(
@@ -1461,6 +1505,7 @@ def compile_input_type(
                 or _is_exact_str_set(info.annotation)
                 or _is_exact_bool_set(info.annotation)
                 or _is_exact_float_set(info.annotation)
+                or _is_exact_uuid_set(info.annotation)
                 for info in getattr(model, "model_fields", {}).values()
             )
             else None

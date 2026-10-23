@@ -451,6 +451,7 @@ class _Pruner:
                     for name, default in gtype.out_type.set_float_defaults.items()
                     if name in surviving
                 },
+                gtype.out_type.set_uuid_fields & surviving,
             )
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Compile exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs
+  as `[UUID!]!` instead of `String!`. The existing native UUID scalar accepts
+  canonical, uppercase and 32-hex strings in lists or singleton form and
+  rejects invalid UUIDs before resolution. Resolvers receive a deduplicated
+  Python set of UUID objects without an ordering guarantee. Existing outer
+  optional/default behavior remains; other set forms keep fallback. Clients
+  must migrate encoded strings to UUID string arrays or singletons.
+
 - Compile exact `set[float]` and `typing.Set[float]` mutation inputs as
   `[Float!]!` instead of `String!`. Native GraphQLFloat coerces finite numeric
   list/singleton inputs, including integers, before resolvers receive a

@@ -113,6 +113,18 @@ numeric literals such as `1e999` before resolution, without a second cast.
 Outer optionality and defaults remain; other unapproved set leaves and
 nested sets retain warning/`String` fallback.
 
+### Exact UUID-set input values
+
+Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs change from
+`String!` to `[UUID!]!`. Replace an encoded string with a UUID string array,
+for example `"keys": ["12345678-1234-5678-1234-567812345678"]`.
+A singleton `"keys": "12345678123456781234567812345678"` remains one
+UUID, not individual characters. The existing native UUID scalar also accepts
+uppercase and 32-hex strings; invalid UUIDs and null items reject before the
+resolver. Duplicates become one Python set member with no ordering promise.
+Outer optionality and defaults remain; other unapproved set leaves and nested
+sets retain warning/`String` fallback.
+
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
 default-value introspection. The omitted input still receives the same raw

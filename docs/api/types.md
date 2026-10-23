@@ -455,6 +455,15 @@ a deduplicated Python set: `[1.5, 1.5, 2.0]` becomes `{1.5, 2.0}` and
 defaults, aliases and permission pruning retain their existing behavior.
 Unapproved set leaves and nested sets retain fallback behavior.
 
+Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs expose
+`[UUID!]!`. The existing native UUID scalar accepts canonical, uppercase and
+32-hex UUID strings in a list or as a whole-string singleton, validates each
+item before resolution, and supplies UUID objects. The resolver receives a
+deduplicated Python set; order is not guaranteed. Invalid UUIDs and null
+items reject before resolution. Existing outer optionality, defaults, aliases
+and permission pruning remain. Other unapproved set leaves and nested sets
+retain fallback behavior.
+
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value
 introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver

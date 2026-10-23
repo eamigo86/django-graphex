@@ -180,6 +180,26 @@ def test_guide_documents_exact_float_set_migration() -> None:
         )
 
 
+def test_guide_documents_exact_uuid_set_migration() -> None:
+    """Document both UUID-set spellings and native validation."""
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[uuid.UUID]" in text
+        assert "typing.Set[uuid.UUID]" in text
+        assert "[UUID!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"keys": "12345678123456781234567812345678"' in usage
+    assert "canonical, uppercase and 32-hex" in usage
+    for relative in ("CHANGELOG.md", "docs/changelog.md"):
+        assert "set[uuid.UUID]" in (ROOT / relative).read_text(encoding="utf-8")
+
+
 def test_guide_documents_exact_boolean_set_migration() -> None:
     """Document both boolean-set spellings and native validation."""
     for relative in (

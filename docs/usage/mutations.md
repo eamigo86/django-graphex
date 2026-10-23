@@ -1721,6 +1721,18 @@ fixed-default, fresh-factory, alias and pruning behavior remains established;
 no additional Pydantic or global validation is added. Other unapproved set
 leaves and nested sets retain the warning/`String` fallback.
 
+Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs now expose
+`[UUID!]!` instead of `String!`. Send UUID strings as a list, for example
+`"keys": ["12345678-1234-5678-1234-567812345678", "12345678123456781234567812345678"]`,
+or a singleton `"keys": "12345678123456781234567812345678"`.
+The existing native UUID scalar accepts canonical, uppercase and 32-hex
+strings, validates each item before resolution and supplies UUID objects.
+The resolver receives an actual deduplicated Python set, never the characters
+of a singleton string; iteration order is unspecified. Invalid UUIDs and
+null items are rejected before resolution. Outer Optional, defaults, aliases
+and permission pruning retain their established behavior. Other unapproved
+set leaves and nested sets retain the warning/`String` fallback.
+
 Numeric or mixed `Literal` and non-optional `Union[int, str]`
 remain unsupported and warn when they fall back to GraphQL `String`. Other
 parameterized dictionaries remain unsupported and use the same warning and
