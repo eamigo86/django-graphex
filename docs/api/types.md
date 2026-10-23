@@ -433,7 +433,7 @@ validates each item with native `GraphQLString`. The resolver receives a
 deduplicated Python set: `["red", "red", "blue"]` becomes
 `{"red", "blue"}`, while `"ab"` becomes `{"ab"}`, not two characters.
 No iteration order is guaranteed. Existing outer optionality and defaults
-remain; other set leaves and nested sets still retain fallback behavior.
+remain; other unapproved set leaves and nested sets still retain fallback behavior.
 
 Exact `set[bool]` and `typing.Set[bool]` mutation inputs expose
 `[Boolean!]!`. GraphQL accepts a boolean list or a singleton such as
@@ -441,8 +441,19 @@ Exact `set[bool]` and `typing.Set[bool]` mutation inputs expose
 strings and null list items are rejected before resolution. The resolver
 receives a deduplicated Python set, so `false` becomes `{False}`; no
 iteration order is guaranteed. Existing outer optionality, defaults,
-aliases and permission pruning remain. Other set leaves and nested sets
+aliases and permission pruning remain. Other unapproved set leaves and nested sets
 retain their fallback behavior.
+
+Exact `set[float]` and `typing.Set[float]` mutation inputs expose
+`[Float!]!`. GraphQL accepts finite numeric lists or singleton numbers,
+coercing integers to native float values, while rejecting booleans, strings
+and null list items. Variables reject nonfinite values; a field-local check
+rejects overflowing numeric literals such as `1e999` before resolution.
+The resolver receives
+a deduplicated Python set: `[1.5, 1.5, 2.0]` becomes `{1.5, 2.0}` and
+`2` becomes `{2.0}`. No iteration order is guaranteed; outer optionality,
+defaults, aliases and permission pruning retain their existing behavior.
+Unapproved set leaves and nested sets retain fallback behavior.
 
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value

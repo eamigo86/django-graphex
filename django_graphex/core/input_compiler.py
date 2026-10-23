@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import datetime
 import decimal
+import math
 import typing
 import uuid
 import warnings
@@ -84,6 +85,8 @@ class _FactoryOutType:
         set_int_fields: Surviving exact integer-set fields to materialize.
         set_str_fields: Surviving exact string-set fields to materialize.
         set_bool_fields: Surviving exact boolean-set fields to materialize.
+        set_float_fields: Surviving exact float-set fields to materialize.
+        set_float_defaults: Fixed float-set defaults kept by object identity.
     """
 
     def __init__(
@@ -93,12 +96,20 @@ class _FactoryOutType:
         set_int_fields: set[str] | None = None,
         set_str_fields: set[str] | None = None,
         set_bool_fields: set[str] | None = None,
+        set_float_fields: set[str] | None = None,
+        set_float_defaults: dict[str, Any] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
         self.set_int_fields = set_int_fields if set_int_fields is not None else set()
         self.set_str_fields = set_str_fields if set_str_fields is not None else set()
         self.set_bool_fields = set_bool_fields if set_bool_fields is not None else set()
+        self.set_float_fields = (
+            set_float_fields if set_float_fields is not None else set()
+        )
+        self.set_float_defaults = (
+            set_float_defaults if set_float_defaults is not None else {}
+        )
 
     def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
         """Apply omitted factories and approved field-local coercion.
@@ -110,8 +121,25 @@ class _FactoryOutType:
             The same mapping with fresh defaults for omitted fields.
 
         Raises:
-            GraphQLError: When a factory fails or a typed map has invalid shape.
+            GraphQLError: When a factory fails, a typed map is invalid, or a
+                supplied float set contains a nonfinite literal.
         """
+        for field_name in self.set_float_fields:
+            value = values.get(field_name, Undefined)
+            # Native Float variable coercion rejects nonfinite values, but its
+            # literal coercer can yield infinity from an overflowing exponent.
+            # Fixed legacy defaults retain their original object identity here;
+            # omitted factories have not yet been inserted.
+            if (
+                isinstance(value, list)
+                and value is not self.set_float_defaults.get(field_name, Undefined)
+                and any(
+                    type(item) is float and not math.isfinite(item) for item in value
+                )
+            ):
+                raise GraphQLError(
+                    f"Input field {field_name!r} cannot contain a nonfinite Float."
+                )
         for field_name, factory in self.factories.items():
             if field_name not in values:
                 try:
@@ -149,6 +177,14 @@ class _FactoryOutType:
             # Native GraphQLBoolean has validated supplied items. Preserve
             # the existing policy for malformed legacy defaults/factories.
             if isinstance(value, list) and all(type(item) is bool for item in value):
+                values[field_name] = set(value)
+        for field_name in self.set_float_fields:
+            value = values.get(field_name, Undefined)
+            # GraphQLFloat has normalized supplied numeric items to finite
+            # floats. Leave malformed legacy defaults and factories unchanged.
+            if isinstance(value, list) and all(
+                type(item) is float and math.isfinite(item) for item in value
+            ):
                 values[field_name] = set(value)
         return values
 
@@ -801,6 +837,24 @@ def _is_exact_bool_set(annotation: Any) -> bool:
     return len(args) == 1 and args[0] is bool
 
 
+def _is_exact_float_set(annotation: Any) -> bool:
+    """Recognize only the two approved float-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation has the exact float-set form.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[float])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is float
+
+
 def _default_value_for(field_info: Any) -> Any:
     """Resolve the graphql-core default_value for a Pydantic FieldInfo.
 
@@ -1004,6 +1058,8 @@ def compile_input_type(
     set_int_fields: set[str] = set()
     set_str_fields: set[str] = set()
     set_bool_fields: set[str] = set()
+    set_float_fields: set[str] = set()
+    set_float_defaults: dict[str, Any] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -1016,6 +1072,7 @@ def compile_input_type(
         set_int_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_str_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_bool_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_float_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -1097,6 +1154,8 @@ def compile_input_type(
                 gql_base_type = GraphQLList(GraphQLNonNull(GraphQLString))
             elif _is_exact_bool_set(annotation):
                 gql_base_type = GraphQLList(GraphQLNonNull(GraphQLBoolean))
+            elif _is_exact_float_set(annotation):
+                gql_base_type = GraphQLList(GraphQLNonNull(GraphQLFloat))
             elif is_list:
                 # Element type: recurse the optionality strip so ``list[T | None]``
                 # yields a nullable element and ``list[T]`` a non-null element,
@@ -1180,6 +1239,8 @@ def compile_input_type(
                 set_str_candidates[alias] = (field_name, gql_field)
             if _is_exact_bool_set(annotation):
                 set_bool_candidates[alias] = (field_name, gql_field)
+            if _is_exact_float_set(annotation):
+                set_float_candidates[alias] = (field_name, gql_field)
             typed_leaf = element_type if is_list else inner_type
             value_type = _typed_map_value_type(typed_leaf)
             if value_type is not None:
@@ -1363,6 +1424,19 @@ def compile_input_type(
             for alias, (field_name, gql_field) in set_bool_candidates.items()
             if fields.get(alias) is gql_field
         )
+        set_float_fields.clear()
+        set_float_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_float_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_float_defaults.clear()
+        set_float_defaults.update(
+            (field_name, gql_field.default_value)
+            for alias, (field_name, gql_field) in set_float_candidates.items()
+            if fields.get(alias) is gql_field
+            and gql_field.default_value is not Undefined
+        )
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation
@@ -1377,6 +1451,8 @@ def compile_input_type(
                 set_int_fields,
                 set_str_fields,
                 set_bool_fields,
+                set_float_fields,
+                set_float_defaults,
             )
             if _emit_defaults
             or any(
@@ -1384,6 +1460,7 @@ def compile_input_type(
                 or _is_exact_int_set(info.annotation)
                 or _is_exact_str_set(info.annotation)
                 or _is_exact_bool_set(info.annotation)
+                or _is_exact_float_set(info.annotation)
                 for info in getattr(model, "model_fields", {}).values()
             )
             else None

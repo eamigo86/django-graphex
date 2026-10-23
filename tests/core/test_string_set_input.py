@@ -542,8 +542,8 @@ def test_unapproved_set_leaves_and_nested_forms_keep_fallback() -> None:
     """Preserve the legacy String fallback outside both exact string leaves."""
 
     class StringSetUnsupportedPayload(InputType):
-        pep_float: set[float]
-        alias_float: Set[float]  # noqa: UP006
+        pep_bytes: set[bytes]
+        alias_bytes: Set[bytes]  # noqa: UP006
         nested: list[set[str]]
         bare: set
 
@@ -553,8 +553,8 @@ def test_unapproved_set_leaves_and_nested_forms_keep_fallback() -> None:
             StringSetUnsupportedPayload, name="StringSetUnsupportedPayload"
         ).fields
     assert {key: str(value.type) for key, value in fields.items()} == {
-        "pepFloat": "String!",
-        "aliasFloat": "String!",
+        "pepBytes": "String!",
+        "aliasBytes": "String!",
         "nested": "[String!]!",
         "bare": "String!",
     }

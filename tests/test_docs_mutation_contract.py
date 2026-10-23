@@ -155,6 +155,31 @@ def test_guide_documents_exact_string_set_migration() -> None:
     assert "never the characters" in usage
 
 
+def test_guide_documents_exact_float_set_migration() -> None:
+    """Document both spellings and field-local overflow rejection."""
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[float]" in text
+        assert "typing.Set[float]" in text
+        assert "[Float!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+        assert "overflowing numeric literals" in " ".join(text.split())
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"amounts": [1.5, 1.5, 2.0]' in usage
+    assert '"amounts": 2' in usage
+    assert "{2.0}" in usage
+    assert "rejects booleans, strings and null items" in usage
+    for relative in ("CHANGELOG.md", "docs/changelog.md"):
+        assert "rejects overflowing numeric literals" in (ROOT / relative).read_text(
+            encoding="utf-8"
+        )
+
+
 def test_guide_documents_exact_boolean_set_migration() -> None:
     """Document both boolean-set spellings and native validation."""
     for relative in (

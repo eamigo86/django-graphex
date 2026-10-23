@@ -73,7 +73,7 @@ Replace the old encoded string with an integer array, for example
 or `{3}`), with duplicates removed and no promised iteration order. Native
 `GraphQLInt` rejects booleans and numeric strings before resolution; there is
 no custom cast or automatic Pydantic validation. Existing optionality and
-default behavior remain. Other set leaves and sets inside lists keep their
+default behavior remain. Other unapproved set leaves and sets inside lists keep their
 warning and `String` fallback.
 
 ### Exact string-set input values
@@ -85,7 +85,7 @@ for example `"colors": ["red", "red", "blue"]`. A singleton
 not separate characters. Duplicate list values become one Python set member;
 iteration order is not promised. Native `GraphQLString` rejects invalid
 non-string inputs before resolution without custom casts. Outer optionality
-and default behavior stay unchanged; other set leaves and nested sets retain
+and default behavior stay unchanged; other unapproved set leaves and nested sets retain
 the warning and `String` fallback.
 
 ### Exact boolean-set input values
@@ -97,8 +97,21 @@ array, for example `"flags": [true, false, true]`. A singleton
 Duplicates become one Python set member; iteration order is not promised.
 Native `GraphQLBoolean` rejects 0, 1, strings and null list items before
 resolution without truthiness casts. Outer optionality and defaults stay
-unchanged; other set leaves and nested sets retain the warning/`String`
+unchanged; other unapproved set leaves and nested sets retain the warning/`String`
 fallback.
+
+### Exact float-set input values
+
+Exact `set[float]` and `typing.Set[float]` mutation inputs change from
+`String!` to `[Float!]!`. Replace an encoded string with a finite numeric
+array, for example `"amounts": [1.5, 1.5, 2.0]`. A singleton
+`"amounts": 2` is also valid and reaches the resolver as `{2.0}`.
+Duplicate values become one Python set member; iteration order is not
+promised. Native `GraphQLFloat` rejects booleans, strings and null items;
+variables reject nonfinite values. A field-local check rejects overflowing
+numeric literals such as `1e999` before resolution, without a second cast.
+Outer optionality and defaults remain; other unapproved set leaves and
+nested sets retain warning/`String` fallback.
 
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in

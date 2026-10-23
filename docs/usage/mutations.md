@@ -1696,7 +1696,7 @@ Exact `set[str]` and `typing.Set[str]` mutation inputs now expose
 Duplicates are removed and iteration order is not part of the contract.
 Native `GraphQLString` rejects non-string values before resolution without
 custom casting. Optional, required, fixed-default and fresh-factory behavior
-remains unchanged. Other set leaves and sets inside lists still use the
+remains unchanged. Other unapproved set leaves and sets inside lists still use the
 legacy warning/`String` fallback.
 
 Exact `set[bool]` and `typing.Set[bool]` mutation inputs now expose
@@ -1707,7 +1707,19 @@ or `{False}`), with duplicates removed and no ordering guarantee.
 Native `GraphQLBoolean` rejects 0, 1, strings and null items before
 resolution; no truthiness cast or automatic Pydantic validation is added.
 Outer Optional, required, fixed-default and fresh-factory behavior remains.
-Other set leaves and nested sets retain the warning/`String` fallback.
+Other unapproved set leaves and nested sets retain the warning/`String` fallback.
+
+Exact `set[float]` and `typing.Set[float]` mutation inputs now expose
+`[Float!]!` instead of `String!`. Send a finite numeric list such as
+`"amounts": [1.5, 1.5, 2.0]` or a singleton integer such as
+`"amounts": 2`. Native `GraphQLFloat` converts the integer to `2.0` and
+rejects booleans, strings and null items; variable coercion also rejects
+nonfinite values. A field-local check rejects overflowing numeric literals
+such as `1e999` before resolution. The resolver receives an actual Python set (`{1.5, 2.0}` or `{2.0}`), with
+duplicates removed and no ordering guarantee. Outer Optional, required,
+fixed-default, fresh-factory, alias and pruning behavior remains established;
+no additional Pydantic or global validation is added. Other unapproved set
+leaves and nested sets retain the warning/`String` fallback.
 
 Numeric or mixed `Literal` and non-optional `Union[int, str]`
 remain unsupported and warn when they fall back to GraphQL `String`. Other

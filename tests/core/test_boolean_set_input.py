@@ -490,8 +490,8 @@ def test_other_set_leaves_and_nested_forms_keep_fallback() -> None:
     """Do not promote unapproved leaves, bare sets or nested set forms."""
 
     class BooleanSetUnsupportedPayload(InputType):
-        pep_float: set[float]
-        alias_float: Set[float]  # noqa: UP006
+        pep_bytes: set[bytes]
+        alias_bytes: Set[bytes]  # noqa: UP006
         nested: list[set[bool]]
         bare: set
 
@@ -501,8 +501,8 @@ def test_other_set_leaves_and_nested_forms_keep_fallback() -> None:
             BooleanSetUnsupportedPayload, name="BooleanSetUnsupportedPayload"
         ).fields
     assert {key: str(value.type) for key, value in fields.items()} == {
-        "pepFloat": "String!",
-        "aliasFloat": "String!",
+        "pepBytes": "String!",
+        "aliasBytes": "String!",
         "nested": "[String!]!",
         "bare": "String!",
     }

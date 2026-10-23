@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Compile exact `set[float]` and `typing.Set[float]` mutation inputs as
+  `[Float!]!` instead of `String!`. Native GraphQLFloat coerces finite numeric
+  list/singleton inputs, including integers, before resolvers receive a
+  deduplicated Python set without ordering guarantees. A field-local check
+  rejects overflowing numeric literals before resolution while preserving
+  malformed legacy defaults. Other unapproved set forms keep fallback;
+  existing optional/default behavior remains. Clients must migrate
+  encoded strings to numeric arrays or singletons.
+
 - Compile exact `set[bool]` and `typing.Set[bool]` mutation inputs as
   `[Boolean!]!` instead of `String!`. Native GraphQLBoolean validation and
   list/singleton coercion apply; `false` reaches resolvers as `{False}`.
@@ -21,7 +30,7 @@
   than `String!`.
   GraphQL applies its standard integer validation and singleton-list coercion;
   resolvers receive a deduplicated Python set with no ordering guarantee.
-  Existing optional/default behavior remains, while other set forms keep
+  Existing optional/default behavior remains, while other unapproved set forms keep
   their earlier fallback. Clients must replace encoded strings with integer
   arrays or singleton integers.
 
