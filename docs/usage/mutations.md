@@ -1699,6 +1699,16 @@ custom casting. Optional, required, fixed-default and fresh-factory behavior
 remains unchanged. Other set leaves and sets inside lists still use the
 legacy warning/`String` fallback.
 
+Exact `set[bool]` and `typing.Set[bool]` mutation inputs now expose
+`[Boolean!]!` instead of `String!`. Send a boolean list such as
+`"flags": [true, false, true]`; GraphQL also accepts the singleton
+`"flags": false`. The resolver receives a Python set (`{True, False}`
+or `{False}`), with duplicates removed and no ordering guarantee.
+Native `GraphQLBoolean` rejects 0, 1, strings and null items before
+resolution; no truthiness cast or automatic Pydantic validation is added.
+Outer Optional, required, fixed-default and fresh-factory behavior remains.
+Other set leaves and nested sets retain the warning/`String` fallback.
+
 Numeric or mixed `Literal` and non-optional `Union[int, str]`
 remain unsupported and warn when they fall back to GraphQL `String`. Other
 parameterized dictionaries remain unsupported and use the same warning and

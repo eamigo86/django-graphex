@@ -88,6 +88,18 @@ non-string inputs before resolution without custom casts. Outer optionality
 and default behavior stay unchanged; other set leaves and nested sets retain
 the warning and `String` fallback.
 
+### Exact boolean-set input values
+
+Exact `set[bool]` and `typing.Set[bool]` mutation inputs change from
+`String!` to `[Boolean!]!`. Replace an encoded string with a boolean
+array, for example `"flags": [true, false, true]`. A singleton
+`"flags": false` is valid and reaches the resolver as `{False}`.
+Duplicates become one Python set member; iteration order is not promised.
+Native `GraphQLBoolean` rejects 0, 1, strings and null list items before
+resolution without truthiness casts. Outer optionality and defaults stay
+unchanged; other set leaves and nested sets retain the warning/`String`
+fallback.
+
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
 default-value introspection. The omitted input still receives the same raw

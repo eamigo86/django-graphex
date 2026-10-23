@@ -435,6 +435,15 @@ deduplicated Python set: `["red", "red", "blue"]` becomes
 No iteration order is guaranteed. Existing outer optionality and defaults
 remain; other set leaves and nested sets still retain fallback behavior.
 
+Exact `set[bool]` and `typing.Set[bool]` mutation inputs expose
+`[Boolean!]!`. GraphQL accepts a boolean list or a singleton such as
+`false`, and validates each item with native `GraphQLBoolean`: 0, 1,
+strings and null list items are rejected before resolution. The resolver
+receives a deduplicated Python set, so `false` becomes `{False}`; no
+iteration order is guaranteed. Existing outer optionality, defaults,
+aliases and permission pruning remain. Other set leaves and nested sets
+retain their fallback behavior.
+
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value
 introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver

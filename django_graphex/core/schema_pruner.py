@@ -444,6 +444,7 @@ class _Pruner:
                 },
                 gtype.out_type.set_int_fields & surviving,
                 gtype.out_type.set_str_fields & surviving,
+                gtype.out_type.set_bool_fields & surviving,
             )
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)

@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile exact `set[bool]` and `typing.Set[bool]` mutation inputs as
+  `[Boolean!]!` instead of `String!`. Native GraphQLBoolean validation and
+  list/singleton coercion apply; `false` reaches resolvers as `{False}`.
+  Duplicates are removed with no ordering guarantee. Existing outer
+  optional/default behavior remains; unapproved set forms retain fallback.
+  Clients must migrate encoded strings to boolean arrays or singletons.
+
 - Compile exact `set[str]` and `typing.Set[str]` mutation inputs as
   `[String!]!` instead of `String!`. Native GraphQLString validation and
   list/singleton coercion apply; resolvers receive a deduplicated Python set

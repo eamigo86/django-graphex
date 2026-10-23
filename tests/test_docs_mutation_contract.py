@@ -155,6 +155,26 @@ def test_guide_documents_exact_string_set_migration() -> None:
     assert "never the characters" in usage
 
 
+def test_guide_documents_exact_boolean_set_migration() -> None:
+    """Document both boolean-set spellings and native validation."""
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[bool]" in text
+        assert "typing.Set[bool]" in text
+        assert "[Boolean!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"flags": [true, false, true]' in usage
+    assert '"flags": false' in usage
+    assert "{False}" in usage
+    assert "rejects 0, 1, strings" in usage
+
+
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     """Distinguish printable JSON defaults from ineligible object keys."""
     paths = (
