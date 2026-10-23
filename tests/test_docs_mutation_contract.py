@@ -200,6 +200,27 @@ def test_guide_documents_exact_uuid_set_migration() -> None:
         assert "set[uuid.UUID]" in (ROOT / relative).read_text(encoding="utf-8")
 
 
+def test_guide_documents_exact_finite_decimal_set_migration() -> None:
+    """Document Decimal list parity without claiming global scalar tightening."""
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[decimal.Decimal]" in text
+        assert "typing.Set[decimal.Decimal]" in text
+        assert "[Decimal!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+        assert "sNaN" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"1E+999999"' in usage
+    assert "global Decimal scalar" in usage
+    for relative in ("CHANGELOG.md", "docs/changelog.md"):
+        assert "set[decimal.Decimal]" in (ROOT / relative).read_text(encoding="utf-8")
+
+
 def test_guide_documents_exact_boolean_set_migration() -> None:
     """Document both boolean-set spellings and native validation."""
     for relative in (

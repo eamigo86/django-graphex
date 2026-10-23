@@ -125,6 +125,19 @@ resolver. Duplicates become one Python set member with no ordering promise.
 Outer optionality and defaults remain; other unapproved set leaves and nested
 sets retain warning/`String` fallback.
 
+### Exact finite Decimal-set input values
+
+Exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]` mutation inputs
+change from `String!` to `[Decimal!]!`. Migrate an encoded string to a native
+Decimal list such as `"amounts": ["10.10", "10.10"]`, or a singleton
+`"amounts": "10.10"`. The existing Decimal scalar preserves finite precision,
+including huge finite exponents; the resolver receives a deduplicated Python
+set with no ordering promise. Supplied NaN, sNaN and positive/negative
+Infinity now reject before resolution and omitted sibling factories. Existing
+Optional/default/alias/pruning behavior, including malformed legacy omitted
+defaults, remains unchanged. This does not change the global Decimal scalar or
+other unsupported set leaves.
+
 A fixed JSON default whose object keys are GraphQL Names, such as
 `{"views": 0}`, now prints as `mapping: JSON = { views: 0 }` and appears in
 default-value introspection. The omitted input still receives the same raw

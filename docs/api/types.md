@@ -464,6 +464,17 @@ items reject before resolution. Existing outer optionality, defaults, aliases
 and permission pruning remain. Other unapproved set leaves and nested sets
 retain fallback behavior.
 
+Exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]` mutation inputs
+expose `[Decimal!]!` using the existing native Decimal scalar. Finite native
+values, including a huge finite exponent, keep their exact precision through
+list or singleton coercion; `["10.10", "10.10"]` reaches the resolver as the
+Python set `{Decimal("10.10")}` without an ordering promise. Supplied NaN,
+sNaN and either Infinity are rejected by a field-local check before resolver
+execution or omitted sibling factories. Outer optionality, fixed/factory
+defaults, aliases and pruned input fields retain their established behavior;
+malformed legacy omitted defaults are not newly validated. The global Decimal
+scalar and unapproved set leaves remain unchanged.
+
 A fixed JSON default with GraphQL Name object keys, such as
 `{"views": 0}`, now renders through `print_schema` and default-value
 introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver

@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]`
+  mutation inputs as `[Decimal!]!` instead of `String!`. Existing native
+  Decimal coercion preserves finite precision through list/singleton inputs;
+  resolvers receive a deduplicated Python set without ordering guarantees.
+  A field-local check rejects supplied NaN, sNaN and infinities before
+  resolution and omitted sibling factories. Global Decimal and legacy
+  fixed/factory-default behavior remain unchanged; other sets keep fallback.
+  Clients must migrate encoded strings to native Decimal lists or singletons.
+
 - Compile exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs
   as `[UUID!]!` instead of `String!`. The existing native UUID scalar accepts
   canonical, uppercase and 32-hex strings in lists or singleton form and

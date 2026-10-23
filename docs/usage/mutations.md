@@ -1733,6 +1733,20 @@ null items are rejected before resolution. Outer Optional, defaults, aliases
 and permission pruning retain their established behavior. Other unapproved
 set leaves and nested sets retain the warning/`String` fallback.
 
+Exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]` mutation inputs
+now expose `[Decimal!]!` instead of `String!`. Send native Decimal values in a
+list, for example `"amounts": ["10.10", "10.10"]`, or a whole-value
+singleton `"amounts": "10.10"`. The existing Decimal scalar preserves
+precision and accepts its established finite representations; even a finite
+value such as `"1E+999999"` is not converted through float. The resolver
+receives `{Decimal("10.10")}` as an actual Python set, with duplicates removed
+and no ordering guarantee. A field-local check rejects supplied NaN, sNaN and
+positive/negative Infinity before the mutation and omitted sibling factories;
+null items still fail native list-item validation. Existing outer Optional,
+fixed/factory defaults, aliases and permission pruning remain unchanged,
+including malformed legacy omitted defaults. The global Decimal scalar and
+other unapproved set forms are unchanged.
+
 Numeric or mixed `Literal` and non-optional `Union[int, str]`
 remain unsupported and warn when they fall back to GraphQL `String`. Other
 parameterized dictionaries remain unsupported and use the same warning and
