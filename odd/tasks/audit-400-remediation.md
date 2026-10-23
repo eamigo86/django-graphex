@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | L-M1/M-D10 broader shapes; R08b–m accepted boundedly; other forms open. | [ ] |
+| R08 | D; human21002; unchecked | L-M1/M-D10 broader shapes; R08b–n accepted boundedly; other forms open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring; R09d bounded rejected-mutation output leak accepted25084. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -223,7 +223,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
-| M-D10 | 133 | **Partial:** R08b Literal, R08c–g exact JSON maps/defaults/lists and R08h supported-leaf nested lists accepted in bounded scopes; R08h auxiliary helper history qualified. Exact integer sets R08i/25205/384e3cd and alias R08j/25236/22caa45 accepted. Human25247 exact string sets R08k accepted25266/local 7b702635. Human25297 exact boolean sets R08l accepted25313/local c6bff24. Human25324 exact float sets R08m accepted25360/aeb74b8 after field-local F1 overflow correction; other leaves remain unsupported. Unsupported leaves, nested sets, other containers and global validation unchanged; whole ID open. Full prior wording/limits in R08l pre-edit and respective closeouts. | T09/R08a/R08b/R08c/R08d/R08e/R08f/R08g/R08h/R08i/R08j/R08k/R08l/R08m |
+| M-D10 | 133 | **Partial:** R08b Literal, R08c–g exact JSON maps/defaults/lists and R08h supported-leaf nested lists accepted in bounded scopes; R08h auxiliary helper history qualified. Exact integer sets R08i/25205/384e3cd and alias R08j/25236/22caa45 accepted. Human25247 exact string sets R08k accepted25266/local 7b702635. Human25297 exact boolean sets R08l accepted25313/local c6bff24. R08m float F1 accepted25360/aeb74b8; R08n UUID accepted25382/1d0c6c2; other leaves remain unsupported. Unsupported leaves, nested sets, other containers and global validation unchanged; whole ID open. Full prior wording/limits in R08l pre-edit and respective closeouts. | T09/R08a/R08b/R08c/R08d/R08e/R08f/R08g/R08h/R08i/R08j/R08k/R08l/R08m/R08n |
 
 ### Medium: filters, HTTP, optimizer, subscriptions, thread safety
 
@@ -349,7 +349,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 180 checked/25 overlap-unchecked (205 tasks); 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08k–m accepted boundedly; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
+**Current audit state:** 182 checked/25 overlap-unchecked (207 tasks); 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08k–n accepted boundedly; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -423,26 +423,18 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R08l-V | D; accepted25313 | Exact R08m preclosure. | [x] |
 | R08m-I | D; human25324/root25360; `aeb74b8` | Exact float-set parity and field-local overflow F1 correction; dual public RED→same-byte GREEN, tests/docs. Other forms/global Float unchanged. | [x] |
 | R08m-V | D; accepted25360 | Corrected full6454 pass/7 skip/9 warn; independent F1 and current gates verified. Proof/limits in R08m closeout. No RDD receipt/PR. | [x] |
+| R08n-I | D; human25368/root25382; `1d0c6c2` | Exact UUID sets: public RED→same-byte GREEN, native scalar, tests/docs; 672 lines, 400 advisory. | [x] |
+| R08n-V | D; accepted25382 | Independent gates and current writer full/coverage pass; exact proof/limits in R08n closeout. No RDD receipt/PR. | [x] |
 
-**R08k history:** Exact prior acceptance, attribution qualification, reused/audited gates and limits in `md10-float-set-closeout/tracker-preclosure.md` (SHA `1266924bc1b2473564c241fd0d7dfcb7362ce1af34dbba288a4411ce9efabfd9`) and `md10-string-set-closeout/closure.md`.
-
-**R08l pre-edit archive:** `md10-boolean-set-preparation/tracker-preedit.md` (49,087 B; SHA `5eddff3e0a1786785c30b912bf34d6a39744497354d77783341825cdf284dc3e`; 0644) preserves prior states, 100 IDs/order, failures/UNKNOWNs and archive chains; preparation scope/checks in the same folder.
-
-**Completed-history archive:** Exact previous wording, states, qualifications, failures/UNKNOWNs and archive chains from the removed R08j/k/h/i/g/f/b–e and R09d locator paragraphs are preserved byte-for-byte in `md10-boolean-set-closeout/tracker-preclosure.md` (49,489 B; SHA `13eda3ca671a48e1b4d2daa8d4a81825f3fe638236bd72bd19fe600707b19a56`; mode 0644). R08/M-D10 and T16/R09 remain partial/open.
-
-**R08l history:** Exact scoped proof, failures/UNKNOWNs, full/Playground reuse, pruner0 N/A and no RDD receipt retained in `md10-float-set-closeout/tracker-preclosure.md` and `md10-boolean-set-closeout/closure.md`; R08/M-D10 partial.
-
-**R08m-F1 exact preprogress archive:** `md10-float-set-overflow-preparation/tracker-precorrection.md` (49,495 B; SHA `998374a60ae3ad2e8fa66a0c96b5fa0e0648bad4ea7774aeee891a56f7dc4b64`; 0644) preserves prior states/100 IDs/order, failures/UNKNOWNs, qualifications and archive chains.
-
-**R08m accepted:** Human25324/root25360/local `aeb74b884b952d94740815b387efe3cc92e81a79`; 13 files/868 authored lines (400 advisory). Original RED4→same6GREEN; independent ±1e999 F1 reached resolver despite old6438pass/wrong compatibility oracle; correction public RED12→same21,562B GREEN62 with native3.3 origins. Field-local pre-factory error and fixed-default identity/pruner preserve legacy omissions. Corrected full6454pass/7skip/9warn, pure branch4623/4830, combined17047/17435, actual+30/30 lines+16/16 exits; pruner own0 N/A. Fresh independent219 focal/423 related/120 general+72 F1; full/docs45/Playground61 reused+audited, not rerun. Old prefreeze gap/failed attempts/UNKNOWNs preserved in `md10-float-set-overflow-independent/report.md` (SHA `f1351ff0f9e238abf3296bb1122d1152e680d7aed4a3d208b5fbf40e0cac43ff`) and `md10-float-set-closeout/closure.md`. RDD OFF/risk unassessable-HIGH/no receipt; postcommit tag count14; R08/M-D10 partial.
-
-**R08m pre-edit archive:** `md10-float-set-preparation/tracker-preedit.md` (49,231 B; SHA `468df060289fbb7b2d4287691d9d811343fc3d1d38d690889026a7bd5a42a7bc`; 0644) preserves all 203 prior states/100 IDs/order, failures/UNKNOWNs/qualifications/archive chains before completed-history compression. Details: `md10-float-set-preparation/preparation.md`.
+**R08k–m completed history:** All exact prior wording, states, archive chains, failures/UNKNOWNs, R08k original-origin attribution, R08l reused gates, R08m F1 wrong oracle/prefreeze gap, pruner0 N/A and RDD limits remain byte-for-byte in `md10-uuid-set-closeout/tracker-preclosure.md` (49,498 B; SHA `c08c6cb97d0c1f2e18c545a39c0fc0f9f0de256c4727751c9510a55dfad5a661`; 0644), with its earlier archive pointers and respective closeouts. R08m human25324/root25360/local `aeb74b8`; dual TDD and corrected full/independent/coverage pass; R08/M-D10 partial.
 
 ## Progress and next action
 
 **Recovery:** Prior archive chains and qualifications remain byte-for-byte in `mu3-float-closeout/tracker-preacceptance.md`.
 
-**Next:** R08m accepted25360/local `aeb74b8` within exact human25324 finite float-set scope; wider R08/M-D10 open. Proposal ONLY, not approved: exact `set[uuid.UUID]` + `typing.Set[uuid.UUID]` currently String! fallback (14 read-only controls); potential `[UUID!]!` using existing native UUID scalar, list/singleton to resolver Python set, dedup/no order, invalid UUID before mutation. Native uppercase/32-hex acceptance must remain; no canonical-only hardening. Individual human approval required before tasks/implementation. No PR/remote/release.
+**R08n accepted:** Human25368/root25382/local `1d0c6c23d54613ed82dbab5c5e31435055262e2b`; exact UUID-set forms only, 11 files/672 lines (400 advisory). Public 4 String! RED+2 F1 controls→same-byte 6 GREEN; hashes/modes in separate contemporary BEFORE JSON, not pytest stdout; argv/env/native3.3 origins in original stdout. Fresh independent268 focal/473 related/109 UUID public+72 float F1, quality/43 anchors/5 AST+56 declarations pass; writer full6504pass/7skip/9warn (6511 nodes), docs45/Playground61 REUSED+AUDITED. Raw4635/4842, combined17080/17468, actual+21/21 lines+12/12 exits ≥95.01%; pruner own0 N/A. Prep settings, AST helper and optional Decimal JSON helper failures retained; no current required gap. Exact proof/failures/limits: `md10-uuid-set-closeout/closure.md`, independent report SHA `58cdd6dcccc7017cfff34bf26e076b328c60e7b85dd27b992e5c998e63258cef`. RDD OFF/risk unassessable-HIGH, not PASS/no receipt. Parent postcommit guard: 2 refs, tag COUNT14 only; not DB/results/allrefs/ignored-index/universal-I/O proof. R08/M-D10 partial.
+
+**Next:** Decimal-set forms remain String! fallback; native Decimal admits nonfinite values incl unhashable sNaN. Field-local finite-only supplied-value parity is a proposal requiring separate human approval, not a decision or new task. Other leaves/nested sets unapproved; no PR/remote/release.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
