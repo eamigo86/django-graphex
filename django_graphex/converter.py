@@ -113,8 +113,12 @@ COMPILED_NAME_PATTERN = re.compile(NAME_PATTERN)
 
 
 def _is_valid_name(name: str) -> bool:
-    """Return whether name is a usable, non-empty GraphQL enum name."""
-    return bool(name) and bool(COMPILED_NAME_PATTERN.match(name))
+    """Return whether name is a usable, non-empty, non-reserved enum name."""
+    return (
+        bool(name)
+        and bool(COMPILED_NAME_PATTERN.match(name))
+        and not name.startswith("__")
+    )
 
 
 def is_multiselect_field(field: Any) -> bool:

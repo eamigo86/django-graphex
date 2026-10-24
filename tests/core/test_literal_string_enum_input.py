@@ -276,3 +276,18 @@ def test_member_collision_rejects_ambiguous_literals() -> None:
     with pytest.raises(TypeError, match="DRAFT_ONE") as error:
         _ = compiled.fields
     assert isinstance(error.value.__cause__, ImproperlyConfigured)
+
+
+def test_reserved_double_underscore_literal_is_rejected_at_build() -> None:
+    """Reject a Literal value whose enum member would be a reserved name.
+
+    Scenario: a "__x" member becomes "__X", which GraphQL reserves.
+    """
+
+    class ReservedInput(InputType):
+        status: Literal["ok", "__x"]
+
+    compiled = compile_input_type(ReservedInput, name="ReservedInput")
+    with pytest.raises(TypeError, match="status.*ReservedInput.*'__x'") as error:
+        _ = compiled.fields
+    assert isinstance(error.value.__cause__, ImproperlyConfigured)

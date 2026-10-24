@@ -14,6 +14,12 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: reject enum members that GraphQL reserves. A `Literal["__x"]` input
+  generated the member `__X`, so the schema built and every query failed.
+  The schema build now raises an error naming the input type, field and value.
+  A Django choice whose value starts with `__` no longer generates a reserved
+  member name either: it falls through the usual label / `A_<value>` naming.
+
 - Fix: adding an interface no longer changes the wire name of fields that are
   not part of it. An object type that implements an interface used the explicit
   `name=` of every declared field verbatim, while the same type without

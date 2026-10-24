@@ -1642,6 +1642,8 @@ compiler uses the **compiled input type name** and **public field alias**;
 for example, `CustomArticleInput.publishState` generates
 `CustomArticleInputPublishStateEnum`. A member collision after name
 normalization rejects the schema instead of assigning a positional suffix.
+A value starting with `__` (for example `Literal["__x"]`) is rejected too,
+because GraphQL reserves member names with that prefix; rename the value.
 `Optional`, list, nested, and inherited fields keep their existing wrapping
 and resolver names.
 

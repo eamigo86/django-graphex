@@ -326,3 +326,14 @@ def test_grouped_non_colliding_enum_sdl_is_unchanged() -> None:
         "  HIGH\n"
         "}"
     )
+
+
+def test_double_underscore_choice_value_never_generates_reserved_member() -> None:
+    """A value starting with "__" falls through the cascade to a valid name.
+
+    Scenario: a reserved-looking choice value.
+    """
+    from django_graphex.converter import choice_enum_name
+
+    assert choice_enum_name("__x", "Hidden") == "HIDDEN"
+    assert not choice_enum_name("__x", "__x").startswith("__")

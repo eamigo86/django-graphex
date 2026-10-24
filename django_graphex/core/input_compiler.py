@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from types import GenericAlias, UnionType
 from typing import Any, Callable, Literal, get_args, get_origin
 
+from django.core.exceptions import ImproperlyConfigured
 from graphql import (
     GraphQLBoolean,
     GraphQLDefaultInput,
@@ -796,13 +797,21 @@ def _string_literal_enum(
         An enum with original string values, or None for unsupported forms.
 
     Raises:
-        ImproperlyConfigured: If members normalize to the same enum name.
+        ImproperlyConfigured: If members normalize to the same enum name or
+            would generate a reserved ("__"-prefixed) enum member name.
     """
     if get_origin(py_type) is not Literal:
         return None
     members = get_args(py_type)
     if not members or any(type(member) is not str for member in members):
         return None
+    for member in members:
+        if member.startswith("__"):
+            raise ImproperlyConfigured(
+                f"Literal input field {alias!r} of {input_name!r}: value "
+                f"{member!r} would generate a GraphQL enum member name starting "
+                'with "__", which GraphQL reserves. Rename the value.'
+            )
     values = {
         member_name: GraphQLEnumValue(value=raw_value)
         for member_name, raw_value, _description in get_choices(
