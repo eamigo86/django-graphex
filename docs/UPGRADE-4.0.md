@@ -392,13 +392,15 @@ pinning an exact patch or local checkout path. Contributors running those tests
 should verify their active runtime in an external test runner; a passing local
 overlay run does not by itself prove behavior under every supported install.
 
-Batch clients should accept an HTTP 400 **array** when a valid batch reaches
-an operation-level HTTP 400 request error: completed entries remain in order,
-the final entry identifies the error, and later operations do not run. Earlier
+Batch clients receive exactly one response entry per request entry, in order.
+An entry that fails (request, syntax, validation or execution error) gets its
+own error entry and later entries still run; the HTTP status is the highest
+entry status (200 only when every entry is 200, otherwise 400). Earlier
 successful mutations remain committed because `ATOMIC_MUTATIONS` is
-per-operation, not batch-wide. Previously the same failure returned only a
-request-level error object, hiding completed results. Malformed batch bodies
-still return a request-level object. See [Batch endpoints](usage/views.md#batch-endpoints).
+per-operation, not batch-wide, and with `ATOMIC_REQUESTS` each entry runs in its
+own savepoint so one entry's error does not roll back the others. Malformed batch
+bodies still return a request-level object. See
+[Batch endpoints](usage/views.md#batch-endpoints).
 
 The enhanced `GraphQLView` now returns HTTP 200 with `data: null` and `errors`
 when a field execution error bubbles through a non-null root field. Previously
@@ -408,8 +410,8 @@ an execution failure or assumed HTTP 200 implies no GraphQL errors. Syntax,
 validation, and variable-coercion failures still return HTTP 400 without
 `data`. Errored responses remain uncached. For batches, an execution-error
 entry has status 200 and retains its null data while a validation-result entry
-has status 400; neither alone stops later entries. A transport-level HTTP 400
-still stops the batch with completed entries. See
+has status 400; neither stops later entries, and neither does a transport-level
+HTTP 400. See
 [production execution errors](usage/views.md#production-execution-errors).
 
 If your deployment relies on disabled schema introspection, explicitly add

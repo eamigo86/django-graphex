@@ -171,10 +171,12 @@ def _post(
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("atomic", [False, True])
 @pytest.mark.parametrize("view_class", [BaseGraphQLView, TrackingGraphQLView])
-def test_later_http_400_keeps_prior_result_and_stops_batch(
+def test_later_http_400_keeps_prior_result_and_runs_later_entries(
     atomic: bool, view_class: type[BaseGraphQLView]
 ) -> None:
-    """Retain one durable write and the error, without running later entries.
+    """Retain the durable writes and give the failing entry its own error.
+
+    Later entries still run, so the response has one entry per request entry.
 
     Args:
         atomic: Per-operation mutation transaction setting.
@@ -191,14 +193,15 @@ def test_later_http_400_keeps_prior_result_and_stops_batch(
     )
     assert response.status_code == 400
     payload = json.loads(response.content)
-    assert isinstance(payload, list) and len(payload) == 2
+    assert isinstance(payload, list) and len(payload) == 3
     assert payload[0] == {"data": {"add": "saved"}, "id": "first", "status": 200}
     assert payload[1]["id"] == "second"
     assert payload[1]["status"] == 400
     assert payload[1]["errors"][0]["message"] == "Must provide query string."
-    assert calls == ["add"]
-    assert transactions == [atomic]
-    assert list(Author.objects.values_list("name", flat=True)) == ["saved"]
+    assert payload[2] == {"data": {"add": "saved"}, "id": "third", "status": 200}
+    assert calls == ["add", "add"]
+    assert transactions == [atomic, atomic]
+    assert list(Author.objects.values_list("name", flat=True)) == ["saved", "saved"]
     assert len(bumps) == (1 if view_class is TrackingGraphQLView else 0)
 
 
@@ -242,10 +245,10 @@ def test_non_400_http_error_keeps_existing_request_level_envelope() -> None:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_first_http_400_has_one_error_entry_and_no_invalidation() -> None:
-    """Include the failing first entry while leaving later writes untouched.
+def test_first_http_400_has_one_error_entry_and_later_entry_runs() -> None:
+    """Include the failing first entry and still run the later one.
 
-    No completed mutation means no cache-version bump is needed.
+    The failing entry wrote nothing, so only the later mutation invalidates.
     """
     response, calls, transactions, bumps = _post(
         [{"id": "first"}, {"id": "unrun", "query": "mutation { add }"}]
@@ -256,17 +259,20 @@ def test_first_http_400_has_one_error_entry_and_no_invalidation() -> None:
             "errors": [{"message": "Must provide query string."}],
             "id": "first",
             "status": 400,
-        }
+        },
+        {"data": {"add": "saved"}, "id": "unrun", "status": 200},
     ]
-    assert calls == transactions == bumps == []
-    assert not Author.objects.exists()
+    assert calls == ["add"]
+    assert transactions == [False]
+    assert len(bumps) == 1
+    assert list(Author.objects.values_list("name", flat=True)) == ["saved"]
 
 
 @pytest.mark.django_db(transaction=True)
-def test_validation_error_continues_until_later_transport_error() -> None:
-    """Keep normal validation continuity and rollback the failed atomic op.
+def test_validation_and_transport_errors_each_keep_their_own_entry() -> None:
+    """Keep one entry per request entry and roll back the failed atomic op.
 
-    Only the later transport failure stops the remaining batch entries.
+    Validation and transport errors both continue to the remaining entries.
     """
     response, calls, transactions, bumps = _post(
         [
@@ -274,25 +280,26 @@ def test_validation_error_continues_until_later_transport_error() -> None:
             {"id": "validation", "query": "{ missing }"},
             {"id": "rollback", "query": "mutation { fail }"},
             {"id": "transport"},
-            {"id": "unrun", "query": "mutation { add }"},
+            {"id": "later", "query": "mutation { add }"},
         ],
         atomic=True,
     )
     assert response.status_code == 400
     payload = json.loads(response.content)
-    assert isinstance(payload, list) and len(payload) == 4
+    assert isinstance(payload, list) and len(payload) == 5
     assert [entry["id"] for entry in payload] == [
         "one",
         "validation",
         "rollback",
         "transport",
+        "later",
     ]
-    assert [entry["status"] for entry in payload] == [200, 400, 200, 400]
+    assert [entry["status"] for entry in payload] == [200, 400, 200, 400, 200]
     assert payload[1]["errors"] and payload[2]["errors"]
     assert payload[3]["errors"][0]["message"] == "Must provide query string."
-    assert calls == ["add", "fail"]
-    assert transactions == [True]
-    assert list(Author.objects.values_list("name", flat=True)) == ["saved"]
+    assert calls == ["add", "fail", "add"]
+    assert transactions == [True, True]
+    assert list(Author.objects.values_list("name", flat=True)) == ["saved", "saved"]
     assert len(bumps) == 1
 
 

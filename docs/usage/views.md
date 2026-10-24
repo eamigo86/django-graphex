@@ -382,27 +382,37 @@ nested list) is rejected with **HTTP 400** and
 [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) for the per-request
 operation cap.
 
-For a valid batch, an operation that raises an HTTP 400 request error stops
-the batch. The response is an **HTTP 400 array** containing every completed
-operation result followed by that operation's error; later operations are not
-run. Each entry retains its `id` and `status`. For example, if the second
-entry has no query:
+For a valid batch, **every entry yields exactly one response entry, in request
+order**. Nothing is skipped or dropped: an entry that fails (a request error such
+as a missing query or malformed `variables`, a syntax or validation error, an
+unknown `operationName`, or a field execution error) gets its own error entry
+and the remaining entries still run. Each entry retains its `id` and `status`.
+For example, if the second entry has no query:
 
 ```json
 [
   {"data": {"add": "saved"}, "id": "first", "status": 200},
-  {"errors": [{"message": "Must provide query string."}], "id": "second", "status": 400}
+  {"errors": [{"message": "Must provide query string."}], "id": "second", "status": 400},
+  {"data": {"add": "saved"}, "id": "third", "status": 200}
 ]
 ```
 
-A successful mutation before the error remains committed. `ATOMIC_MUTATIONS`
-applies per mutation, **not to the entire batch**. Ordinary GraphQL validation
-errors still produce HTTP 400 entries without stopping later operations. A
-field execution error that nulls the operation data produces a 200 entry with
-`data: null` and `errors`, also without stopping later operations. Malformed
-outer bodies and non-object entries are rejected before any operation runs and
-keep a request-level error object; non-batch and non-400 transport errors keep
-their existing envelopes.
+The HTTP status of the response is the highest entry `status`: **200** when
+every entry is 200, **400** as soon as one entry is a request, syntax or
+validation error. A field execution error is a 200 entry with `errors` (and
+`data: null` when it nulls the operation data). Clients must read each entry's
+`status` and `errors` instead of relying on the HTTP status alone.
+
+A successful mutation stays committed whatever happens to its siblings.
+`ATOMIC_MUTATIONS` applies per mutation, **not to the entire batch**. When
+`ATOMIC_REQUESTS` is enabled for a database, each entry also runs in its own
+savepoint inside the request transaction: an entry that reports an error rolls
+back only its own writes, and never marks the request transaction for rollback,
+so earlier and later entries still commit. A non-batched request keeps the
+request-level rollback on any error. Malformed outer bodies, a batch larger than
+`MAX_BATCH_SIZE` and non-object entries are rejected before any operation runs
+and keep a single request-level error object; non-400 transport errors keep
+their existing envelope.
 
 ## Request body size
 

@@ -16,6 +16,7 @@ Reads the project's "DJANGO_GRAPHEX" Django setting ("SCHEMA", "MIDDLEWARE",
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -27,6 +28,7 @@ import sys
 import threading
 import weakref
 from collections import OrderedDict
+from collections.abc import Iterator
 from functools import wraps
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -34,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 from django.conf import settings as django_settings
 from django.core.cache import caches
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, connection, connections, transaction
 from django.http import HttpResponse, HttpResponseNotAllowed
 from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render
@@ -547,6 +549,27 @@ def set_rollback() -> None:
     atomic_requests = connection.settings_dict.get("ATOMIC_REQUESTS", False)
     if atomic_requests and connection.in_atomic_block:
         transaction.set_rollback(True)
+
+
+@contextlib.contextmanager
+def _item_savepoints() -> Iterator[None]:
+    """Open a savepoint on each connection that wraps the request in a transaction.
+
+    Used per batch item: an error marks only the item's savepoint for rollback,
+    never the request transaction, so earlier and later items still commit.
+    Without "ATOMIC_REQUESTS" there is no request transaction and this is a no-op.
+
+    Yields:
+        Control to the batch item.
+    """
+    with contextlib.ExitStack() as stack:
+        for alias in connections:
+            if (
+                connections[alias].settings_dict.get("ATOMIC_REQUESTS", False)
+                and connections[alias].in_atomic_block
+            ):
+                stack.enter_context(transaction.atomic(using=alias, savepoint=True))
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -1275,9 +1298,10 @@ class BaseGraphQLView(View):
 
         Returns:
             The HTTP response (JSON payload, GraphiQL page, or an error
-            response). A valid batch that reaches an operation-level HTTP 400
-            error returns an array of completed entries and that error, then
-            stops without executing later entries.
+            response). A valid batch returns an array with exactly one entry per
+            request entry, in order; an entry that fails gets its own error
+            entry and later entries still run. The status is the highest entry
+            status.
 
         Raises:
             HttpError: When the method is unsupported, the body exceeds
@@ -1337,8 +1361,12 @@ class BaseGraphQLView(View):
                 self._enforce_multipart_file_size(request)
                 responses = []
                 for entry in data:
+                    # Each item gets its own savepoint and a clean error flag, so
+                    # one item's failure never rolls back or poisons the others.
+                    setattr(request, MUTATION_ERRORS_FLAG, False)
                     try:
-                        responses.append(self.get_response(request, entry))
+                        with _item_savepoints():
+                            responses.append(self.get_response(request, entry))
                     except HttpError as error:
                         if error.response.status_code != 400:
                             raise
@@ -1348,7 +1376,6 @@ class BaseGraphQLView(View):
                             "status": 400,
                         }
                         responses.append((self.json_encode(request, response), 400))
-                        break
                 result = "[{}]".format(",".join(r[0] for r in responses))
                 status_code = responses and max(responses, key=lambda r: r[1])[1] or 200
             else:

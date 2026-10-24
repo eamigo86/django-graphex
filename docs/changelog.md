@@ -14,6 +14,21 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Isolate batch items from each other and answer every item. With
+  `ATOMIC_REQUESTS`, any error in one item of a batched request marked the whole
+  request transaction for rollback: the first item answered 200 with `ok: true`
+  but nothing was persisted, and later mutations failed with "Unable to complete
+  the data operation.". Each batch item now runs in its own savepoint on every
+  connection that wraps the request in a transaction, so an erroring item rolls
+  back only its own writes and earlier and later items commit; the request-level
+  mutation error flag is also scoped to one item. A non-batched request keeps its
+  request-level rollback. The batch abort rule was also inconsistent: only an
+  HTTP 400 request error cut the batch short, while syntax, validation and
+  `operationName` errors continued, so the response had fewer entries than the
+  request. Every item now yields exactly one entry, in order, and later items
+  always run; the HTTP status is the highest entry status. This replaces the
+  "stop later operations" behavior introduced earlier in this release (M-H1).
+
 - Keep custom scalar coercion failures as client errors in production. A custom
   scalar whose `parse_value`/`parse_literal` raises `ValueError`/`TypeError`
   (the graphql-core convention for invalid input) was classified as an internal
