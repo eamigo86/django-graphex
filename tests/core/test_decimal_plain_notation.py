@@ -33,3 +33,36 @@ def test_decimal_serializes_without_exponent(value: Any, expected: str) -> None:
         expected: The expected wire string.
     """
     assert GdxDecimal.serialize(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        Decimal("1E+999999999"),
+        Decimal("-1E+100000"),
+        Decimal("1E-999999999"),
+        Decimal("123.45E+5000"),
+    ],
+)
+def test_huge_exponent_keeps_scientific_notation(value: Decimal) -> None:
+    """A tiny literal with a huge exponent must not expand into a huge string.
+
+    Plain notation pads one zero per unit of exponent, so a 14-byte literal
+    such as "1E+999999999" echoed by a resolver would allocate a gigabyte.
+    Past the padding bound the exact scientific form is kept instead.
+
+    Args:
+        value: A Decimal whose plain form would need far too many zeros.
+    """
+    wire = GdxDecimal.serialize(value)
+    assert len(wire) < 64
+    assert Decimal(wire) == value
+
+
+def test_padding_at_the_bound_still_uses_plain_notation() -> None:
+    """Values within the zero-padding bound keep positional notation.
+
+    A thousand padded zeros is far beyond any database column precision.
+    """
+    assert GdxDecimal.serialize(Decimal("1E+1000")) == "1" + "0" * 1000
+    assert GdxDecimal.serialize(Decimal("1E-1000")) == "0." + "0" * 999 + "1"

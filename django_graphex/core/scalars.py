@@ -249,13 +249,29 @@ GdxFilterTime = GraphQLScalarType(
 # ---------------------------------------------------------------------------
 
 
-def _decimal_serialize(value: Any) -> str:
+#: Most zeros plain notation may pad. Far beyond any column precision, it stops
+#: a tiny literal with a huge exponent ("1E+999999999") from expanding into a
+#: gigabyte string when a resolver echoes it.
+_DECIMAL_MAX_PLAIN_PADDING = 1000
+
+
+def _plain_decimal(value: decimal.Decimal) -> str:
     # "f" keeps the stored scale but never switches to scientific notation
-    # ("0E-8", "5.0E-7"), which str() does for small exponents.
+    # ("0E-8", "5.0E-7"), which str() does for small exponents. Past the
+    # padding bound the exact scientific form is kept instead.
+    if value.is_finite():
+        _sign, digits, exponent = value.as_tuple()
+        padding = exponent if exponent > 0 else -exponent - len(digits)
+        if padding > _DECIMAL_MAX_PLAIN_PADDING:
+            return str(value)
+    return format(value, "f")
+
+
+def _decimal_serialize(value: Any) -> str:
     if isinstance(value, decimal.Decimal):
-        return format(value, "f")
+        return _plain_decimal(value)
     try:
-        return format(decimal.Decimal(value), "f")
+        return _plain_decimal(decimal.Decimal(value))
     except (decimal.InvalidOperation, ValueError, TypeError) as exc:
         raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
 

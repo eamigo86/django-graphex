@@ -64,7 +64,8 @@ becomes
 
 Large values no longer round through a binary float, and values with
 `decimal_places >= 7` print in plain positional notation (`0.00000050`, not
-`5.0E-7`). Auto-derived `BigIntegerField` and `PositiveBigIntegerField` map to
+`5.0E-7`; only a value that would need more than 1000 padded zeros keeps its
+scientific form). Auto-derived `BigIntegerField` and `PositiveBigIntegerField` map to
 the `BigInt` scalar in output, generated mutation inputs and automatic filters;
 the wire value is a decimal string, even for small values (`"42"`). Python and
 ORM values stay `int`. Who is affected: any client that reads these fields as JSON

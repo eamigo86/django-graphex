@@ -503,6 +503,9 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 - Serialize `Decimal` output in plain positional notation. Values loaded with
   `decimal_places >= 7` were emitted through `str()` as `0E-8` or `5.0E-7`; they
   now come out as `0.00000000` and `0.00000050`. Normal values are unchanged.
+  A value whose plain form would need more than 1000 padded zeros (for example
+  `1E+999999999` echoed by a resolver) keeps its exact scientific form, so a
+  14-byte literal can no longer expand into a gigabyte response.
 
 - Make the numeric directives work on `Decimal` and `BigInt` fields. `@round`,
   `@floor`, `@ceil` and `@abs` converted the value to `float`, so `@round` on a

@@ -60,7 +60,7 @@ There are **11** shortcuts, each binding one scalar and each **position-agnostic
 | `DateField` | `CustomDate` |
 | `DateTimeField` | `CustomDateTime` |
 | `TimeField` | `CustomTime` |
-| `DecimalField` | `Decimal` (string, plain notation, stored scale kept: `0.00000050`, never `5.0E-7`) |
+| `DecimalField` | `Decimal` (string, plain notation, stored scale kept: `0.00000050`, never `5.0E-7`; a value needing more than 1000 padded zeros keeps scientific form) |
 | `UUIDField` | `UUID` |
 | `JSONField` | `JSON` (or `JSONString` with `as_str=True`) |
 
