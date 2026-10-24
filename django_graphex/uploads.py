@@ -59,7 +59,7 @@ For batch requests both guards compose:
 
 * "MAX_REQUEST_BODY_SIZE" bounds the total wire bytes of the entire batch.
 * For each upload field in each batch operation, the per-field decoded-size
-  pre-check ("len(b64_data) * 3 // 4" estimate vs effective cap) fires
+  pre-check (exact decoded-length estimate vs effective cap) fires
   before the actual "base64.b64decode" call, bounding the decode allocation.
 
 Peak memory ≈ body_size + MAX_UPLOAD_SIZE (one file decoded at a time because
@@ -116,10 +116,10 @@ _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 def _estimate_decoded_size(b64_data: str) -> int:
     """Estimate the decoded byte length of a base64 string without decoding it.
 
-    Formula: len(stripped) * 3 // 4 (strips whitespace first to be robust
-    against line-wrapped base64). The result may be 1–2 bytes over the true
-    decoded length due to padding characters, which is intentionally
-    conservative (safe to reject at the boundary).
+    Formula: len(stripped) * 3 // 4 minus the trailing "=" padding (at most
+    two), after stripping whitespace to be robust against line-wrapped base64.
+    For well-formed base64 this is the exact decoded length, so a file of
+    exactly the cap passes here just as it does over multipart.
 
     Args:
         b64_data: The raw base64 string (may contain whitespace/newlines).
@@ -130,7 +130,8 @@ def _estimate_decoded_size(b64_data: str) -> int:
     """
     b64_str = str(b64_data) if not isinstance(b64_data, str) else b64_data
     stripped = b64_str.replace(" ", "").replace("\n", "").replace("\r", "")
-    return len(stripped) * 3 // 4
+    padding = min(len(stripped) - len(stripped.rstrip("=")), 2)
+    return len(stripped) * 3 // 4 - padding
 
 
 def _effective_max_size(max_size: int | None) -> int | None:
@@ -176,9 +177,9 @@ def decode_base64_file(
     hold the raw dict (e.g. from a custom resolver).
 
     The function performs a **decoded-size pre-check** *before* the actual
-    "base64.b64decode" call: it estimates "len(b64_data) * 3 // 4" and
-    rejects payloads that would exceed the effective cap without ever
-    allocating the decoded bytes. This saves the decode-allocation overhead
+    "base64.b64decode" call: it computes the decoded length from
+    the base64 length and padding, and rejects payloads that would exceed the
+    effective cap without ever allocating the decoded bytes. This saves the decode-allocation overhead
     for oversized uploads.
 
     Args:

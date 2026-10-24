@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix: a base64 upload of exactly `MAX_UPLOAD_SIZE` bytes is accepted. The
+  decoded-size pre-check ignored `=` padding and over-counted by up to two
+  bytes, so the same file passed as multipart but was refused as base64. The
+  limit now means the same number of bytes on both transports.
+
 - Fix: the schema-suggestion strip in error formatting runs in linear time.
   `format_graphql_error` removed the "Did you mean ...?" sentence with a regex
   whose cost grew with the square of the message length (2.5 s for 224 KB). It
