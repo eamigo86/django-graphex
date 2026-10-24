@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Compile only direct `typing.Union[int, str]` and `int | str` input fields,
+  in either member order, as a shared `IntOrString` scalar instead of `String`.
+  Integer and string values retain their Python types without casts; integers
+  must fit signed 32-bit range. Booleans, floats, objects and lists reject
+  before mutation. Outer nullable forms, omitted fixed/factory defaults and
+  aliases remain unchanged; other Union shapes and global scalars do not.
+  Clients must update variable declarations and generated bindings.
+
 - Compile exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation
   inputs as strict `JSON` instead of `String`. Require string keys and exact
   Boolean values before resolution without changing the global JSON scalar

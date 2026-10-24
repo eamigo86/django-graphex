@@ -26,8 +26,22 @@ enums instead of `String`. For `ArticleInput.status: Literal["draft",
 `"status": "DRAFT"`. Resolvers still receive the raw string `"draft"`.
 Invalid members are rejected before resolver execution. Numeric or mixed
 `Literal`, other parameterized sets, other parameterized dictionaries, and
-non-optional unions keep their existing warning and `String` fallback; this
+other unions keep their existing warning and `String` fallback; this
 does not add automatic Pydantic validation.
+
+### Direct integer-or-string Union input values
+
+A direct `typing.Union[int, str]` or `int | str` field (either member order)
+now changes from `String!` to the shared `IntOrString!` scalar. Outer nullable
+forms use `IntOrString`. Change a GraphQL variable declaration from
+`$value: String!` to `$value: IntOrString!` and regenerate typed client code.
+For example, `{"value": 123}` reaches the resolver as Python `int(123)`;
+`{"value": "123"}` remains Python `str("123")`. Only signed 32-bit
+integers are valid. Booleans, all floats including `1.0`, objects, lists, and
+out-of-range integers reject before mutation; there are no implicit casts.
+Existing omitted fixed/factory default values stay unchanged, including
+malformed legacy defaults. Other Union shapes and global scalar behavior do
+not change.
 
 ### Typed integer-map input values
 

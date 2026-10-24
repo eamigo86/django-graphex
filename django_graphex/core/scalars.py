@@ -1,6 +1,7 @@
 """Native GraphQL scalar singletons for the output compiler.
 
-8 owned "GraphQLScalarType" singletons plus "GDX_SCALAR_MAP".
+8 globally mapped "GraphQLScalarType" singletons, one direct-input-only
+"IntOrString" singleton, plus "GDX_SCALAR_MAP".
 
 CustomDateFormat bypass:
     All three date/time scalars honour a "CustomDateFormat" wrapper FIRST —
@@ -630,6 +631,52 @@ GdxJSON = GraphQLScalarType(
     parse_value=_json_raw_parse_value,
     parse_literal=_json_raw_parse_literal,
     value_to_literal=_json_raw_value_to_literal,
+)
+
+
+def _int_or_string_parse_value(value: Any) -> int | str:
+    """Accept an unconverted native integer or string input.
+
+    Args:
+        value: Supplied GraphQL variable value.
+
+    Returns:
+        The original integer or string.
+
+    Raises:
+        GraphQLError: If the value is not an Int32 integer or string.
+    """
+    if type(value) is str or (type(value) is int and -(2**31) <= value < 2**31):
+        return value
+    raise GraphQLError(f"IntOrString cannot represent value: {value!r}")
+
+
+def _int_or_string_parse_literal(ast: Any, variable_values: Any = None) -> int | str:
+    """Parse only native GraphQL integer and string literal nodes.
+
+    Args:
+        ast: Supplied GraphQL literal node.
+        variable_values: Unused variable values supplied by graphql-core.
+
+    Returns:
+        The parsed integer or string without cross-branch conversion.
+
+    Raises:
+        GraphQLError: If the literal has an unsupported kind or integer range.
+    """
+    if isinstance(ast, StringValueNode):
+        return ast.value
+    if isinstance(ast, IntValueNode):
+        return _int_or_string_parse_value(int(ast.value))
+    raise GraphQLError(f"IntOrString cannot represent literal: {ast!r}")
+
+
+IntOrString = GraphQLScalarType(
+    name="IntOrString",
+    description="A string or signed 32-bit integer, without implicit conversion.",
+    serialize=_int_or_string_parse_value,
+    parse_value=_int_or_string_parse_value,
+    parse_literal=_int_or_string_parse_literal,
 )
 
 

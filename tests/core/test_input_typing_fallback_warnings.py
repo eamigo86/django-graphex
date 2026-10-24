@@ -52,12 +52,11 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         fields = input_type.fields
 
     messages = [str(item.message) for item in caught if item.category is UserWarning]
-    assert len(messages) == 5
+    assert len(messages) == 4
     for name, count in (
         ("Literal", 2),
         ("dict", 1),
         ("Dict", 1),
-        ("Union", 1),
     ):
         assert sum(name in message for message in messages) == count
     assert all("GraphQLString" in message for message in messages)
@@ -69,9 +68,9 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
             "mixedLiteral",
             "mapping",
             "aliasMapping",
-            "choice",
         )
-    ] == ["String!"] * 5
+    ] == ["String!"] * 4
+    assert str(fields["choice"].type) == "IntOrString!"
     assert str(fields["maybe"].type) == "Int"
     assert str(fields["values"].type) == "[Int!]!"
 
@@ -110,7 +109,7 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     assert "mixedLiteral: String!" in sdl
     assert "mapping: String!" in sdl
     assert "aliasMapping: String!" in sdl
-    assert "choice: String!" in sdl
+    assert "choice: IntOrString!" in sdl
     assert "maybe: Int" in sdl
     assert "values: [Int!]!" in sdl
     introspection = graphql_sync(
@@ -127,10 +126,10 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
         "mixedLiteral",
         "mapping",
         "aliasMapping",
-        "choice",
     ):
         assert names[name]["kind"] == "NON_NULL"
         assert names[name]["ofType"] == {"kind": "SCALAR", "name": "String"}
+    assert names["choice"]["ofType"] == {"kind": "SCALAR", "name": "IntOrString"}
 
     values = {
         "literal": "not-a-member",
@@ -156,7 +155,7 @@ def test_public_input_mutation_warns_without_changing_wire_behavior() -> None:
     for name, structured in (
         ("mapping", {"x": 1}),
         ("aliasMapping", {"x": 1}),
-        ("choice", 7),
+        ("choice", 1.0),
     ):
         rejected = graphql_sync(
             schema, query, variable_values={"payload": {**values, name: structured}}

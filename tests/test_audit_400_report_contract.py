@@ -46,6 +46,15 @@ def _report() -> str:
     return REPORT.read_text(encoding="utf-8")
 
 
+def test_report_bounds_direct_int_or_string_union_disposition() -> None:
+    """Record the accepted direct form without closing the wider audit claim."""
+    report = _report()
+    assert "M-D10 | partial" in report
+    assert "shared strict IntOrString" in report
+    assert "list-wrapped and other Union shapes" in report
+    assert "tests/core/test_int_or_string_union_input.py" in report
+
+
 def _section(text: str, heading: str) -> str:
     """Select a report section without accepting matches elsewhere.
 

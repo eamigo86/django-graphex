@@ -61,6 +61,27 @@ def test_guide_documents_string_literal_enum_client_migration() -> None:
     assert "automatically validated as Pydantic" in usage
 
 
+def test_guide_documents_direct_int_or_string_union_migration() -> None:
+    """Keep the exact scalar boundary and client variable migration visible."""
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.0.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "IntOrString" in text
+        assert "typing.Union[int, str]" in text
+        assert "int | str" in text
+        assert "32-bit" in text
+        assert "default" in text
+        assert "other union" in text.lower()
+    upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
+    assert "$value: String!" in upgrade
+    assert "$value: IntOrString!" in upgrade
+    assert '{"value": 123}' in upgrade
+    assert '{"value": "123"}' in upgrade
+
+
 def test_guide_documents_typed_integer_map_json_migration() -> None:
     """Keep the strict typed-map wire change distinct from bare JSON."""
     usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")

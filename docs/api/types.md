@@ -399,6 +399,17 @@ send member names, while resolvers receive the original string values.
 Nullable/list/nested wrappers retain their usual input shape. Numeric or
 mixed `Literal` annotations still warn and use the `String` fallback.
 
+Only direct `typing.Union[int, str]` / `int | str` (either member order)
+compile to one shared `IntOrString` input scalar. Required and outer nullable
+forms publish `IntOrString!` and `IntOrString`, respectively. Integers retain
+their Python type and must fit signed 32-bit range; strings remain strings.
+There is no float, boolean, string-to-number, or number-to-string conversion.
+Invalid supplied values reject before the mutation resolver. Omitted fixed and
+factory defaults retain their prior behavior, including malformed legacy
+values. Other Union shapes, including list-wrapped unions, retain their warning
+and `String` fallback. Existing global scalar mappings and output types do not
+change.
+
 The exact `dict[str, int]` and `typing.Dict[str, int]` annotations compile
 to the existing raw `JSON` input scalar, preserving the same scalar identity as a bare `dict`. Unlike
 bare `dict`, it accepts only objects with string keys and plain integer

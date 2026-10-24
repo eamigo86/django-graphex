@@ -1758,7 +1758,22 @@ fixed/factory defaults, aliases and permission pruning remain unchanged,
 including malformed legacy omitted defaults. The global Decimal scalar and
 other unapproved set forms are unchanged.
 
-Numeric or mixed `Literal` and non-optional `Union[int, str]`
+Exact direct `typing.Union[int, str]`, `int | str`, and reversed-order
+annotations now expose the shared `IntOrString` input scalar instead of
+`String`. A required field is `IntOrString!`; an outer nullable union is
+`IntOrString`. Send `value: 123` or a JSON variable `{"value": 123}` for
+a Python integer, and `value: "123"` or `{"value": "123"}` for a Python
+string. The resolver receives the same branch without an implicit cast.
+Only signed 32-bit integers are accepted; booleans, all floats (including
+`1.0`), objects, lists, and out-of-range integers reject before resolution.
+Clients using `$value: String!` must change that variable declaration to
+`$value: IntOrString!` (or nullable `IntOrString`) and regenerate typed
+client bindings. Existing omitted fixed and factory defaults remain unchanged,
+including malformed legacy defaults. This does not change the global `Int`,
+`String`, `ID`, or `JSON` scalars, and does not support list-wrapped or other
+Union leaves.
+
+Numeric or mixed `Literal` and other Union annotations
 remain unsupported and warn when they fall back to GraphQL `String`. Other
 parameterized dictionaries remain unsupported and use the same warning and
 `String` fallback. They are **not** automatically validated as Pydantic models. For

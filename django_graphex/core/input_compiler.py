@@ -28,7 +28,7 @@ import typing
 import uuid
 import warnings
 from dataclasses import dataclass
-from types import GenericAlias
+from types import GenericAlias, UnionType
 from typing import Any, Callable, Literal, get_args, get_origin
 
 from graphql import (
@@ -858,6 +858,29 @@ def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     return annotation, False
 
 
+def _direct_int_or_string_nullable(annotation: Any) -> bool | None:
+    """Identify only the approved direct integer-or-string Union forms.
+
+    Args:
+        annotation: The declared input field annotation.
+
+    Returns:
+        Whether the exact direct Union includes None, or None when unsupported.
+    """
+    origin = get_origin(annotation)
+    if origin is not typing.Union and origin is not UnionType:
+        return None
+    members = get_args(annotation)
+    if len(members) not in (2, 3):
+        return None
+    has_int = any(member is int for member in members)
+    has_str = any(member is str for member in members)
+    nullable = any(member is type(None) for member in members)
+    if not (has_int and has_str and len(members) == 2 + nullable):
+        return None
+    return nullable
+
+
 def _unwrap_list(annotation: Any) -> tuple[Any, bool]:
     """Detect a list[T] origin and return (inner_type, is_list).
 
@@ -1281,6 +1304,7 @@ def compile_input_type(
             annotation = field_info.annotation
             inner_type, is_optional_flag = _unwrap_optional(annotation)
             list_inner, is_list = _unwrap_list(inner_type)
+            int_or_string_nullable = _direct_int_or_string_nullable(annotation)
 
             nested_list = _supported_nested_list(annotation) if is_list else None
             if nested_list is not None:
@@ -1295,6 +1319,11 @@ def compile_input_type(
                         if element_optional
                         else GraphQLNonNull(gql_base_type)
                     )
+            elif int_or_string_nullable is not None:
+                from django_graphex.core.scalars import IntOrString
+
+                gql_base_type = IntOrString
+                is_optional_flag = int_or_string_nullable
             elif _is_exact_boolean_map(annotation):
                 gql_base_type = _native_scalar_map()[dict]
             elif _is_exact_int_set(annotation):
@@ -1390,6 +1419,25 @@ def compile_input_type(
             else:
                 gql_field_kwargs["default_value"] = default_value
             gql_field = GraphQLInputField(**gql_field_kwargs)
+            if (
+                int_or_string_nullable is not None
+                and default_value is not Undefined
+                and default_value is not None
+                and not (
+                    type(default_value) is str
+                    or (
+                        type(default_value) is int and -(2**31) <= default_value < 2**31
+                    )
+                )
+            ):
+                # This fixed default predates the stricter supplied-input
+                # scalar. Keep its String fallback spelling for SDL while the
+                # private memo retains the original omitted object. An explicit
+                # variable with the very same object still hits parse_value.
+                gql_field.default = GraphQLDefaultInput(
+                    literal=StringValueNode(value=str(default_value))
+                )
+                gql_field.default._memoized_coerced_value = default_value
             if _is_exact_boolean_map(annotation):
                 boolean_map_candidates[alias] = (field_name, gql_field)
                 if default_value is not Undefined and default_value is not None:
