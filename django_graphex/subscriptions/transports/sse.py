@@ -78,7 +78,7 @@ from . import (
     _validate_subscription_document,
     operation_selection_error,
 )
-from ._sse_lease import _RENEW_INTERVAL, _acquire, _Lease
+from ._sse_lease import _RENEW_INTERVAL, _RETRY_INTERVAL, _acquire, _Lease
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -320,6 +320,39 @@ _LEASE_LOST_MESSAGE = "SSE stream lease lost; reconnect to retry."
 
 class _LeaseLost(Exception):
     """Signal that a running stream can no longer prove lease ownership."""
+
+
+async def _renew_lease(lease: _Lease, loop: asyncio.AbstractEventLoop) -> float:
+    """Renew a running stream's lease, tolerating transient backend errors.
+
+    A backend error does not mean the lease is gone: its TTL spans several
+    renewal intervals. The stream keeps running and retries soon, as long as
+    the last confirmed renewal still leaves a safety margin. A definite answer
+    that the token is no longer owned always ends the stream.
+
+    Args:
+        lease: The lease owned by the running stream.
+        loop: The running loop, whose clock stamps confirmed renewals.
+
+    Returns:
+        Seconds until the next renewal attempt.
+
+    Raises:
+        _LeaseLost: If ownership is gone or can no longer be assumed.
+    """
+    sent_at = loop.time()
+    try:
+        owned = await lease.renew()
+    except Exception:  # noqa: BLE001 - no Redis details
+        if lease.may_still_own(loop.time()):
+            logger.warning("SSE lease renewal failed; retrying.")
+            return _RETRY_INTERVAL
+        raise _LeaseLost from None
+    if not owned:
+        raise _LeaseLost
+    # Stamp the send time: Redis started the new TTL no earlier than that.
+    lease.renewed_at = sent_at
+    return _RENEW_INTERVAL
 
 
 def _make_spec(
@@ -629,12 +662,7 @@ def subscription_sse_view(
                         if lease is not None:
                             # The response body can be consumed long after
                             # startup. Confirm ownership before any data read.
-                            try:
-                                owned = await lease.renew()
-                            except Exception:  # noqa: BLE001 - no Redis details
-                                owned = False
-                            if not owned:
-                                raise _LeaseLost
+                            await _renew_lease(lease, loop)
                         next_heartbeat = (
                             loop.time() + heartbeat_interval
                             if heartbeat_enabled
@@ -647,13 +675,8 @@ def subscription_sse_view(
                         )
                         while True:
                             if lease is not None and loop.time() >= next_renew:
-                                try:
-                                    owned = await lease.renew()
-                                except Exception:  # noqa: BLE001 - no Redis details
-                                    owned = False
-                                if not owned:
-                                    raise _LeaseLost
-                                next_renew = loop.time() + _RENEW_INTERVAL
+                                delay = await _renew_lease(lease, loop)
+                                next_renew = loop.time() + delay
                             if pending is None:
                                 pending = asyncio.create_task(delivery.__anext__())
                             deadline = min(next_heartbeat, next_renew)
@@ -662,13 +685,8 @@ def subscription_sse_view(
                             )
                             now = loop.time()
                             if lease is not None and now >= next_renew:
-                                try:
-                                    owned = await lease.renew()
-                                except Exception:  # noqa: BLE001 - no Redis details
-                                    owned = False
-                                if not owned:
-                                    raise _LeaseLost
-                                next_renew = loop.time() + _RENEW_INTERVAL
+                                delay = await _renew_lease(lease, loop)
+                                next_renew = loop.time() + delay
                             if not done:
                                 if heartbeat_enabled and now >= next_heartbeat:
                                     yield _HEARTBEAT_FRAME

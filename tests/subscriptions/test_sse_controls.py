@@ -340,42 +340,133 @@ async def test_source_start_failure_releases_reserved_slot(
     assert not redis.slots
 
 
-@pytest.mark.asyncio
-@override_settings(
-    DJANGO_GRAPHEX={
-        "SSE_CONNECTION_LIMIT_ENABLED": True,
-        "SSE_CONNECTION_REDIS_URL": "redis://unused/0",
-        "SSE_HEARTBEAT_ENABLED": False,
-    }
-)
-async def test_renewal_failure_finishes_stream_without_backend_secret(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed renewal stops the running stream despite heartbeat being off.
+_RENEWAL_SETTINGS = {
+    "SSE_CONNECTION_LIMIT_ENABLED": True,
+    "SSE_CONNECTION_REDIS_URL": "redis://unused/0",
+    "SSE_HEARTBEAT_ENABLED": False,
+}
+
+
+def _fast_renewal(monkeypatch: pytest.MonkeyPatch, ttl_ms: int = 300) -> None:
+    """Shorten the renewal cadence, retry delay, TTL and safety margin.
 
     Args:
-        monkeypatch: Shortens the deterministic renewal interval.
+        monkeypatch: Replaces the module-level timing constants.
+        ttl_ms: Lease TTL sent to the backend, in milliseconds.
+    """
+    from django_graphex.subscriptions.transports import _sse_lease, sse
+
+    monkeypatch.setattr(sse, "_RENEW_INTERVAL", 0.01)
+    monkeypatch.setattr(sse, "_RETRY_INTERVAL", 0.01)
+    monkeypatch.setattr(_sse_lease, "_TTL_MS", ttl_ms)
+    monkeypatch.setattr(_sse_lease, "_SAFETY_MARGIN", 0.05)
+
+
+@pytest.mark.asyncio
+@override_settings(DJANGO_GRAPHEX=_RENEWAL_SETTINGS)
+async def test_transient_renewal_failure_keeps_stream_open(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One failed renewal inside the lease TTL does not close the stream.
+
+    Args:
+        monkeypatch: Shortens the renewal timing.
+        caplog: Captures the retry diagnostic.
     """
     from django_graphex.subscriptions.transports import sse
 
     monkeypatch.setattr(
         "channels.layers.get_channel_layer", lambda: InMemoryChannelLayer()
     )
-    monkeypatch.setattr(sse, "_RENEW_INTERVAL", 0.01)
+    _fast_renewal(monkeypatch)
+    redis = _install_fake_redis(monkeypatch)
+    response = await subscription_sse_view(schema=build_native_schema())(_request())
+    stream = response.streaming_content.__aiter__()
+    assert await stream.__anext__() == b":\n\n"
+    waiting = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0.03)
+    redis.fail_renew = True
+    await asyncio.sleep(0.05)
+    redis.fail_renew = False
+    calls = redis.renew_calls
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    assert redis.renew_calls > calls
+    assert "renewal failed; retrying" in caplog.text
+    assert "secret backend address" not in caplog.text
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await sync_to_async(response.close)()
+    assert not redis.slots
+    assert sse.get_started_source(response).is_closed
+
+
+@pytest.mark.asyncio
+@override_settings(DJANGO_GRAPHEX=_RENEWAL_SETTINGS)
+async def test_renewal_failures_until_expiry_finish_stream_without_backend_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failures that outlast the safe window close the stream without leaks.
+
+    Args:
+        monkeypatch: Shortens the renewal timing.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    monkeypatch.setattr(
+        "channels.layers.get_channel_layer", lambda: InMemoryChannelLayer()
+    )
+    _fast_renewal(monkeypatch)
     redis = _install_fake_redis(monkeypatch)
     response = await subscription_sse_view(schema=build_native_schema())(_request())
     source = sse.get_started_source(response)
     stream = response.streaming_content.__aiter__()
     assert await stream.__anext__() == b":\n\n"
     redis.fail_renew = True
-    failure = await asyncio.wait_for(stream.__anext__(), 0.3)
+    failure = await asyncio.wait_for(stream.__anext__(), 1)
     assert b"event: next" in failure
     assert b"SSE stream lease lost" in failure
     assert b"secret backend address" not in failure
     assert await stream.__anext__() == b"event: complete\ndata: \n\n"
     await sync_to_async(response.close)()
     assert source.is_closed
-    assert redis.renew_calls >= 1
+    assert redis.renew_calls >= 2
+    assert not redis.slots
+
+
+@pytest.mark.asyncio
+@override_settings(DJANGO_GRAPHEX=_RENEWAL_SETTINGS)
+async def test_successful_renewal_resets_the_failure_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failures separated by a good renewal never add up to a closed stream.
+
+    Args:
+        monkeypatch: Shortens the renewal timing.
+    """
+    monkeypatch.setattr(
+        "channels.layers.get_channel_layer", lambda: InMemoryChannelLayer()
+    )
+    _fast_renewal(monkeypatch, ttl_ms=200)
+    redis = _install_fake_redis(monkeypatch)
+    response = await subscription_sse_view(schema=build_native_schema())(_request())
+    stream = response.streaming_content.__aiter__()
+    assert await stream.__anext__() == b":\n\n"
+    waiting = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0.03)
+    for _ in range(4):
+        # Each outage alone fits the window; four in a row would not.
+        redis.fail_renew = True
+        await asyncio.sleep(0.06)
+        redis.fail_renew = False
+        await asyncio.sleep(0.04)
+        assert not waiting.done()
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await sync_to_async(response.close)()
     assert not redis.slots
 
 
@@ -685,3 +776,33 @@ def test_invalid_control_settings_fail_explicitly(name: str, bad: Any) -> None:
     settings = GraphQLAPISettings({name: bad}, DEFAULTS, ())
     with pytest.raises(ImproperlyConfigured, match=name):
         getattr(settings, name)
+
+
+@pytest.mark.asyncio
+async def test_streams_share_one_client_per_redis_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leases reuse one client per URL and never close the shared client.
+
+    Args:
+        monkeypatch: Installs a Redis class that counts client creation.
+    """
+    from django_graphex.subscriptions.transports._sse_lease import _acquire
+
+    redis = _install_fake_redis(monkeypatch)
+    created: list[str] = []
+    closed: list[str] = []
+    original = sys.modules["redis"].Redis.from_url
+    sys.modules["redis"].Redis.from_url = lambda url, **options: (
+        created.append(url) or original(url, **options)
+    )
+    redis.close = lambda: closed.append("closed")  # type: ignore[method-assign]
+    first = await _acquire(_User(), "redis://shared/0", 3)
+    second = await _acquire(_User(), "redis://shared/0", 3)
+    other = await _acquire(_User(), "redis://other/0", 3)
+    assert first is not None and second is not None and other is not None
+    assert created == ["redis://shared/0", "redis://other/0"]
+    for lease in (first, second, other):
+        await lease.close()
+    assert closed == []
+    assert not redis.slots

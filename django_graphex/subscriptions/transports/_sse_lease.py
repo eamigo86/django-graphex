@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 
 _TTL_MS = 45_000
 _RENEW_INTERVAL = 15.0
+# After a failed renewal the stream retries sooner than a full interval, and
+# gives up this long before the lease could expire on the Redis side.
+_RETRY_INTERVAL = 5.0
+_SAFETY_MARGIN = 5.0
 _REDIS_TIMEOUT_SECONDS = 2.0
 
 _ACQUIRE = """-- sse-acquire
@@ -105,7 +109,10 @@ def _principal_key(user: Any) -> str:
 
 
 class _Lease:
-    """Own one Redis client and token until the stream ends or the lease is lost."""
+    """Own one token until the stream ends or the lease is lost.
+
+    The Redis client is shared per URL and is never closed by a lease.
+    """
 
     def __init__(self, client: Any, key: str, token: str) -> None:
         """Record ownership and synchronize cross-loop response-close callbacks.
@@ -115,6 +122,8 @@ class _Lease:
             key: Stable account key.
             token: Unique opaque lease token.
         """
+        # Loop time of the last confirmed renewal, kept by the running stream.
+        self.renewed_at: float | None = None
         self._client = client
         self._key = key
         self._token = token
@@ -138,6 +147,22 @@ class _Lease:
         """
         return bool(await _run_blocking(self._renew_blocking))
 
+    def may_still_own(self, now: float) -> bool:
+        """Tell whether the last confirmed renewal still leaves a safe margin.
+
+        Args:
+            now: Current time on the same clock as "renewed_at".
+
+        Returns:
+            True while the lease cannot have expired yet, assuming the backend
+            applied the last confirmed TTL; used to tolerate transient renewal
+            errors without risking a stream that no longer owns its slot.
+            False when no renewal was ever confirmed.
+        """
+        if self.renewed_at is None:
+            return False
+        return now < self.renewed_at + _TTL_MS / 1000 - _SAFETY_MARGIN
+
     def _close_blocking(self) -> None:
         with self._lock:
             if self._closed:
@@ -147,12 +172,39 @@ class _Lease:
                 self._client.eval(_RELEASE, 1, self._key, self._token)
             except Exception:  # noqa: BLE001 - the TTL is the final safety net
                 logger.warning("Could not release an SSE lease; waiting for expiry.")
-            finally:
-                self._client.close()
 
     async def close(self) -> None:
         """Release this token idempotently, including from response.close()."""
         await _run_blocking(self._close_blocking)
+
+
+_clients: dict[str, tuple[Any, Any]] = {}
+_clients_lock = threading.Lock()
+
+
+def _shared_client(redis_cls: Any, url: str) -> Any:
+    """Return the process-wide Redis client for a URL, creating it once.
+
+    A client owns a thread-safe connection pool, so every stream of this
+    process reuses it instead of opening one connection per stream.
+
+    Args:
+        redis_cls: The Redis client class from the optional dependency.
+        url: Operator-configured Redis URL.
+
+    Returns:
+        The shared client for this class and URL.
+    """
+    with _clients_lock:
+        cached = _clients.get(url)
+        if cached is None or cached[0] is not redis_cls:
+            client = redis_cls.from_url(
+                url,
+                socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
+                socket_timeout=_REDIS_TIMEOUT_SECONDS,
+            )
+            cached = _clients[url] = (redis_cls, client)
+        return cached[1]
 
 
 async def _acquire(user: Any, url: str, limit: int) -> _Lease | None:
@@ -173,11 +225,7 @@ async def _acquire(user: Any, url: str, limit: int) -> _Lease | None:
     from redis import Redis  # optional; never imported by a base installation
 
     key = _principal_key(user)
-    client = Redis.from_url(
-        url,
-        socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
-        socket_timeout=_REDIS_TIMEOUT_SECONDS,
-    )
+    client = _shared_client(Redis, url)
     token = uuid4().hex
     try:
         admitted = await _run_blocking(
@@ -190,10 +238,7 @@ async def _acquire(user: Any, url: str, limit: int) -> _Lease | None:
             await _run_blocking(lambda: client.eval(_RELEASE, 1, key, token))
         except Exception:  # noqa: BLE001 - TTL expires an unknown grant
             logger.warning("Could not confirm SSE admission cleanup; TTL applies.")
-        finally:
-            client.close()
         raise
     if not admitted:
-        client.close()
         return None
     return _Lease(client, key, token)

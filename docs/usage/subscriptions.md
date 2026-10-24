@@ -1251,6 +1251,14 @@ Normal completion, disconnect, source-start failure, and response close release
 the token. A crash or failed release relies on a 45-second lease expiry; a
 renewal that sees an expired token stops the stream instead of recreating its
 slot. A delayed consumer may therefore lose a lease and need to reconnect.
+A renewal that **fails** (timeout, connection error) is not treated as a lost
+lease: the stream stays open and retries every five seconds while the last
+confirmed renewal is less than 40 seconds old (the 45-second TTL minus a
+five-second safety margin). A later success resets that window. Only when
+failures outlast it, or Redis answers that the token is no longer owned, does
+the stream end with the usual lease-lost frame; the frame never carries backend
+details. A short Redis outage therefore no longer drops every stream at once.
+All streams of a process share one Redis client (connection pool) per URL.
 Redis failover and network partitions can weaken a strict global count: this
 is an availability guard, not a distributed consensus guarantee. Keep the
 server/gateway connection limit as a separate safeguard.

@@ -286,8 +286,8 @@ async def test_consumer_delay_rechecks_before_next_source_read(
         fake.now += 16_000
         assert b'"probe": 1' in await stream.__anext__()
         assert fake.renew_calls == before + 1
-        clock.now += 16
-        fake.now += 16_000
+        clock.now += 41
+        fake.now += 41_000
         fake.fail_renew = True
         frame = await stream.__anext__()
         assert b"SSE stream lease lost" in frame
@@ -320,8 +320,8 @@ async def test_overdue_ready_result_is_withheld_on_backend_error(
 
     async def failing_delivery(*args: Any) -> Any:
         try:
-            clock.now += 16
-            fake.now += 16_000
+            clock.now += 41
+            fake.now += 41_000
             fake.fail_renew = True
             yield ExecutionResult(data={"probe": "must-not-deliver"})
         finally:

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Keep SSE streams open through transient lease-renewal errors. With the
+  Redis-backed per-account stream cap, a single failed renewal (for example a
+  two-second Redis timeout) closed the stream although the 45-second lease
+  allows several renewals, so a short Redis blip closed every stream at once and
+  clients reconnected into 503s. A failed renewal is now retried every five
+  seconds while the last confirmed renewal is less than 40 seconds old (lease
+  TTL minus a five-second safety margin); a renewal that Redis answers with "not
+  owned", or errors that outlast that window, still end the stream exactly as
+  before, without backend details. Streams of one process also share a single
+  Redis client (connection pool) per URL instead of opening one connection per
+  stream.
+
 - Isolate each channel-layer group in automatic subscription fan-out on the
   synchronous (WSGI, Celery, management command) path. A model write sends its
   event to up to four groups; when the first `group_send` raised, the remaining
