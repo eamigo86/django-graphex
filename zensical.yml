@@ -84,6 +84,7 @@ nav:
     - Quick Start: quickstart.md
     - Why graphex?: why.md
     - Migration Guide: migration.md
+    - Upgrading to django-graphex 4.1: UPGRADE-4.1.md
     - Upgrading to django-graphex 4.0: UPGRADE-4.0.md
     - Upgrade Guide (3.0 → 3.1): UPGRADE-3.1.md
     - Upgrade Guide (2.x → 3.0): UPGRADE-3.0.md

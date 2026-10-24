@@ -58,7 +58,7 @@ needed to use the report.
   transform on a selected field inside the fragment instead. Standard
   `@skip`/`@include` and raw third-party directive locations are unchanged.
   See `tests/test_directive_field_locations.py` and the
-  [directive migration guide](UPGRADE-4.0.md#move-transformation-directives-from-fragments-to-fields).
+  [directive migration guide](UPGRADE-4.1.md#move-transformation-directives-from-fragments-to-fields).
 - `@floor` now reports a stable GraphQL error for non-finite numeric values,
   including numeric strings, rather than exposing Python's integer conversion
   message. Nullable fields become `null` with an error path; non-null fields

@@ -53,7 +53,7 @@ def test_guide_documents_string_literal_enum_client_migration() -> None:
     Scenario: guide documents string literal enum client migration.
     """
     usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
-    upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
     for text in (usage, upgrade):
         assert "ArticleInputStatusEnum" in text
         assert 'status: "draft"' in text
@@ -72,7 +72,7 @@ def test_guide_documents_direct_int_or_string_union_migration() -> None:
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "IntOrString" in text
@@ -81,7 +81,7 @@ def test_guide_documents_direct_int_or_string_union_migration() -> None:
         assert "32-bit" in text
         assert "default" in text
         assert "other union" in text.lower()
-    upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
     assert "$value: String!" in upgrade
     assert "$value: IntOrString!" in upgrade
     assert '{"value": 123}' in upgrade
@@ -94,7 +94,7 @@ def test_guide_documents_typed_integer_map_json_migration() -> None:
     Scenario: guide documents typed integer map json migration.
     """
     usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
-    upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
     for text in (usage, upgrade):
         assert "dict[str, int]" in text
         assert "typing.Dict[str, int]" in text
@@ -109,7 +109,7 @@ def test_guide_documents_exact_boolean_map_json_migration() -> None:
 
     Scenario: guide documents exact boolean map json migration.
     """
-    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")
+    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.1.md")
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "dict[str, bool]" in text
@@ -123,7 +123,7 @@ def test_guide_documents_typed_string_map_json_migration() -> None:
 
     Scenario: guide documents typed string map json migration.
     """
-    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")
+    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.1.md")
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "dict[str, str]" in text
@@ -156,7 +156,7 @@ def test_guide_documents_recursive_supported_input_lists() -> None:
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     )
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
@@ -173,7 +173,7 @@ def test_guide_documents_exact_integer_set_migration() -> None:
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     )
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
@@ -197,7 +197,7 @@ def test_guide_documents_exact_string_set_migration() -> None:
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "set[str]" in text
@@ -219,7 +219,7 @@ def test_guide_documents_exact_float_set_migration() -> None:
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "set[float]" in text
@@ -247,7 +247,7 @@ def test_guide_documents_exact_uuid_set_migration() -> None:
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "set[uuid.UUID]" in text
@@ -270,7 +270,7 @@ def test_guide_documents_exact_finite_decimal_set_migration() -> None:
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "set[decimal.Decimal]" in text
@@ -294,7 +294,7 @@ def test_guide_documents_exact_boolean_set_migration() -> None:
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "set[bool]" in text
@@ -317,7 +317,7 @@ def test_docs_qualify_fixed_json_object_default_metadata() -> None:
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
-        "docs/UPGRADE-4.0.md",
+        "docs/UPGRADE-4.1.md",
     )
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
