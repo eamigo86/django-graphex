@@ -1008,9 +1008,10 @@ class Field(NativeMountedField):
             TypeError: When an OUTPUT-only param ("resolver" / "source" /
                 "args") was set on this INPUT-position field.
         """
-        from graphql import GraphQLArgument, GraphQLNonNull, Undefined
+        from graphql import GraphQLNonNull, Undefined
 
         from django_graphex._strconv import to_snake_case
+        from django_graphex.core.fresh_defaults import graphql_argument
 
         self._guard_output_only_params()
 
@@ -1020,7 +1021,7 @@ class Field(NativeMountedField):
         declared = name if name is not None else self.name
         out_name = to_snake_case(declared) if declared is not None else None
         default_value = Undefined if self._default is _UNSET else self._default
-        return GraphQLArgument(
+        return graphql_argument(
             gtype,
             default_value=default_value,
             description=self.description,

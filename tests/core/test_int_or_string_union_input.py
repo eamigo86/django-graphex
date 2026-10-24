@@ -315,7 +315,7 @@ def test_malformed_fixed_default_preserves_omission_and_printing(
     assert introspection.errors is None
     query = f"mutation($payload: {name}!) {{ echo(payload: $payload) {{ result }} }}"
     omitted = graphql_sync(schema, query, variable_values={"payload": {}})
-    assert omitted.errors is None and received[-1] is legacy
+    assert omitted.errors is None and received[-1] == legacy
     supplied = graphql_sync(
         schema, query, variable_values={"payload": {"value": legacy}}
     )
@@ -343,7 +343,8 @@ def test_legacy_dictionary_subclass_default_retains_old_printing() -> None:
         "mutation($payload: R08qLegacyUnionInput!) { echo(payload: $payload) { result } }",
         variable_values={"payload": {}},
     )
-    assert omitted.errors is None and received[-1] is legacy
+    assert omitted.errors is None and received[-1] == legacy
+    assert type(received[-1]) is LegacyDict
 
 
 def test_factory_values_stay_fresh_and_bad_input_stops_sibling_factory() -> None:

@@ -308,7 +308,7 @@ def test_nested_json_fixed_default_and_factory_keep_runtime_shape() -> None:
     assert calls == [1, 2]
     assert received[0]["fixed"] == fixed_default
     assert received[0]["fixed"] is not fixed_default
-    assert received[0]["fixed"][0][0] is fixed_default[0][0]
+    assert received[0]["fixed"][0][0] == fixed_default[0][0]
     assert received[0]["fresh"] == [[{"count": 1}]]
     assert received[1]["fresh"] == [[{"count": 2}]]
 
@@ -385,7 +385,7 @@ def test_nullable_nested_bare_json_fixed_defaults_remain_printable(
     original = payload_type.model_fields["rows"].default
     assert received == [{"rows": original}]
     assert received[0]["rows"] is not original
-    assert received[0]["rows"][-1][-1] is original[-1][-1]
+    assert received[0]["rows"][-1][-1] == original[-1][-1]
 
 
 def test_unsupported_nested_leaves_keep_legacy_fallback() -> None:

@@ -191,7 +191,7 @@ def test_oversized_json_integer_default_preserves_public_runtime() -> None:
     assert result.errors is None
     assert result.data == {"probe": "ok"}
     assert received == [fixed]
-    assert received[0] is fixed
+    assert received[0] == fixed
 
 
 def test_surrogate_json_string_default_preserves_public_runtime() -> None:
@@ -233,7 +233,7 @@ def test_surrogate_json_string_default_preserves_public_runtime() -> None:
     assert result.errors is None
     assert result.data == {"probe": "ok"}
     assert received == [fixed]
-    assert received[0] is fixed
+    assert received[0] == fixed
 
 
 def test_json_default_factory_is_not_frozen_in_sdl() -> None:
@@ -293,7 +293,7 @@ def test_nullable_list_defaults_publish_metadata_and_preserve_elements() -> None
     assert result.errors is None
     assert received[0] == field.default.value
     assert received[0] is not field.default.value
-    assert received[0][0] is field.default.value[0]
+    assert received[0][0] == field.default.value[0]
     value = {"safe": [1, None]}
     assert GdxJSON.serialize(value) is value
     assert GdxJSON.parse_value(value) is value
@@ -336,7 +336,7 @@ def test_mismatched_list_default_retains_prior_runtime_shape() -> None:
     )
     result = graphql_sync(schema, "{ probe(payload: {}) }")
     assert result.errors is None
-    assert received[0] is field.default_value
+    assert received[0] == field.default_value
     assert received == [{"views": 0}]
 
 

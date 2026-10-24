@@ -21,6 +21,7 @@ Design contracts:
 
 from __future__ import annotations
 
+import copy
 import datetime
 import decimal
 import math
@@ -54,6 +55,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 
 from django_graphex.converter import get_choices
+from django_graphex.core.fresh_defaults import is_mutable_default
 
 # ---------------------------------------------------------------------------
 # GdxInputSpec — extensions["gdx"] payload for input types
@@ -101,6 +103,9 @@ class _FactoryOutType:
         set_decimal_fields: Surviving exact Decimal-set fields to materialize.
         set_decimal_defaults: Fixed Decimal-set defaults kept by object identity.
         boolean_maps: Surviving exact Boolean maps with public field paths.
+        mutable_defaults: Surviving mutable fixed defaults, keyed by field name,
+            with the declared value and the default input that memoizes its
+            coercion (or None). An omitted field is handed a fresh copy.
     """
 
     def __init__(
@@ -116,6 +121,7 @@ class _FactoryOutType:
         set_decimal_fields: set[str] | None = None,
         set_decimal_defaults: dict[str, Any] | None = None,
         boolean_maps: dict[str, tuple[str, _OmittedBooleanMap | None]] | None = None,
+        mutable_defaults: dict[str, tuple[Any, Any]] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
@@ -136,6 +142,7 @@ class _FactoryOutType:
             set_decimal_defaults if set_decimal_defaults is not None else {}
         )
         self.boolean_maps = boolean_maps if boolean_maps is not None else {}
+        self.mutable_defaults = mutable_defaults if mutable_defaults is not None else {}
 
     def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
         """Apply omitted factories and approved field-local coercion.
@@ -250,6 +257,19 @@ class _FactoryOutType:
                 type(item) is decimal.Decimal and item.is_finite() for item in value
             ):
                 values[field_name] = set(value)
+        for field_name, (default, default_input) in self.mutable_defaults.items():
+            value = values.get(field_name, Undefined)
+            # graphql-core hands every execution the same coerced default, so
+            # an omitted field is the only case where the value is that object.
+            # Supplied values are already new per request and are left alone.
+            if value is not Undefined and (
+                value is default
+                or (
+                    default_input is not None
+                    and value is default_input._memoized_coerced_value
+                )
+            ):
+                values[field_name] = copy.deepcopy(value)
         return values
 
 
@@ -1236,6 +1256,7 @@ def compile_input_type(
     set_decimal_fields: set[str] = set()
     set_decimal_defaults: dict[str, Any] = {}
     boolean_maps: dict[str, tuple[str, _OmittedBooleanMap | None]] = {}
+    mutable_defaults: dict[str, tuple[Any, Any]] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -1252,6 +1273,7 @@ def compile_input_type(
         set_uuid_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_decimal_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         boolean_map_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        mutable_default_candidates: dict[str, tuple[str, GraphQLInputField, Any]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -1439,6 +1461,12 @@ def compile_input_type(
                     literal=StringValueNode(value=str(default_value))
                 )
                 gql_field.default._memoized_coerced_value = default_value
+            if default_value is not Undefined and is_mutable_default(default_value):
+                mutable_default_candidates[alias] = (
+                    field_name,
+                    gql_field,
+                    default_value,
+                )
             if _is_exact_boolean_map(annotation):
                 boolean_map_candidates[alias] = (field_name, gql_field)
                 if default_value is not Undefined and default_value is not None:
@@ -1649,6 +1677,16 @@ def compile_input_type(
             for alias, (field_name, gql_field) in boolean_map_candidates.items()
             if fields.get(alias) is gql_field
         )
+        mutable_defaults.clear()
+        mutable_defaults.update(
+            (field_name, (default, gql_field.default))
+            for alias, (
+                field_name,
+                gql_field,
+                default,
+            ) in mutable_default_candidates.items()
+            if fields.get(alias) is gql_field
+        )
         set_int_fields.clear()
         set_int_fields.update(
             field_name
@@ -1719,6 +1757,7 @@ def compile_input_type(
                 set_decimal_fields,
                 set_decimal_defaults,
                 boolean_maps,
+                mutable_defaults,
             )
             if _emit_defaults
             or any(

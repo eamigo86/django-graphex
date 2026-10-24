@@ -245,7 +245,7 @@ def test_fixed_default_omission_and_explicit_same_object_have_distinct_policy() 
     query = "mutation($payload: FixedMap!) { echo(payload: $payload) { result } }"
     omitted = graphql_sync(schema, query, variable_values={"payload": {}})
     assert omitted.errors is None
-    assert received[-1]["mapping"] is fixed
+    assert received[-1]["mapping"] == fixed
     for invalid in (fixed, {"legacy": 1}):
         count = len(received)
         supplied = graphql_sync(
@@ -279,7 +279,7 @@ def test_malformed_fixed_nonobject_default_keeps_omission_policy(
     schema, received = _schema(model, name=name)
     query = f"mutation($payload: {name}!) {{ echo(payload: $payload) {{ result }} }}"
     omitted = graphql_sync(schema, query, variable_values={"payload": {}})
-    assert omitted.errors is None and received[-1]["mapping"] is fixed
+    assert omitted.errors is None and received[-1]["mapping"] == fixed
     supplied = graphql_sync(
         schema, query, variable_values={"payload": {"mapping": fixed}}
     )
@@ -303,7 +303,8 @@ def test_unprintable_fixed_dictionary_default_keeps_original_object() -> None:
     schema, received = _schema(LegacySubclassMap, name="LegacySubclassFixed")
     query = "mutation($payload: LegacySubclassFixed!) { echo(payload: $payload) { result } }"
     omitted = graphql_sync(schema, query, variable_values={"payload": {}})
-    assert omitted.errors is None and received[-1]["mapping"] is fixed
+    assert omitted.errors is None and received[-1]["mapping"] == fixed
+    assert type(received[-1]["mapping"]) is LegacyDict
     supplied = graphql_sync(
         schema, query, variable_values={"payload": {"mapping": fixed}}
     )
@@ -353,7 +354,8 @@ def test_legacy_dictionary_subclass_default_remains_printable(
     query = f"mutation($payload: {name}!) {{ echo(payload: $payload) {{ result }} }}"
     omitted = graphql_sync(schema, query, variable_values={"payload": {}})
     assert omitted.errors is None
-    assert received[-1]["mapping"] is fixed
+    assert received[-1]["mapping"] == fixed
+    assert type(received[-1]["mapping"]) is LegacyDict
     supplied = graphql_sync(
         schema, query, variable_values={"payload": {"mapping": fixed}}
     )
@@ -442,7 +444,7 @@ def test_fixed_default_provenance_survives_permission_clone() -> None:
     assert "publicMap: JSON = { legacy: 1 }" in print_schema(clone)
     query = "mutation($payload: Scoped!) { echo(payload: $payload) { result } }"
     omitted = graphql_sync(clone, query, variable_values={"payload": {}})
-    assert omitted.errors is None and received[-1]["public_map"] is fixed
+    assert omitted.errors is None and received[-1]["public_map"] == fixed
     invalid = graphql_sync(
         clone, query, variable_values={"payload": {"publicMap": fixed}}
     )

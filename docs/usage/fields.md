@@ -167,7 +167,7 @@ class Root:
 | `source` | output only | Resolve by reading an attribute off the root. |
 | `resolver` | output only | Field-level resolver (wins over the parent resolver). |
 | `args` | output only | Explicit `{name: arg}` mapping for the field's arguments. |
-| `default` | input only | The GraphQL default value; omit to leave the argument with no default. |
+| `default` | input only | The GraphQL default value; omit to leave the argument with no default. A mutable default (a list or dict) is copied for every execution, so a resolver that changes it never affects the next request. |
 
 Setting an output-only parameter (`resolver=`, `source=`, `args=`) on a
 `Field` used inside a `class Arguments` body raises a `TypeError` naming the

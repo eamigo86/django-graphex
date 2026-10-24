@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: a mutable literal default is no longer shared between requests. A
+  default such as `tags: list[str] = []` or `flags: dict[str, bool] = {"a":
+  True}` on an `InputType` field, or `default=[...]` on a field argument, was
+  coerced once and the very same object was handed to every execution, so a
+  resolver that appended to it showed up in the next request. Every execution
+  now receives its own deep copy, also inside nested input objects and lists of
+  inputs. Immutable defaults are not copied. A resolver receives an equal copy
+  of the declared default, not the declared object itself.
+
 - Fix: an `AttributeError` raised while computing a `functools.cached_property`,
   a Django `cached_property` or a custom descriptor with `__get__` is reported
   as a resolution error, like one raised inside an `@property`, instead of

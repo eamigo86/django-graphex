@@ -75,7 +75,7 @@ def test_valid_fixed_json_list_default_prints_and_introspects() -> None:
     assert result.errors is None
     assert received == [{"mappings": fixed}]
     assert received[0]["mappings"] is not fixed
-    assert received[0]["mappings"][0] is fixed[0]
+    assert received[0]["mappings"][0] == fixed[0]
     supplied = graphql_sync(
         schema,
         "mutation($payload: FixedListMetadataPayload!) { submitFixedList(payload: $payload) { result } }",
