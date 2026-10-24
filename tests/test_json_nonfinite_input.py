@@ -265,10 +265,10 @@ def test_http_input_error_uses_graphql_error_wire() -> None:
 
 
 def test_raw_output_and_json_string_scalar_remain_separate() -> None:
-    """Input-only rejection does not alter output or JSONString coercion.
+    """Input rejection does not alter JSONString coercion or finite output.
 
     Scenario: raw output and json string scalar remain separate.
     """
-    value = float("inf")
+    value = {"finite": [1.5, "x"]}
     assert GdxJSON.serialize(value) is value
     assert isinf(GdxJSONString.parse_value("1e999"))

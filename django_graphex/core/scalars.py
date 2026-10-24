@@ -464,10 +464,6 @@ GdxJSONString = GraphQLScalarType(
 # ---------------------------------------------------------------------------
 
 
-def _json_raw_serialize(value: Any) -> Any:
-    return value
-
-
 def _reject_nonfinite_json_input(value: Any) -> Any:
     """Reject non-finite floats in raw JSON input without copying it.
 
@@ -496,6 +492,24 @@ def _reject_nonfinite_json_input(value: Any) -> Any:
             visited.add(identity)
             pending.extend(current.values() if type(current) is dict else current)
     return value
+
+
+def _json_raw_serialize(value: Any) -> Any:
+    """Return an output value unchanged unless it holds a non-finite float.
+
+    NaN and the infinities have no JSON representation, so emitting them would
+    make the whole response invalid for strict parsers.
+
+    Args:
+        value: The resolved value to serialize.
+
+    Returns:
+        The original value.
+
+    Raises:
+        GraphQLError: If the value is or contains a non-finite float.
+    """
+    return _reject_nonfinite_json_input(value)
 
 
 def _json_raw_parse_value(value: Any) -> Any:

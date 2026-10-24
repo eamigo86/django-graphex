@@ -2019,8 +2019,15 @@ nested in lists or objects. For example, `1e999` in a raw `JSON` literal, or
 a non-finite number supplied through a variable, produces a GraphQL
 input error before the field resolver runs. The strings `"NaN"` and
 `"Infinity"` are still ordinary strings; finite numbers, nulls, and the
-omission rules above are unchanged. This input check does not change raw
-`JSON` output serialization or the separate `JSONString` scalar.
+omission rules above are unchanged.
+
+Raw `JSON` **output** applies the same rule: a resolver or `JSONField` value that
+is or contains `NaN` or an infinity, at any depth, is a field error (`JSON cannot
+represent non-finite numbers`) with the field set to `null`, because those
+numbers have no JSON representation and would make the whole HTTP, WebSocket or
+SSE payload invalid for strict parsers. Store such values as strings or `null`.
+Finite values are unchanged, and the separate `JSONString` scalar is not
+affected.
 
 !!! tip "Custom JSON fields: the `JSONField()` descriptor and `as_str=`"
 

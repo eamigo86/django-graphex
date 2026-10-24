@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: the raw `JSON` scalar no longer emits `NaN` or `Infinity` in its output.
+  A resolver or `JSONField` value that is or contains a non-finite float, at any
+  depth, is now a field error (`JSON cannot represent non-finite numbers`) with
+  the field set to `null`, so the HTTP, WebSocket and SSE payloads stay valid
+  JSON for strict parsers. Finite values and the `JSONString` scalar are
+  unchanged; this mirrors the existing input-side rejection.
+
 - Fix: the parse and validation document caches no longer retain very large
   documents. They were bounded by entry count only, so `DOCUMENT_CACHE_MAXSIZE`
   documents near `MAX_REQUEST_BODY_SIZE` could pin gigabytes of ASTs. The new
