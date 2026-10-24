@@ -40,7 +40,7 @@ def _schema(args: dict[str, Any]) -> GraphQLSchema:
 
 
 def _total(args: dict[str, Any], wire_arg: str) -> int:
-    """Cost `items(<wire_arg>: 5000)` against a schema with the given args.
+    """Cost items(<wire_arg>: 5000) against a schema with the given args.
 
     Args:
         args: Wire-named arguments of the list field.

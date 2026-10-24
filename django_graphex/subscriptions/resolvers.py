@@ -38,6 +38,8 @@ def make_snake_resolver(
             subscription payload (e.g. "is_active", "date_joined").
         native_datetime: Reconstruct a native model DateTime from its ISO wire
             value before the existing GraphQL output scalar serializes it.
+        native_duration: Turn an ISO 8601 duration from the payload into total
+            seconds, the same Float a query reads for a DurationField.
 
     Returns:
         A two-argument resolver "(root, info) -> value" compatible with the
