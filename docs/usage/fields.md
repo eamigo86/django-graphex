@@ -121,9 +121,14 @@ when the field is nullable. When a Python `@property` getter's own
 `AttributeError` escapes normal Python lookup, GraphQL reports a resolution
 error retaining that exception instead of silently treating it as a missing
 attribute. This also applies when the Python getter is wrapped with
-`functools.partial` or `functools.lru_cache`. Normal `__getattr__` fallback
-remains in control: a returned fallback value is used, while a final dynamic
-attribute absence remains nullable. A missing Django reverse one-to-one
+`functools.partial` or `functools.lru_cache`. The same holds for any other
+class attribute that computes a value: `functools.cached_property`, Django's
+`cached_property`, or a custom descriptor with `__get__` that raises
+`AttributeError`. Normal `__getattr__` fallback remains in control: a returned
+fallback value is used, while a final dynamic attribute absence remains
+nullable. A class that defines `__getattr__` cannot tell a missing attribute
+from a failing one, because Python discards the descriptor's error before
+calling `__getattr__`; on such a class a failing descriptor still reads as null. A missing Django reverse one-to-one
 relation also resolves to null, including when read through a property.
 Required fields retain normal GraphQL null propagation; production HTTP
 responses use the existing safe error message and error ID.

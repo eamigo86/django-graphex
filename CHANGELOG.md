@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix: an `AttributeError` raised while computing a `functools.cached_property`,
+  a Django `cached_property` or a custom descriptor with `__get__` is reported
+  as a resolution error, like one raised inside an `@property`, instead of
+  being read as a missing attribute and answering null. A truly missing
+  attribute stays null. A class that defines `__getattr__` keeps the null
+  answer, because Python discards the descriptor's error before calling it
+  (documented in the fields guide).
+
 - Fix: configuration and input checks no longer depend on `assert`. Under
   `python -O` the `assert` statements in runtime code vanish, so an invalid
   `Meta.model`, `Meta.registry`, `Meta.queryset`, `input_for`, an empty
