@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Scope forward `OneToOneField` links like `ForeignKey` links. A generated
+  create or update could point a one-to-one field (scalar ID or nested id-only
+  payload) at a row hidden by the destination output type's `get_queryset`, and
+  a nonexistent ID answered differently, so it was also an existence oracle.
+  Hidden and nonexistent IDs now return the same `Invalid pk ... object does
+  not exist.` relation error. The ID membership check also runs one query per
+  relation instead of one per ID (200 tags cost 209 queries before), and the
+  nested M2M existence and already-linked checks are batched.
+
 - Make the depth and cost walkers iterative. `DepthLimitValidationRule` and the
   cost estimator recursed once per fragment link and per nesting level, so an
   acyclic chain of ~1000 fragments (~38 KB) raised `RecursionError` and answered

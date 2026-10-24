@@ -920,8 +920,8 @@ filters have their own destination-hook rule.
     second call.
 
 !!! info "ID links use the destination's public row scope"
-    A generated create or update now checks **forward `ForeignKey` IDs** and
-    **`ManyToManyField` ID lists** against the destination
+    A generated create or update now checks **forward `ForeignKey` and
+    `OneToOneField` IDs** and **`ManyToManyField` ID lists** against the destination
     `DjangoObjectType.get_queryset` for the **current request schema**. This
     includes nested link operations such as `{"id": "7"}`. When the existing
     link rule ignores extra child attributes, that operation is checked too;
@@ -940,12 +940,13 @@ filters have their own destination-hook rule.
     Class methods, static methods, plain functions, and callable-object hooks
     follow the same rule. A broader returned queryset cannot authorize an ID
     absent from it. A JOIN may repeat a visible row, and an ordered slice only
-    authorizes rows inside its window: both remain valid hook results. Each
-    distinct requested ID under an active hook requires a membership lookup.
+    authorizes rows inside its window: both remain valid hook results. All
+    distinct IDs requested for one relation under an active hook are checked
+    with a single membership query.
     Omitted relations stay untouched;
     nullable `null` and empty nested inputs keep their existing meanings.
 
-    Forward `OneToOneField`, reverse adoption, generic relations, and payloads
+    Reverse adoption, generic relations, and payloads
     that actually CREATE or UPDATE a child retain their separate existing
     rules. For example, a missing M2M ID accompanied by required child data
     can create a child rather than link an existing one. This does not

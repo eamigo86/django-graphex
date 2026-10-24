@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import IntegrityError, router, transaction
-from django.db.models import ForeignKey, ManyToManyField, Subquery
+from django.db.models import ForeignKey, ManyToManyField, QuerySet, Subquery
 from graphql import GraphQLError
 
 from .backends import backend_for_nested
@@ -320,6 +320,48 @@ def hosts_serving(registry: Any, child_model: Any, op: str) -> tuple[Any, ...]:
         for host in hosts_for_nested(registry, child_model)
         if op in host._meta.model_operations
     )
+
+
+def _present_values(
+    queryset: QuerySet, model_field: Any, values: list[Any]
+) -> set[Any]:
+    """Find which requested key values exist in a queryset, in one query.
+
+    A value the field cannot parse matches no row, like an absent key. If the
+    batched lookup itself is rejected (for example an integer beyond the
+    database range), each value is checked on its own so only that value is
+    reported missing.
+
+    Args:
+        queryset: Rows to look in.
+        model_field: Model field holding the key.
+        values: Requested key values, as supplied by the client.
+
+    Returns:
+        The subset of the requested values that a row holds.
+    """
+    by_coerced: dict[Any, list[Any]] = {}
+    for value in values:
+        try:
+            by_coerced.setdefault(model_field.to_python(value), []).append(value)
+        except (ValueError, TypeError, ValidationError):
+            continue
+    name = model_field.name
+    try:
+        found = set(
+            queryset.filter(**{f"{name}__in": list(by_coerced)}).values_list(
+                name, flat=True
+            )
+        )
+    except (ValueError, TypeError, ValidationError, OverflowError):
+        found = set()
+        for coerced in by_coerced:
+            try:
+                if queryset.filter(**{name: coerced}).exists():
+                    found.add(coerced)
+            except (ValueError, TypeError, ValidationError, OverflowError):
+                continue
+    return {value for key in found for value in by_coerced.get(key, ())}
 
 
 class _NestedError(Exception):
@@ -626,7 +668,7 @@ class NestedFieldsMixin:
             field = relation.name
             if field not in data or data[field] in (None, [], {}):
                 continue
-            is_fk = isinstance(relation, ForeignKey) and not relation.one_to_one
+            is_fk = isinstance(relation, ForeignKey)
             is_m2m = isinstance(relation, ManyToManyField)
             if not (is_fk or is_m2m):
                 continue
@@ -643,40 +685,42 @@ class NestedFieldsMixin:
 
             if field in nested:
                 values = data[field] if isinstance(data[field], list) else [data[field]]
-                ids = []
-                for item in values:
-                    identifier = cls._child_pk(target, item)
-                    if identifier is None:
-                        continue
-                    if (
-                        is_fk
-                        and instance is not None
-                        and str(identifier)
-                        == str(getattr(instance, relation.attname, None))
-                    ):
-                        continue
-                    if is_m2m:
-                        existing = get_Object_or_None(
-                            target._default_manager.db_manager(alias), pk=identifier
+                pairs = [(item, cls._child_pk(target, item)) for item in values]
+                pairs = [(item, pk) for item, pk in pairs if pk is not None]
+                lookup_field = target._meta.pk
+                if is_fk and instance is not None:
+                    current = str(getattr(instance, relation.attname, None))
+                    pairs = [(item, pk) for item, pk in pairs if str(pk) != current]
+                if is_m2m and pairs:
+                    candidates = [pk for _, pk in pairs]
+                    existing = _present_values(
+                        target._default_manager.db_manager(alias),
+                        lookup_field,
+                        candidates,
+                    )
+                    linked = (
+                        _present_values(
+                            getattr(instance, field).all(), lookup_field, candidates
                         )
-                        if existing is None and set(item) - {
-                            target._meta.pk.name,
-                            "id",
-                        }:
-                            continue  # actual child creation, not an ID link
-                        if (
-                            instance is not None
-                            and getattr(instance, field).filter(pk=identifier).exists()
-                        ):
-                            continue  # already linked: actual child update
-                    ids.append(identifier)
-                lookup = target._meta.pk.name
+                        if instance is not None
+                        else set()
+                    )
+                    extra_keys = {lookup_field.name, "id"}
+                    pairs = [
+                        (item, pk)
+                        for item, pk in pairs
+                        # A missing row with child data is an actual creation,
+                        # and an already-linked row an actual child update.
+                        if not (pk not in existing and set(item) - extra_keys)
+                        and pk not in linked
+                    ]
+                ids = [pk for _, pk in pairs]
             elif is_fk and not hasattr(data[field], "keys"):
                 ids = [data[field]]
-                lookup = relation.target_field.name
+                lookup_field = relation.target_field
             elif is_m2m and isinstance(data[field], (list, tuple)):
                 ids = [value for value in data[field] if not hasattr(value, "keys")]
-                lookup = target._meta.pk.name
+                lookup_field = target._meta.pk
             else:
                 continue
 
@@ -689,21 +733,18 @@ class NestedFieldsMixin:
                     f"{output_type.__name__}.get_queryset returned a queryset "
                     f"for {scoped.model.__name__}, expected {target.__name__}."
                 )
-            for identifier in dict.fromkeys(ids):
-                # Membership, not uniqueness: JOINs may duplicate a row and a
-                # sliced scope cannot be filtered after its window is applied.
-                try:
-                    present = (
-                        target._default_manager.db_manager(scoped.db)
-                        .filter(
-                            **{lookup: identifier},
-                            pk__in=Subquery(scoped.values("pk")),
-                        )
-                        .exists()
-                    )
-                except (ValueError, TypeError, ValidationError):
-                    present = False
-                if not present:
+            distinct = list(dict.fromkeys(ids))
+            # Membership, not uniqueness: JOINs may duplicate a row and a
+            # sliced scope cannot be filtered after its window is applied.
+            visible = _present_values(
+                target._default_manager.db_manager(scoped.db).filter(
+                    pk__in=Subquery(scoped.values("pk"))
+                ),
+                lookup_field,
+                distinct,
+            )
+            for identifier in distinct:
+                if identifier not in visible:
                     raise _NestedError(
                         [
                             ErrorType(
