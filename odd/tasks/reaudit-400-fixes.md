@@ -59,8 +59,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T31 | P23 | Decimal scalar rejects NaN/sNaN/Infinity at coercion (Float/Int/BigInt/Date already did); mutation inputs now get a coercion error like BigInt (4.0.0 Float did the same) | D | [x] | `33862e8`; RED 16/68; full 7033 passed, cov 97.61 % |
 | T32a | A10 residual (approved) | `PydanticBackend.save_object` runs `Field.clean` on each written editable field (validators, blank, null, max_length; relations/files run validators only); no Model.clean / validate_unique / validate_constraints | D | [x] | `219fd8f`; RED 12/15; full 7119 passed, cov 97.61 %; test fixtures' `TextField(default="")` got `blank=True` |
 | T32b | A1 other aliases, A2 cache bytes, M-D6 raw JSON non-finite output | Rollback on every ATOMIC_REQUESTS alias in an atomic block (+ per-alias ATOMIC_MUTATIONS); `DOCUMENT_CACHE_MAX_QUERY_LENGTH` (65536) per-entry bound; JSON scalar output rejects NaN/Infinity at any depth | D | [x] | `323482e`, `a8e1e99`, `32aac70`; RED 3 + settings + 14; full 7163 passed, cov 97.61 % |
-| T32c | M-F3, M-D10, L-M1, SD6, Q8, Q10, M-D2, L-E4, M-U6, M-D1, L-E3 | Document contracts/dispositions (M-F3: every empty boolean construct is a no-op, verified 2026-10-24) | D | [ ] | |
-| T33 | D2, D3, D5, D6 | Upgrade guide split by version, audit disposition fixes, docs cleanup | D | [ ] | |
+| T32c | M-F3, M-D10, L-M1, SD6, Q8, Q10, M-D2, L-E4, M-U6, M-D1, L-E3 | Contracts documented and pinned (empty Boolean no-op test; dict[str,int] Python int; L-M1 churn); dispositions in docs/audit-4.0.0.md | D | [x] | `76c45a1`, `491541c`, `0864fe7` |
+| T33 | D2, D3, D5, D6 | Anchors fixed (docs build 0 warnings); M-S2 corrected; mutations guide present tense; per-database ATOMIC_MUTATIONS documented; Graphene wording removed; remediation reports EN/ES aligned (D2 done in T35) | D | [x] | `a509434`, `0864fe7`, `c4e411f`, `5d326d2`, `0215376`, `0f7e43c`; full 7179 passed |
 | T34 | G1-G7 | Playground README/docs, `subscription_scope`, password validation, commands | D | [ ] | |
 | T35 | D1, D2 | Version 4.1.0 (pyproject, both uv.lock, docs); CHANGELOG `## 4.1.0 — Unreleased` with compatibility policy + 27 behavior changes; UPGRADE-4.0.md restored to v4.0.0 content; new UPGRADE-4.1.md; release readiness 4.1.0 test | D | [x] | `f11d7e4`, `4b252a0`, `0589d05`; full 7166 passed, cov 97.61 %; docs build OK (3 pre-existing anchor warnings -> T33) |
 | T36 | Audit | Fresh independent audit of HEAD; fix confirmed new findings | D | [ ] | |
@@ -125,6 +125,9 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T35 done.
 
+- T32c, T33 done.
+- Parent found a regression of this round's R10 fix: plain-notation Decimal output let a 14-byte literal `1E+999999999` echoed by a resolver expand into ~1 GB. Fixed inline with TDD in `01a5f7a` + `da0a8c6` (scientific form past 1000 padded zeros); full 7184 passed, cov 97.61 %, gates clean.
+
 ## Next step
 
-T32c + T33 (dispositions, audit table, docs cleanup, anchors).
+T34 (Playground G1-G7; also its test pinning blank-title acceptance, broken by A10 as approved).
