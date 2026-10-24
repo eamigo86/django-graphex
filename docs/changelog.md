@@ -358,6 +358,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Fix: a flat or typed-union `GenericForeignKey` selection only runs the
+  `get_queryset` hook of a target type some owner on the page points to. A hook
+  of an unrelated type (for example one that raises for anonymous users) no
+  longer nulls the whole list and no longer costs a call. A hook that raises
+  for a present target still fails the field.
+
 - Fix: the raw `JSON` scalar no longer emits `NaN` or `Infinity` in its output.
   A resolver or `JSONField` value that is or contains a non-finite float, at any
   depth, is now a field error (`JSON cannot represent non-finite numbers`) with

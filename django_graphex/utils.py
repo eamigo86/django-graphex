@@ -8,7 +8,7 @@ import logging
 import re
 import threading
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
 from numbers import Number
 from typing import TYPE_CHECKING, Any
@@ -3903,6 +3903,39 @@ def read_gfk_target(root: Any, name: str) -> tuple[Any, bool]:
     return getattr(root, name, None), False
 
 
+class _LazyScopedQuerySet(QuerySet):
+    """Placeholder queryset that runs a target type's hook only when filtered.
+
+    Django's generic prefetch filters one queryset per content type that some
+    owner points to and never touches the others, so the hook of an unreferenced
+    type is never called. The planning code only needs its model and database.
+    """
+
+    _gqx_build: Callable[[], QuerySet]
+
+    def _clone(self) -> _LazyScopedQuerySet:
+        """Copy the placeholder together with its scope builder.
+
+        Returns:
+            The cloned placeholder.
+        """
+        clone = super()._clone()
+        clone._gqx_build = self._gqx_build
+        return clone
+
+    def filter(self, *args: Any, **kwargs: Any) -> QuerySet:
+        """Build the scoped queryset now and narrow it by the given lookups.
+
+        Args:
+            *args: Positional lookups.
+            **kwargs: Keyword lookups.
+
+        Returns:
+            The scoped, filtered queryset.
+        """
+        return self._gqx_build().filter(*args, **kwargs)
+
+
 def _scoped_gfk_prefetch(
     relation: Any,
     path: str,
@@ -3914,6 +3947,9 @@ def _scoped_gfk_prefetch(
 
     Every registered output type that overrides get_queryset scopes its own
     content type; other content types load unscoped through Django's default.
+    A type's hook runs only when an owner on the page points to its content
+    type, so a hook for an unrelated type neither costs a call nor fails the
+    page.
 
     Args:
         relation: The GenericForeignKey field.
@@ -3944,13 +3980,33 @@ def _scoped_gfk_prefetch(
         )
         if content_type is None:
             continue
-        scoped = _scoped_gfk_queryset(model, output_type, info, alias)
         # Django filters each queryset by key and forbids two per content type,
-        # so a sliced or duplicated scope resolves per row instead.
-        if content_type.pk in seen or scoped.query.is_sliced:
+        # so a duplicated scope resolves per row instead.
+        if content_type.pk in seen:
             return None
         seen.add(content_type.pk)
-        querysets.append(scoped)
+
+        def build(model: type[Model] = model, output_type: Any = output_type) -> Any:
+            """Run the type's hook for a content type that is present.
+
+            Args:
+                model: Target model.
+                output_type: Registered output type scoping the model.
+
+            Returns:
+                The scoped queryset; a sliced scope becomes a pk subquery,
+                since Django cannot filter a sliced queryset by key.
+            """
+            scoped = _scoped_gfk_queryset(model, output_type, info, alias)
+            if scoped.query.is_sliced:
+                return model._default_manager.db_manager(alias).filter(
+                    pk__in=Subquery(scoped.values("pk"))
+                )
+            return scoped
+
+        placeholder = _LazyScopedQuerySet(model=model, using=alias)
+        placeholder._gqx_build = build
+        querysets.append(placeholder)
     if not querysets:
         return None
     return GenericPrefetch(path, querysets, to_attr=f"_gqx_scoped_{relation.name}")
