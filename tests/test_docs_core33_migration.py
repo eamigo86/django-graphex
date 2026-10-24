@@ -193,7 +193,7 @@ def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
             assert token in notes
 
 
-def test_playground_banner_targets_400_checkout() -> None:
+def test_playground_banner_targets_current_checkout() -> None:
     """Avoid presenting the example as a v3.1-only application.
 
     Existing security and example guidance remains valid for this checkout.
@@ -201,6 +201,6 @@ def test_playground_banner_targets_400_checkout() -> None:
     page = (ROOT / "examples/playground/README.md").read_text(encoding="utf-8")
     banner = page.split("A small, runnable", maxsplit=1)[0]
     assert "Targets django-graphex v3.1" not in banner
-    assert "4.0.0 checkout" in banner.lower()
+    assert "4.1.0 checkout" in banner.lower()
     assert "graphql-core 3.3" in banner
     assert "--no-migrations --no-cov" in page

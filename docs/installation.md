@@ -6,12 +6,12 @@ For installing django-graphex, run one of these in your shell:
 
 ```bash
 # uv (recommended)
-uv add "django-graphex==4.0.0"
+uv add "django-graphex==4.1.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex==4.0.0"
+pip install "django-graphex==4.1.0"
 ```
 
 This pulls in the core dependencies (`graphql-core`, `pydantic`,
@@ -42,12 +42,12 @@ and are shipped as an optional extra. The base install never pulls in Channels:
 
 ```bash
 # uv (recommended)
-uv add "django-graphex[subscriptions]==4.0.0"
+uv add "django-graphex[subscriptions]==4.1.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex[subscriptions]==4.0.0"
+pip install "django-graphex[subscriptions]==4.1.0"
 ```
 
 This adds `channels` and `channels-redis`. See the
@@ -79,10 +79,11 @@ of lazily on first request), so type-compilation errors surface immediately.
 - **graphql-core**: >=3.3.0,<3.4
 - **pydantic**: >=2,<3
 
-django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`. The historical
+django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`. The historical
 3.1.1 release requires `graphql-core>=3.2.13,<3.3`. The commands above select
-4.0.0 explicitly; follow the [4.0 upgrade guide](UPGRADE-4.0.md) when moving
-custom integration code from GraphQL-core 3.2 to 3.3.
+4.1.0 explicitly; follow the [4.0 upgrade guide](UPGRADE-4.0.md) when moving
+custom integration code from GraphQL-core 3.2 to 3.3, and the
+[4.1 upgrade guide](UPGRADE-4.1.md) when moving from 4.0.
 
 !!! warning "Django 4.x / 5.0 / 5.1 users"
     **django-graphex 2.0+ requires Django >= 5.2.**

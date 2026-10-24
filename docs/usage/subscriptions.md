@@ -97,7 +97,7 @@ Normal cooperative cancellation does not trigger this warning.
     by `Executor.build()` and accept either an immediate or awaitable result from
     `create_source_event_stream()`. Keep per-event delivery and teardown in the
     serialize-once driver rather than replacing it with the stock `subscribe()`
-    pipeline. django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`;
+    pipeline. django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`;
     the historical 3.1.1 release requires `graphql-core>=3.2.13,<3.3`.
 
 !!! tip "Try it interactively"

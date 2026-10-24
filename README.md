@@ -43,24 +43,25 @@ your Django models — no DRF, no graphene, no `django-filter`.
 - **graphql-core:** >=3.3.0,<3.4
 - **pydantic:** >=2,<3
 
-**django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`.** The historical
+**django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`.** The historical
 3.1.1 release requires `graphql-core>=3.2.13,<3.3`. Follow the
 [4.0 upgrade guide](docs/UPGRADE-4.0.md) when migrating custom executors,
-AST builders or subscription transports.
+AST builders or subscription transports, and the
+[4.1 upgrade guide](docs/UPGRADE-4.1.md) when moving from 4.0.
 
 ## Installation
 
 ```bash
 # uv (recommended)
-uv add "django-graphex==4.0.0"
+uv add "django-graphex==4.1.0"
 # real-time subscriptions (adds Django Channels 4):
-uv add "django-graphex[subscriptions]==4.0.0"
+uv add "django-graphex[subscriptions]==4.1.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex==4.0.0"
-pip install "django-graphex[subscriptions]==4.0.0"
+pip install "django-graphex==4.1.0"
+pip install "django-graphex[subscriptions]==4.1.0"
 ```
 
 The base install never imports `channels`; only the `subscriptions` extra does.
