@@ -330,16 +330,17 @@ The to-ONE hatch closes the ordering axis on the key behind it:
 | `{ authors { results { name user { username } } } }` | `user: null` for an anonymous caller — `resolve_user` scopes it |
 | `{ authors { results(ordering: "userId") { name } } }` | `Invalid ordering field: 'user_id'.` — the term is normalized to the column *before* it is judged, so the message names `user_id`, not what you sent |
 
-!!! warning "One surface in this playground does **not** honour the same projection"
+!!! note "The model-bound subscription needs its own projection"
     `CommentSubscription` is a hand-written `Subscription` bound to
-    `Meta.model = Comment`, so it compiles its event type and its
-    `CommentSubscriptionFilterInput` from the **model** — `internalNote` is
-    selectable and equality-filterable there while `CommentType` hides it. That
-    is the third of the
+    `Meta.model = Comment`, so it would compile its event type and its
+    `CommentSubscriptionFilterInput` from the **model** — `internalNote` would
+    be selectable and equality-filterable there while `CommentType` hides it.
+    That is the third of the
     [open boundaries](../types.md#projection-exception) the rule states, and
     the remedy is one line: repeat `exclude_fields` in the subscription's own
-    `Meta`. The playground leaves it open on purpose and pins it with a test
-    that goes red the day it is closed.
+    `Meta`. The playground does exactly that, so `internalNote` is absent from
+    the subscription's event type and filter input, and a test pins both the
+    closure and the library gap it compensates for.
 
 ## Uploading a file
 

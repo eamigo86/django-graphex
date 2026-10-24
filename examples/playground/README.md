@@ -88,31 +88,36 @@ one documented exception (an operator-configured `ordering=` default) and the
 boundaries it cannot close live in
 [the Types guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/types.md#projection-security-boundary).
 
-One boundary the playground does **not** close, stated here rather than left to
-be discovered: `CommentSubscription` is a hand-written `Subscription` bound to
+One boundary the library itself leaves open, and how the playground closes it:
+`CommentSubscription` is a hand-written `Subscription` bound to
 `Meta.model = Comment`, and it builds its event type and its filter input from
-the **model**, not from `CommentType`'s projection. `internalNote` is therefore
-selectable and filterable through `commentSubscription` even though every query
-surface refuses it. Project the column on the subscription too, or do not put
-data in it that the query surface hides.
+the **model**, not from `CommentType`'s projection. A subscription that declares
+no projection of its own would therefore publish `internalNote` (selectable and
+filterable) even though every query surface refuses it. The playground repeats
+`exclude_fields = ("internal_note",)` in `CommentSubscription.Meta`, so
+`internalNote` is absent from `CommentSubscriptionEvent` and
+`CommentSubscriptionFilterInput`; `test_projection_boundary.py` pins both the
+closure and the underlying library gap. Do the same on every model-bound
+subscription you write.
 
 ### The relation-scope hatch
 
-`PostType.get_queryset` hides `DRAFT` posts from anonymous callers — but it is
-a **field-level** scope. An **auto-expanded** relation reads the parent's
-prefetch cache and never calls it, in either direction. The playground mounts
-the documented escape hatch for both arms and leaves the unmounted shape
-standing beside it, so you can see the boundary instead of taking its word:
+`PostType.get_queryset` hides `DRAFT` posts from anonymous callers. It runs on
+every top-level field **and** on automatic FK and reverse-FK output reads, so an
+anonymous caller never sees a draft through a relation either. The playground
+still mounts the documented escape hatch for both arms, because the declaration
+changes the wire shape and makes the filter-axis contract explicit:
 
 | Query (run it logged out) | Drafts? | Why |
 |---|---|---|
 | `{ posts { results { title status } } }` | hidden | Top-level field: the hook runs |
-| `{ categories { name posts { title status } } }` | hidden | **to-MANY hatch**: `CategoryType.posts = DjangoFilterListField(PostType)` carries a resolver, and the resolver runs the hook |
-| `{ authors { results { posts { results { status } } } } }` | **visible** | Auto-expanded container: reads the prefetch cache, hook never called |
+| `{ categories { name posts { title status } } }` | hidden | **to-MANY hatch**: `CategoryType.posts = DjangoFilterListField(PostType)` carries a resolver, and the resolver runs the hook. The wire shape is a plain list |
+| `{ authors { results { posts { results { status } } } } }` | hidden | Auto-expanded container: the automatic reverse-FK read applies `PostType.get_queryset` to its rows and to `totalCount` |
 | `{ authors { results { name user { username } } } }` | `user: null` | **to-ONE hatch**: `AuthorType.user = Field(UserType)` + `resolve_user`. A bare `resolve_user` with no declaration does *nothing* |
 
-Row 3 is the documented behaviour, not a bug: rebuilding the prefetch queryset
-inside the resolver would cost window pagination and the `.only()` plan.
+Rows 2 and 3 differ only in wire shape (plain list versus `results` /
+`totalCount` container); `tests/test_relation_scope_hatch.py` pins that both hide
+drafts. The hatch is no longer needed merely to hide drafts.
 
 **Declaring either arm costs the relation its other two axes**, because a
 relation served by your own resolver is a *mask* — what the client reads is
@@ -205,9 +210,9 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoInterfaceType` | doc | Covered in `docs/usage/types.md`; not in the playground (no shared abstract base fits Account/Invoice cleanly) |
 | `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
 | `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — `UserType` allowlists only four safe profile fields; `AuthorType` hides `bio`; `CommentType` + `CommentModelType` hide `internal_note` on **reads and writes alike** (including the nested child input). Each excluded field is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
-| Relation-scope hatch, to-**MANY** arm | ✅ | `schema.py` — `CategoryType.posts = DjangoFilterListField(PostType)` runs `PostType.get_queryset`; the auto-expanded `AuthorType.posts` container beside it does **not** — see [The relation-scope hatch](#the-relation-scope-hatch) |
+| Relation-scope hatch, to-**MANY** arm | ✅ | `schema.py` — `CategoryType.posts = DjangoFilterListField(PostType)` (plain-list wire shape) runs `PostType.get_queryset`; the auto-expanded `AuthorType.posts` container beside it applies the same hook — see [The relation-scope hatch](#the-relation-scope-hatch) |
 | Relation-scope hatch, to-**ONE** arm | ✅ | `schema.py` — `AuthorType.user = Field(UserType)` + `resolve_user`; a bare `resolve_user` with no declaration would be silently ignored |
-| `get_queryset` (per-request row scoping) | ✅ | `schema.py` — `PostType.get_queryset` hides drafts from anonymous callers. It is a **field-level** scope: read the hatch rows above before relying on it to hide relation-reachable rows |
+| `get_queryset` (per-request row scoping) | ✅ | `schema.py` — `PostType.get_queryset` hides drafts from anonymous callers. It also scopes automatic FK / reverse-FK reads; filters, custom resolvers and ID links keep their own contracts — see [The relation-scope hatch](#the-relation-scope-hatch) |
 | `max_depth` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_depth = 4` |
 | `complexity` per-type cost weight | ✅ | `schema.py` — `PostType.Meta.complexity = 2` |
 | **Fields** | | |
