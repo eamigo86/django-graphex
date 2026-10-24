@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | L-M1/M-D10 broader shapes; R08b–o accepted boundedly; other forms open. | [ ] |
+| R08 | D; human21002; unchecked | L-M1/M-D10 broader shapes; R08b–p accepted boundedly; other forms open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring; R09d bounded rejected-mutation output leak accepted25084. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -349,7 +349,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 184 checked/25 overlap-unchecked (209 tasks); 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08k–o accepted boundedly; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 open.
+**Current audit state:** 186 checked/25 overlap-unchecked (211 tasks); 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08p accepted boundedly; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 remain open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -427,6 +427,8 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R08n-V | D; accepted25382 | Independent gates and current writer full/coverage pass; exact proof/limits in R08n closeout. No RDD receipt/PR. | [x] |
 | R08o-I | D; human25393/root25413; `ca95f903` | Exact finite Decimal sets only; public RED→same-byte GREEN, native Decimal+field-local finite guard, tests/docs; 843 lines, 400 advisory. | [x] |
 | R08o-V | D; accepted25413 | Writer/independent/addendum+parent checks pass; current full6572 pass/7 skip/9 warn, ≥95.01 raw/combined/actual. Limits in R08o closeout; no RDD/PR. | [x] |
+| R08p-I | D; human25429/root25456; `deddb615` | Exact direct Boolean maps → same JSON scalar, strict supplied values, unchanged omitted defaults; isolated cache and field-local F1 literal. Dual public RED→same-byte GREEN; tests/docs. 632 lines, 400 advisory. | [x] |
+| R08p-V | D; accepted25456 | Independent F1/current gates pass; full6620 pass/7 skip/13 warn, raw+combined+actual ≥95.01. Exact proof/limits in R08p closeout; RDD OFF, no PR. | [x] |
 
 **R08k–m completed history:** All exact prior wording, states, archive chains, failures/UNKNOWNs, R08k original-origin attribution, R08l reused gates, R08m F1 wrong oracle/prefreeze gap, pruner0 N/A and RDD limits remain byte-for-byte in `md10-uuid-set-closeout/tracker-preclosure.md` (49,498 B; SHA `c08c6cb97d0c1f2e18c545a39c0fc0f9f0de256c4727751c9510a55dfad5a661`; 0644), with its earlier archive pointers and respective closeouts. R08m human25324/root25360/local `aeb74b8`; dual TDD and corrected full/independent/coverage pass; R08/M-D10 partial.
 
@@ -436,9 +438,11 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R08n history archive:** `md10-decimal-set-closeout/tracker-preclosure.md` (48,840 B; SHA-256 `a18f99deea47d197baa70409fd13c2b9a506e6baf41ace09faf4e1317df1764f`; 0644) preserves R08n acceptance, all 207 prior states, 100 claim IDs/order, failures/UNKNOWNs, proof limits and older chains; no scope revision.
 
-**R08o accepted:** Human25393/root25413/local `ca95f9039978693562e7c26294a2c3d9e7a0e9d3`; exact finite supplied Decimal sets only, `[Decimal!]!` via unchanged global scalar, real Python set, `Decimal.is_finite()` without precision-losing float cast. Legacy fixed/factory omissions, prior set paths/Float F1 and pruned final-field identity unchanged. Eleven files/843 authored lines (400 advisory). Public 4 old-String SDL RED+2 F1 controls→same-byte 6 GREEN; 6612B test SHA `07e59fe513a02cb38ce3629d70de5721ddd84fa12b005111bbba561e9bbcedf6`; BEFORE hashes/modes separate JSON, native3.3/argv/env direct stdout. Fresh independent335 focal/541 related/230 Decimal+8 global/109 UUID/72 Float controls, quality/43 anchors/5 AST+56 declarations pass. Writer full6572pass/7skip/9warn (6579 nodes), docs45/Playground61 REUSED+AUDITED. Raw4651/4858=95.738987%, combined17125/17513=97.784503%, actual+29/29 lines+16/16 exits; pruner0 N/A. Original independent E1 PARTIAL (self-indexed stdout1441B vs closed1923B) retained; new parent and independent addenda verify current sufficiency, not historical repair. Writer NaN-equality/status-helper and independent E1/wrong-field/footer-helper failures retained. Full proof/limits: `md10-decimal-set-closeout/closure.md` (writer/independent/addenda hashes there). RDD OFF/risk unassessable-HIGH, not PASS/no receipt. Parent postcommit guard covers 11 paths, two refs and tag COUNT14 only, not DB/results/allrefs/ignored-index/universal-I/O. R08/M-D10 partial.
+**R08o archived:** Human25393/root25413/local `ca95f903`, finite Decimal sets only. Exact TDD/E1/PARTIAL/addenda/full/coverage/failures/UNKNOWNs/reused-gate/RDD limits and older chains remain in `md10-bool-map-closeout/tracker-preclosure.md` (49,287 B; SHA-256 `24400924b8bca6603b7775c7440d08eafdec6c807912adc567d6408d60961dd9`; 0644) and `md10-decimal-set-closeout/closure.md`; M-D10 partial.
 
-**Next:** Parent mirrors/reads back this tracker, then locally commits it. R08/M-D10/T17 remain open; no other leaf approved. Original report unavailable (optional); no PR/remote/release.
+**R08p accepted:** Human25429/root25456/local `deddb61527c123de52e95d239af576da70709b1c`: exact direct Boolean maps only → same JSON scalar, strict supplied booleans/string keys, no conversions; default/factory identity and global JSON unchanged. Isolated graphql-core3.3 omission cache and field-local legacy literal fixed F1 in full/pruned schema. Dual public TDD, independent current checks and proof limits: `md10-bool-map-closeout/closure.md`; preclosure archive above. 632 coherent authored lines (400 advisory); no PR.
+
+**Next:** R08/M-D10/T17 remain open; original `Union[int,str]` remains unsupported and needs separate wire-contract approval. No next leaf/container policy inferred from R08p; no global scalar/default change.
 
 **R09 scope/guard incident (partial):** Original ignored-profile and bytecode preimages remain UNKNOWN. Full RED/GREEN/helper/restore chronology and exact qualifications are retained in `r09-global-docstrings-implementation/{README.md,incident-preservation.json,tracked-restoration.json}` and the R10a pre-edit archive; later passes do not repair them.
 
