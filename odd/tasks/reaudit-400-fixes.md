@@ -44,9 +44,9 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T16 | R8, P17 | `_flat_and` splices nested `and` (flat sibling EXISTS, same results); approved rule: `not` inside a to-many relation object = NOT EXISTS of a matching related row (scoped rows respected) | D | [x] | `7afa80c`, `be4f85b`, `038c191`; RED 10/35 + matrix f/i/k/o; full 6899 passed, cov 97.65 %; parent re-ran t_fdeep (data) and t_ident (f x,xy; i; k x,xz; o all 8) |
 | T17 | R11 | Only fields declared by an interface use the explicit `name=`; other fields keep their no-interface naming | D | [x] | `1625f3b`; RED non-interface name changed |
 | T18 | R12 | `Literal["__x"]` rejected at build (`ImproperlyConfigured`); Django choice values with `__` prefix fall back to the label/`A_` cascade | D | [x] | `2508127`; RED 2 tests; full 6902 passed, cov 97.65 %, gates clean |
-| T19 | P8 | Aggregate output cap / directive cost | D | [ ] | |
+| T19 | P8 | New `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 chars per execution) charged by the directive middleware for grown text, state kept on the request context (never in variables); opt-in `COST_DIRECTIVE` (default 0) | D | [x] | `352caac`, `bbafd7d`; RED settings/cost + variable-injection bypass; full 6929 passed, cov 97.66 % |
 | T20 | P10 | Mutation `only_fields`/`exclude_fields` validated like object types | D | [ ] | |
-| T21 | P11 | `pageSize` counted by cost analysis | D | [ ] | |
+| T21 | P11 | Pagination args matched in snake_case (pageSize = page_size); custom names via `COST_PAGINATION_ARGS` documented | D | [x] | `ea2e4ca`; RED 101 > 5000 |
 | T22 | P12 | Tampered in-memory cursors return "Invalid cursor" | D | [ ] | |
 | T23 | P13 | Multipart size limit enforced before CSRF reads `request.POST` | D | [ ] | |
 | T24 | P14 | Remaining runtime `assert`s replaced by explicit errors | D | [ ] | |
@@ -106,6 +106,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T17, T18 done. Audit note: explicit field `name=` is ignored on types without interfaces (pre-existing; SDL unchanged).
 
+- T19, T21 done. Parent review caught a budget bypass through a client-declarable variable name in the first T19 commit; fixed in `bbafd7d`.
+
 ## Next step
 
-T19 + T21 (cost and response size).
+T23 + T25 + T30 (HTTP and uploads).
