@@ -47,7 +47,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T19 | P8 | New `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 chars per execution) charged by the directive middleware for grown text, state kept on the request context (never in variables); opt-in `COST_DIRECTIVE` (default 0) | D | [x] | `352caac`, `bbafd7d`; RED settings/cost + variable-injection bypass; full 6929 passed, cov 97.66 % |
 | T20 | P10 | Mutation `only_fields`/`exclude_fields` validated like object types | D | [ ] | |
 | T21 | P11 | Pagination args matched in snake_case (pageSize = page_size); custom names via `COST_PAGINATION_ARGS` documented | D | [x] | `ea2e4ca`; RED 101 > 5000 |
-| T22 | P12 | Tampered in-memory cursors return "Invalid cursor" | D | [ ] | |
+| T22 | P12 | Strict cursor coercion once per request; in-memory and DB paths both answer "Invalid cursor" (non-finite values refused on both) | D | [x] | `89715ae`; RED 16/27; parent re-ran t_pg4: all Invalid cursor |
 | T23 | P13 | Body cap runs in `dispatch` before `@ensure_csrf_cookie` (moved to an inner method); auth-before-cap precedence kept | D | [x] | `2b5c99b`; RED parse calls 1 != 0 with cookie |
 | T24 | P14 | Remaining runtime `assert`s replaced by explicit errors | D | [ ] | |
 | T25 | P15 | `_SUGGESTION_RE` replaced by linear `_strip_suggestion`; old regex kept as test oracle (4000 random + 22 samples equal) | D | [x] | `97461e2`; RED 2.55 s |
@@ -56,7 +56,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T28 | P20 | Not changed (user chose 4.1.0): document range fields and subscription DurationField mapping as a known limitation | D | [ ] | |
 | T29 | P21 | Mutable literal defaults not shared between requests | D | [ ] | |
 | T30 | P22 | Base64 decoded-size estimate subtracts `=` padding; same byte limit as multipart | D | [x] | `3ebc835`; RED 12 > 10 at the limit; full 6938 passed, cov 97.67 %, gates clean |
-| T31 | P23 | Decimal filter invalid value returns a clean field error | D | [ ] | |
+| T31 | P23 | Decimal scalar rejects NaN/sNaN/Infinity at coercion (Float/Int/BigInt/Date already did); mutation inputs now get a coercion error like BigInt (4.0.0 Float did the same) | D | [x] | `33862e8`; RED 16/68; full 7033 passed, cov 97.61 % |
 | T32 | Residual partials (A1, A2, A10, M-D6, M-D10, M-F3, SD6, Q8, others) | Fix compatible residuals; list incompatible ones for approval | D | [ ] | |
 | T33 | D2, D3, D5, D6 | Upgrade guide split by version, audit disposition fixes, docs cleanup | D | [ ] | |
 | T34 | G1-G7 | Playground README/docs, `subscription_scope`, password validation, commands | D | [ ] | |
@@ -110,6 +110,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T23, T25, T30 done. Follow-up for T33 docs: `BaseGraphQLView` (not csrf_exempt) behind Django's `CsrfViewMiddleware` still has its multipart body parsed by the middleware before the view's cap; document a proxy/body-size middleware placed before CSRF.
 
+- T22, T31 done.
+
 ## Next step
 
-T22 + T31 (cursor and Decimal filter errors).
+T20 + T24 + T27 + T29 (type/mutation build residuals).
