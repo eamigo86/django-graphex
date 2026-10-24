@@ -72,6 +72,65 @@ _UNSUPPORTED_ASYNC_MESSAGE = (
 )
 
 
+#: Attribute set on errors raised before execution starts (parse, validate and
+#: variable coercion). Those are client input errors even when graphql-core
+#: wraps a custom scalar's raw ValueError/TypeError as the original error.
+_CLIENT_ERROR_ATTR = "_graphex_client_error"
+
+
+def _mark_client_errors(errors: Any) -> Any:
+    """Flag pre-execution errors as client errors by phase.
+
+    Args:
+        errors: The errors produced while parsing or validating the document.
+
+    Returns:
+        The same errors, for chaining.
+    """
+    for error in errors or ():
+        if isinstance(error, GraphQLError):
+            setattr(error, _CLIENT_ERROR_ATTR, True)
+    return errors
+
+
+def _mark_request_errors(result: Any) -> Any:
+    """Flag the path-less errors of an execution result as client errors.
+
+    Variable-coercion and operation-selection failures are reported by
+    graphql-core before any field runs, so they carry no path; every error
+    raised by a resolver or serializer carries one.
+
+    Args:
+        result: The execution result.
+
+    Returns:
+        The same result.
+    """
+    for error in getattr(result, "errors", None) or ():
+        if isinstance(error, GraphQLError) and error.path is None:
+            setattr(error, _CLIENT_ERROR_ATTR, True)
+    return result
+
+
+def _scrub_cause_text(message: str, cause: BaseException) -> str:
+    """Remove a raw exception's text from a graphql-core coercion message.
+
+    Args:
+        message: The graphql-core message.
+        cause: The unexpected exception behind it.
+
+    Returns:
+        The message without the exception text.
+    """
+    text = str(cause)
+    if not text:
+        return message
+    marker = f", but encountered error '{text}'"
+    if marker in message:
+        return message.replace(marker, "")
+    return message.replace(text, "invalid value")
+
+
 def _internal_error_cause(error: Any) -> BaseException | None:
     """Find an unexpected cause behind GraphQL wrappers, if one exists.
 
@@ -1578,7 +1637,7 @@ class BaseGraphQLView(View):
             try:
                 document = cached_parse(query)
             except Exception as e:
-                return ExecutionResult(errors=[e])
+                return ExecutionResult(errors=_mark_client_errors([e]))
 
         operation_ast = get_operation_ast(document, operation_name)
 
@@ -1609,7 +1668,9 @@ class BaseGraphQLView(View):
             hide_suggestions=hide_suggestions,
         )
         if validation_errors:
-            return ExecutionResult(data=None, errors=list(validation_errors))
+            return ExecutionResult(
+                data=None, errors=_mark_client_errors(list(validation_errors))
+            )
 
         try:
             execute_options = {
@@ -1638,7 +1699,9 @@ class BaseGraphQLView(View):
                 or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
             ):
                 with transaction.atomic():
-                    result = _execute_synchronously(schema, document, execute_options)
+                    result = _mark_request_errors(
+                        _execute_synchronously(schema, document, execute_options)
+                    )
                     rolled_back = getattr(
                         request, MUTATION_ERRORS_FLAG, False
                     ) is True or bool(result.errors)
@@ -1654,7 +1717,9 @@ class BaseGraphQLView(View):
             # its transaction exits without a rollback above.
             if is_mutation:
                 setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
-            return _execute_synchronously(schema, document, execute_options)
+            return _mark_request_errors(
+                _execute_synchronously(schema, document, execute_options)
+            )
         except _UnsupportedAsyncExecution:
             raise
         except Exception as e:
@@ -1763,6 +1828,11 @@ class BaseGraphQLView(View):
 
         cause = _internal_error_cause(error)
         if cause is None:
+            return formatted
+        if getattr(error, _CLIENT_ERROR_ATTR, False):
+            # Invalid client input (parse, validate, variable coercion): keep the
+            # validation contract, but never echo the raw exception text.
+            formatted["message"] = _scrub_cause_text(formatted["message"], cause)
             return formatted
 
         if isinstance(cause, DatabaseError):

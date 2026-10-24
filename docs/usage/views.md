@@ -114,6 +114,16 @@ raise `GraphQLError` explicitly rather than a raw `ValueError`. Deliberate
 `GraphQLError`, native validation and request errors, and the generated
 mutation's existing generic/structured errors retain their contracts.
 
+The classification is by phase. A custom scalar whose `parse_value` or
+`parse_literal` raises `ValueError`/`TypeError` while the document is validated
+or the variables are coerced is invalid client input, not an internal error:
+the request gets HTTP 400 with graphql-core's validation message (for example
+`Expected value of type 'MyDate'; found "garbage".` or `Variable '$v' has
+invalid value ...`), without the raw exception text and without an ERROR log
+record. With `DEBUG=True` the full message, cause text included, is kept. A
+`ValueError` raised during execution (resolvers, output serialization) is still
+masked and logged as described above.
+
 GraphQL `locations`, `path`, null propagation, and rollback are unchanged.
 For the current JSON endpoint, a field execution error returns HTTP 200 with
 `errors` and a `data` member, even when a non-null root field makes `data`

@@ -14,6 +14,16 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Keep custom scalar coercion failures as client errors in production. A custom
+  scalar whose `parse_value`/`parse_literal` raises `ValueError`/`TypeError`
+  (the graphql-core convention for invalid input) was classified as an internal
+  error by the production formatter: the client got HTTP 400 with
+  `INTERNAL_SERVER_ERROR` and every such request wrote an ERROR log with
+  traceback. Errors raised while parsing, validating or coercing variables are
+  now classified by phase as validation errors: graphql-core's message is kept
+  without the raw exception text (unless `DEBUG`), there is no ERROR log, and
+  errors raised during execution keep their masking and log.
+
 - Apply the target output type's `get_queryset` to flat `GenericForeignKey`
   targets in every schema. Without `PERMISSION_SCOPED_SCHEMA` the flat
   `GenericForeignKeyType` still returned `appLabel`, `modelName` and `id` of a
