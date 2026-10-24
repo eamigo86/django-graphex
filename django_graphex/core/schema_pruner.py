@@ -458,6 +458,11 @@ class _Pruner:
                     for name, default in gtype.out_type.set_decimal_defaults.items()
                     if name in surviving
                 },
+                {
+                    name: spec
+                    for name, spec in gtype.out_type.boolean_maps.items()
+                    if name in surviving
+                },
             )
         kwargs["fields"] = lambda g=gtype: {
             fname: self._clone_input_field(ifield)

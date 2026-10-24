@@ -181,6 +181,7 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         alias_numbers: Set[int]  # noqa: UP006
         integer_map: Dict[str, int]
         string_map: Dict[str, str]
+        boolean_map: Dict[str, bool]
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -194,4 +195,5 @@ def test_supported_annotations_do_not_gain_fallback_warnings() -> None:
         "aliasNumbers": "[Int!]!",
         "integerMap": "JSON!",
         "stringMap": "JSON!",
+        "booleanMap": "JSON!",
     }

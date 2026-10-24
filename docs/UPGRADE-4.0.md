@@ -51,6 +51,17 @@ other types are rejected before mutation resolution without conversion.
 Empty objects remain valid. Other parameterized dictionary forms remain
 unchanged, and a bare `dict` remains permissive raw JSON.
 
+Exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation inputs now
+use the same `JSON` scalar instead of `String`. Send a JSON object such as
+`"mapping": {"enabled": true}` or inline `mapping: {enabled: true}`;
+encoded JSON strings no longer match the wire type. Every key must be a
+string and every value must be an exact Boolean (`true` or `false`): `1`,
+`0`, `"true"`, null and nested values fail before the resolver or omitted
+sibling factories run. Empty objects are valid. Outer Optional, alias and
+fixed/factory-default behavior, including malformed omitted legacy defaults,
+is unchanged. This is field-local validation, not a change to bare `dict`,
+other maps, list-wrapped maps or the global JSON scalar.
+
 ### Nested supported input lists
 
 Nested lists of already-supported input leaves now expose their full GraphQL

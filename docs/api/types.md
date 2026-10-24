@@ -412,6 +412,17 @@ permission-pruned input behavior. Other parameterized dictionaries remain
 unsupported and use the warning/`String` fallback; a bare `dict` remains
 permissive raw JSON.
 
+Exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation inputs now
+use the same `JSON` scalar instead of `String`. Send a JSON object such as
+`"mapping": {"enabled": true}` or inline `mapping: {enabled: true}`;
+encoded JSON strings no longer match the wire type. Every key must be a
+string and every value must be an exact Boolean (`true` or `false`): `1`,
+`0`, `"true"`, null and nested values fail before the resolver or omitted
+sibling factories run. Empty objects are valid. Outer Optional, alias and
+fixed/factory-default behavior, including malformed omitted legacy defaults,
+is unchanged. This is field-local validation, not a change to bare `dict`,
+other maps, list-wrapped maps or the global JSON scalar.
+
 Nested `list`/`typing.List` wrappers around already-supported input leaves
 retain their annotated nullability at every level. For example,
 `list[list[int]]` compiles to `[[Int!]!]!`; GraphQL accepts nested values and

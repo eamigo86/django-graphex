@@ -48,6 +48,7 @@ from graphql import (
     GraphQLString,
     Undefined,
 )
+from graphql.language.ast import StringValueNode
 from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
 
@@ -73,6 +74,14 @@ class GdxInputSpec:
     nested_fields: tuple[NestedInputField, ...] = ()
 
 
+class _OmittedBooleanMap(dict):
+    """Field-local carrier for an omitted fixed Boolean-map default."""
+
+    def __init__(self, original: Any) -> None:
+        super().__init__()
+        self.original = original
+
+
 class _FactoryOutType:
     """Apply field-specific input checks and omitted-field factories.
 
@@ -90,6 +99,7 @@ class _FactoryOutType:
         set_uuid_fields: Surviving exact UUID-set fields to materialize.
         set_decimal_fields: Surviving exact Decimal-set fields to materialize.
         set_decimal_defaults: Fixed Decimal-set defaults kept by object identity.
+        boolean_maps: Surviving exact Boolean maps with public field paths.
     """
 
     def __init__(
@@ -104,6 +114,7 @@ class _FactoryOutType:
         set_uuid_fields: set[str] | None = None,
         set_decimal_fields: set[str] | None = None,
         set_decimal_defaults: dict[str, Any] | None = None,
+        boolean_maps: dict[str, tuple[str, _OmittedBooleanMap | None]] | None = None,
     ) -> None:
         self.factories = factories
         self.typed_maps = typed_maps if typed_maps is not None else {}
@@ -123,6 +134,7 @@ class _FactoryOutType:
         self.set_decimal_defaults = (
             set_decimal_defaults if set_decimal_defaults is not None else {}
         )
+        self.boolean_maps = boolean_maps if boolean_maps is not None else {}
 
     def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
         """Apply omitted factories and approved field-local coercion.
@@ -169,6 +181,12 @@ class _FactoryOutType:
                 raise GraphQLError(
                     f"Input field {field_name!r} cannot contain a nonfinite Decimal."
                 )
+        for field_name, (schema_path, marker) in self.boolean_maps.items():
+            value = values.get(field_name, Undefined)
+            if marker is not None and value is marker:
+                values[field_name] = marker.original
+            elif value is not Undefined and value is not None:
+                _validate_boolean_map(value, schema_path)
         for field_name, factory in self.factories.items():
             if field_name not in values:
                 try:
@@ -286,6 +304,47 @@ def _validate_typed_map(value: Any, schema_path: str, value_type: type) -> None:
         raise GraphQLError(
             f"Input field '{schema_path}' requires an object with string keys "
             f"and {kind} values."
+        )
+
+
+def _is_exact_boolean_map(annotation: Any) -> bool:
+    """Recognize only direct approved Boolean-map annotations.
+
+    Args:
+        annotation: Field annotation, optionally nullable.
+
+    Returns:
+        Whether its direct map form has exact string keys and Boolean values.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if (
+        type(inner) is not GenericAlias
+        and type(inner) is not type(typing.Dict[str, bool])  # noqa: UP006
+    ):
+        return False
+    if get_origin(inner) is not dict:
+        return False
+    args = get_args(inner)
+    return len(args) == 2 and args[0] is str and args[1] is bool
+
+
+def _validate_boolean_map(value: Any, schema_path: str) -> None:
+    """Reject a supplied value outside the direct Boolean-map contract.
+
+    Args:
+        value: Native JSON-coerced supplied value.
+        schema_path: Public input field path for a safe error.
+
+    Raises:
+        GraphQLError: If keys are not strings or values are not exact Booleans.
+    """
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or type(item) is not bool
+        for key, item in value.items()
+    ):
+        raise GraphQLError(
+            f"Input field '{schema_path}' requires an object with string keys "
+            "and Boolean values."
         )
 
 
@@ -1144,6 +1203,7 @@ def compile_input_type(
     set_uuid_fields: set[str] = set()
     set_decimal_fields: set[str] = set()
     set_decimal_defaults: dict[str, Any] = {}
+    boolean_maps: dict[str, tuple[str, _OmittedBooleanMap | None]] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
@@ -1159,6 +1219,7 @@ def compile_input_type(
         set_float_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_uuid_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
         set_decimal_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        boolean_map_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -1234,6 +1295,8 @@ def compile_input_type(
                         if element_optional
                         else GraphQLNonNull(gql_base_type)
                     )
+            elif _is_exact_boolean_map(annotation):
+                gql_base_type = _native_scalar_map()[dict]
             elif _is_exact_int_set(annotation):
                 gql_base_type = GraphQLList(GraphQLNonNull(GraphQLInt))
             elif _is_exact_str_set(annotation):
@@ -1327,6 +1390,22 @@ def compile_input_type(
             else:
                 gql_field_kwargs["default_value"] = default_value
             gql_field = GraphQLInputField(**gql_field_kwargs)
+            if _is_exact_boolean_map(annotation):
+                boolean_map_candidates[alias] = (field_name, gql_field)
+                if default_value is not Undefined and default_value is not None:
+                    if not isinstance(gql_field.default, GraphQLDefaultInput):
+                        # Retain the old String fallback's printable spelling
+                        # for an otherwise unprintable legacy default. The
+                        # private cache below still delivers its original object.
+                        gql_field.default = GraphQLDefaultInput(
+                            literal=StringValueNode(value=str(default_value))
+                        )
+                    # graphql-core 3.3 preserves JSON variable object identity.
+                    # Keep the public printable default unchanged while marking
+                    # only its private coerced cache for omitted-field provenance.
+                    gql_field.default._memoized_coerced_value = _OmittedBooleanMap(
+                        default_value
+                    )
             if _is_exact_int_set(annotation):
                 set_int_candidates[alias] = (field_name, gql_field)
             if _is_exact_str_set(annotation):
@@ -1504,6 +1583,23 @@ def compile_input_type(
                 if fields.get(alias) is gql_field
             }
         )
+        boolean_maps.clear()
+        boolean_maps.update(
+            (
+                field_name,
+                (
+                    f"{name}.{alias}",
+                    gql_field.default._memoized_coerced_value
+                    if isinstance(gql_field.default, GraphQLDefaultInput)
+                    and isinstance(
+                        gql_field.default._memoized_coerced_value, _OmittedBooleanMap
+                    )
+                    else None,
+                ),
+            )
+            for alias, (field_name, gql_field) in boolean_map_candidates.items()
+            if fields.get(alias) is gql_field
+        )
         set_int_fields.clear()
         set_int_fields.update(
             field_name
@@ -1573,10 +1669,12 @@ def compile_input_type(
                 set_uuid_fields,
                 set_decimal_fields,
                 set_decimal_defaults,
+                boolean_maps,
             )
             if _emit_defaults
             or any(
                 _has_wrapped_typed_map(info.annotation)
+                or _is_exact_boolean_map(info.annotation)
                 or _is_exact_int_set(info.annotation)
                 or _is_exact_str_set(info.annotation)
                 or _is_exact_bool_set(info.annotation)

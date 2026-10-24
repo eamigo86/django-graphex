@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Compile exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation
+  inputs as strict `JSON` instead of `String`. Require string keys and exact
+  Boolean values before resolution without changing the global JSON scalar
+  or omitted fixed/factory defaults. Clients must send JSON objects, not
+  encoded strings; list-wrapped and other map forms retain their fallback.
+
 - Compile exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]`
   mutation inputs as `[Decimal!]!` instead of `String!`. Existing native
   Decimal coercion preserves finite precision through list/singleton inputs;

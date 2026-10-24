@@ -74,6 +74,17 @@ def test_guide_documents_typed_integer_map_json_migration() -> None:
         assert "Bare `dict`" in text or "bare `dict`" in text
 
 
+def test_guide_documents_exact_boolean_map_json_migration() -> None:
+    """Keep direct Boolean-map migration and default limits visible."""
+    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "dict[str, bool]" in text
+        assert "typing.Dict[str, bool]" in text
+        assert "exact Boolean" in text
+        assert "global JSON scalar" in text
+
+
 def test_guide_documents_typed_string_map_json_migration() -> None:
     """Keep exact string-valued maps distinct from unsupported forms."""
     paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")

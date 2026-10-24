@@ -115,6 +115,8 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert "numeric/mixed Literal" in rows["M-D10"][2]
     assert "dict[str, int]" in rows["M-D10"][2]
     assert "nested lists of already-supported input leaves" in rows["M-D10"][2]
+    assert "dict[str, bool]" in rows["M-D10"][2]
+    assert "tests/core/test_boolean_dict_json_input.py" in rows["M-D10"][2]
     assert "exact `set[int]`" in rows["M-D10"][2]
     assert "`typing.Set[int]`" in rows["M-D10"][2]
     assert "exact `set[str]`" in rows["M-D10"][2]
