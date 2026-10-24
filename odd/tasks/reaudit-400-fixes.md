@@ -35,8 +35,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T07 | P2 | Typed GFK union targets resolve through the member type `get_queryset` (hidden -> null), batched via scoped GenericPrefetch | D | [x] | `6673531`; RED 4 leak tests; parent re-ran t_gfk_union: target null |
 | T08 | P5 | Flat GFK target redacted by the registered type's `get_queryset` in every schema (pruned or not); unregistered targets unchanged | D | [x] | `3e6535b`; RED 4 tests; full 6751 passed, cov 97.78 %; parent re-ran t_sd5 matrix |
 | T09 | P6 | Generated update/delete (DjangoModelMutation, DjangoModelType) and nested child writes scoped by the registered output type's `get_queryset`; hidden = missing byte-for-byte | D | [x] | `0583f62`, `47cfed9`; RED hidden rows rewritten; parent full run 6770 passed / 6 skipped, cov 97.78 %; t_sd3 update/delete refused |
-| T10 | R3 | Custom scalar coercion errors stay client errors (no INTERNAL, no ERROR log) | D | [ ] | |
-| T11 | R4, P18 | Batch with `ATOMIC_REQUESTS`: item errors do not roll back other items; consistent batch abort | D | [ ] | |
+| T10 | R3 | Parse/validation/variable-coercion errors classified by phase as client errors; raw exception text scrubbed unless DEBUG; no log; execution errors still masked + ERROR | D | [x] | `e8d9bb3`; RED 12/16; parent re-ran test_p8: validation messages, 0 ERROR records |
+| T11 | R4, P18 | Each batch item in its own savepoint per ATOMIC_REQUESTS alias; per-item MUTATION_ERRORS_FLAG; every item answered in order (no early stop); status = highest entry status | D | [x] | `76f01bf`; RED 22/32; full 6818 passed, cov 97.76 %; parent re-ran t_a1 poison: persisted 1. Note: replaces the unreleased M-H1 stop-on-400 rule (4.0.0 release failed the whole batch) |
 | T12 | R5, R10 | Numeric directives correct on Decimal/BigInt; Decimal output without scientific notation | D | [ ] | |
 | T13 | R2 | `check_docstrings` and bandit gates clean | D | [ ] | |
 | T14 | R7 | Sync fan-out isolates each group; useful failure log | D | [ ] | |
@@ -93,6 +93,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T06, T09 done.
 
+- T10, T11 done. Residual for T32: rollback of non-default aliases on item errors.
+
 ## Next step
 
-T10 + T11 (views.py), then T12.
+T12 (directives on Decimal/BigInt), then T13 (CI gates).
