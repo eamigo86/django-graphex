@@ -137,7 +137,7 @@ DJANGO_GRAPHEX = {
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
 | `DEFAULT_PAGE_SIZE` | `100` | Fallback multiplier when `MAX_PAGE_SIZE` is not set; also the library's inherited page size, not a hard cap. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
-| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. |
+| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. Names are compared in snake_case form, so `page_size` also matches the wire name `pageSize`. A custom `page_size_query_param` such as `per_page` must be added here. |
 
 When a list field has no pagination argument, cost analysis uses
 `MAX_PAGE_SIZE`, then `DEFAULT_PAGE_SIZE`, then `DEFAULT_LIST_MULTIPLIER`.

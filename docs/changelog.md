@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: cost analysis now reads the page-size argument by its wire name too.
+  `COST_PAGINATION_ARGS` was compared literally, so the camelCase `pageSize`
+  that the page paginator exposes was ignored and `items(pageSize: 5000)` was
+  costed at the default page size. Argument names are now compared in
+  snake_case form on both sides (`pageSize` matches `page_size`; a custom
+  `perPage` is matched by listing `per_page` or `perPage`).
+
 - Fix: reject enum members that GraphQL reserves. A `Literal["__x"]` input
   generated the member `__X`, so the schema built and every query failed.
   The schema build now raises an error naming the input type, field and value.

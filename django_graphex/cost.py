@@ -36,6 +36,7 @@ from graphql.validation import ValidationRule
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
 from ._fragment_cycles import find_fragment_cycle
+from ._strconv import to_snake_case
 from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
@@ -115,7 +116,11 @@ class _CostAnalyzer:
         self._get_fragment = get_fragment
         self._variable_values = variable_values
         self._variable_defaults = variable_defaults
-        self._pagination_args = tuple(_settings_value("COST_PAGINATION_ARGS") or ())
+        # Compare snake_case forms so the wire name (``pageSize``) matches ``page_size``.
+        self._pagination_args = frozenset(
+            to_snake_case(name)
+            for name in _settings_value("COST_PAGINATION_ARGS") or ()
+        )
         #: Cost of a spread, keyed by (fragment name, parent type name).
         self._spread_costs: dict[tuple[str, str], int] = {}
         #: Counts cycle-guard short-circuits so truncated walks are not cached.
@@ -293,7 +298,7 @@ class _CostAnalyzer:
     def _page_size_argument(self, node: FieldNode) -> int | None:
         """Resolve the page-size argument value from the query, if present."""
         for argument in node.arguments or ():
-            if argument.name.value not in self._pagination_args:
+            if to_snake_case(argument.name.value) not in self._pagination_args:
                 continue
             value = argument.value
             if isinstance(value, IntValueNode):
