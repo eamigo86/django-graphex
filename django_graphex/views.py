@@ -665,6 +665,23 @@ def _document_cache_maxsize() -> int:
     return sys.maxsize if configured is None else int(configured)
 
 
+def _document_cacheable(query: str) -> bool:
+    """Return whether a query may enter the document caches.
+
+    Both caches are bounded by entry count only; an AST is many times larger
+    than its text, so a document longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH"
+    is parsed and validated without being retained.
+
+    Args:
+        query: The raw GraphQL query string.
+
+    Returns:
+        False when the query is longer than the per-entry bound.
+    """
+    limit = graphql_api_settings.DOCUMENT_CACHE_MAX_QUERY_LENGTH
+    return limit is None or len(query) <= limit
+
+
 def _dynamic_limits_key() -> tuple:
     """Return the runtime limit inputs folded into the validation cache key.
 
@@ -752,8 +769,8 @@ def _parse_or_depth_error(query: str) -> Any:
 def cached_parse(query: str) -> Any:
     """Return the parsed "DocumentNode" for the query, memoized in a bounded LRU.
 
-    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) this is a plain
-    "parse(query)". A parse error propagates to the caller exactly as an
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) or the query is
+    longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH" this is a plain "parse(query)". A parse error propagates to the caller exactly as an
     uncached "parse" would — failures are NOT cached.
 
     The returned AST is immutable and shared across callers/schemas; it must not
@@ -766,7 +783,7 @@ def cached_parse(query: str) -> Any:
         The parsed "DocumentNode".
     """
     maxsize = _document_cache_maxsize()
-    if maxsize <= 0:
+    if maxsize <= 0 or not _document_cacheable(query):
         return _parse_or_depth_error(query)
 
     with _PARSE_CACHE_LOCK:
@@ -805,8 +822,9 @@ def cached_validate(
     tuple means "valid". The SAME "GraphQLError" objects are reused across cache
     hits, so "error.formatted" serializes identically to a fresh run.
 
-    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) this is a plain
-    "validate(...)" returning a fresh tuple.
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) or the query is
+    longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH" this is a plain "validate(...)"
+    returning a fresh tuple.
 
     Args:
         schema: The "GraphQLSchema" validated against (identity of the verdict).
@@ -827,7 +845,7 @@ def cached_validate(
         else {}
     )
     maxsize = _document_cache_maxsize()
-    if maxsize <= 0:
+    if maxsize <= 0 or not _document_cacheable(query):
         return tuple(
             run_validation(
                 validate, schema, document, rules, max_errors, **validation_options

@@ -671,6 +671,84 @@ class TestValidationCacheDynamicCostLimit(DocumentCacheTestBase):
         )
 
 
+class TestPerEntryQueryLengthBound(DocumentCacheTestBase):
+    """DOCUMENT_CACHE_MAX_QUERY_LENGTH keeps oversized documents out of the caches.
+
+    Covers both the parse cache and the per-schema validation cache.
+    """
+
+    def _run(self, query: str) -> tuple[_CountingSpy, _CountingSpy]:
+        """Parse and validate the same query twice, counting the real work.
+
+        Args:
+            query: The raw GraphQL query text.
+
+        Returns:
+            spies: The parse spy and the validate spy after both rounds.
+        """
+        parse_spy = _CountingSpy(views_module.parse)
+        validate_spy = _CountingSpy(views_module.validate)
+        schema = cache_test_schema.graphql_schema
+        with (
+            _patch(views_module, "parse", parse_spy),
+            _patch(views_module, "validate", validate_spy),
+        ):
+            for _ in range(2):
+                document = views_module.cached_parse(query)
+                views_module.cached_validate(schema, query, document, None, None)
+        return parse_spy, validate_spy
+
+    @override_settings(DJANGO_GRAPHEX={"DOCUMENT_CACHE_MAX_QUERY_LENGTH": 64})
+    def test_small_document_is_cached(self) -> None:
+        """A document within the bound is parsed and validated once.
+
+        Verifies the behavior named in the summary line.
+        """
+        parse_spy, validate_spy = self._run("{ hello }")
+        self.assertEqual((parse_spy.calls, validate_spy.calls), (1, 1))
+
+    @override_settings(DJANGO_GRAPHEX={"DOCUMENT_CACHE_MAX_QUERY_LENGTH": 64})
+    def test_large_document_is_not_cached(self) -> None:
+        """A document over the bound is parsed and validated on every request.
+
+        Verifies the behavior named in the summary line.
+        """
+        query = "{ hello " + " " * 64 + "}"
+        parse_spy, validate_spy = self._run(query)
+        self.assertEqual((parse_spy.calls, validate_spy.calls), (2, 2))
+        self.assertEqual(len(views_module._PARSE_CACHE), 0)
+        self.assertEqual(len(views_module._VALIDATE_CACHE), 0)
+
+    @override_settings(DJANGO_GRAPHEX={"DOCUMENT_CACHE_MAX_QUERY_LENGTH": 64})
+    def test_length_equal_to_bound_is_cached(self) -> None:
+        """The bound is inclusive.
+
+        Verifies the behavior named in the summary line.
+        """
+        query = "{ hello" + " " * (64 - len("{ hello}")) + "}"
+        self.assertEqual(len(query), 64)
+        parse_spy, _ = self._run(query)
+        self.assertEqual(parse_spy.calls, 1)
+
+    @override_settings(DJANGO_GRAPHEX={"DOCUMENT_CACHE_MAX_QUERY_LENGTH": None})
+    def test_none_removes_the_per_entry_bound(self) -> None:
+        """None caches documents of any length.
+
+        Verifies the behavior named in the summary line.
+        """
+        parse_spy, _ = self._run("{ hello " + " " * 100_000 + "}")
+        self.assertEqual(parse_spy.calls, 1)
+
+    def test_default_bound_is_65536(self) -> None:
+        """The shipped default caches up to 65536 characters.
+
+        Verifies the behavior named in the summary line.
+        """
+        from django_graphex.settings import DEFAULTS
+
+        self.assertEqual(DEFAULTS["DOCUMENT_CACHE_MAX_QUERY_LENGTH"], 65_536)
+
+
 class _patch:
     """Minimal context-manager monkeypatch (setattr/restore) for module globals."""
 

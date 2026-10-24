@@ -12,6 +12,7 @@ LIMIT_NAMES = (
     "MAX_BATCH_SIZE",
     "MAX_REQUEST_BODY_SIZE",
     "DOCUMENT_CACHE_MAXSIZE",
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH",
 )
 
 
@@ -21,6 +22,7 @@ LIMIT_NAMES = (
         ("MAX_BATCH_SIZE", "None"),
         ("MAX_REQUEST_BODY_SIZE", "None"),
         ("DOCUMENT_CACHE_MAXSIZE", "None"),
+        ("DOCUMENT_CACHE_MAX_QUERY_LENGTH", "None"),
     ],
 )
 def test_negative_integer_limit_fails_on_public_setting_read(

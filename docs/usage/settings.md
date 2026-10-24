@@ -181,6 +181,7 @@ session, tenant, locale or cookie value that can affect the response.
 | Setting | Default | Description |
 |---|---|---|
 | `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches; `None` leaves them unbounded. A negative integer raises `ImproperlyConfigured` when this setting is read. |
+| `DOCUMENT_CACHE_MAX_QUERY_LENGTH` | `65536` | Per-entry bound, in characters of query text, for both document caches. A longer document is parsed and validated on every request but never cached. `0` caches no document; `None` removes the per-entry bound. A negative integer raises `ImproperlyConfigured` when this setting is read. |
 
 graphql-core re-parses and re-revalidates the identical query document on every
 request; real APIs replay a small, stable set of documents (a handful of
@@ -203,6 +204,16 @@ persisted queries from your frontend), so both steps are memoizable:
   settings), so tightening a limit at runtime invalidates previously cached
   "valid" verdicts immediately — the cache never serves a stale verdict across
   a limit change.
+
+The caches are bounded by entry count, but a parsed AST is many times larger
+than its query text. `DOCUMENT_CACHE_MAX_QUERY_LENGTH` therefore caps the text of
+each cached document, which bounds the worst case: the parse cache retains at
+most `DOCUMENT_CACHE_MAXSIZE` x `DOCUMENT_CACHE_MAX_QUERY_LENGTH` characters of
+query text (128 x 65,536 = about 8.4 million characters by default) plus the
+ASTs built from them, and the same again for each schema's validation
+sub-cache. Persisted-query-sized documents stay cached; very large documents,
+which a client sends once, are simply processed without being retained. Setting
+either bound to `None` removes that guarantee.
 
 Raise `DOCUMENT_CACHE_MAXSIZE` if your application legitimately replays more
 than 128 distinct documents per schema; set it to `0` to disable both caches
@@ -490,8 +501,8 @@ dependency). Changes are picked up automatically in tests via Django's
 works as expected. Reading a setting name that does not exist raises
 `AttributeError` to catch typos early.
 
-`MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, and `DOCUMENT_CACHE_MAXSIZE` reject
-negative integers with `ImproperlyConfigured` when each setting is read, not
+`MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE`, `DOCUMENT_CACHE_MAXSIZE`, and
+`DOCUMENT_CACHE_MAX_QUERY_LENGTH` reject negative integers with `ImproperlyConfigured` when each setting is read, not
 at Django startup. The error names the setting, rejected value, minimum of
 zero, and remedy. Their existing `0`, `None`, positive, and default behaviors
 are unchanged; this is not a general setting-type validator.

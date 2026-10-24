@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: the parse and validation document caches no longer retain very large
+  documents. They were bounded by entry count only, so `DOCUMENT_CACHE_MAXSIZE`
+  documents near `MAX_REQUEST_BODY_SIZE` could pin gigabytes of ASTs. The new
+  `DOCUMENT_CACHE_MAX_QUERY_LENGTH` setting (default 65536 characters; `None`
+  removes the bound; a negative integer is rejected) keeps longer documents out
+  of both caches: they are parsed and validated on every request. Smaller
+  documents are cached as before. Worst-case retained query text is
+  `DOCUMENT_CACHE_MAXSIZE` x `DOCUMENT_CACHE_MAX_QUERY_LENGTH` characters.
+
 - Fix: a GraphQL error now rolls back writes on every database alias that is
   inside a transaction opened for the request, not only the default one. Each
   alias with `ATOMIC_REQUESTS` is marked for rollback (in a batch, its entry

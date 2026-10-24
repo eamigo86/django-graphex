@@ -47,6 +47,10 @@ DEFAULTS = {
     # the schema OBJECT (a per-schema sub-cache) so a permission-pruned schema
     # never serves another schema's verdict. 0 disables both caches entirely.
     "DOCUMENT_CACHE_MAXSIZE": 128,
+    # Per-entry bound (characters of query text) for those caches. A longer
+    # document is parsed/validated but never retained, so worst-case retained
+    # text is DOCUMENT_CACHE_MAXSIZE x this value. None = no per-entry bound.
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH": 65_536,
     # Queryset optimization (N+1)
     # Apply nested select_related / prefetch_related derived from the query.
     "OPTIMIZE_QUERYSET": True,
@@ -251,6 +255,10 @@ LIMIT_MINIMUMS = {
     "DOCUMENT_CACHE_MAXSIZE": (
         0,
         "Use 0 to disable both document caches, or None to leave them unbounded.",
+    ),
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH": (
+        0,
+        "Use 0 to cache no document, or None to remove the per-entry bound.",
     ),
 }
 
