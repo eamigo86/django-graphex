@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 
 pytest.importorskip("channels")
 
+from channels.db import database_sync_to_async  # noqa: E402
+
 # A Channels consumer touches the DB connection registry on every dispatched
 # message, and the producer-side broadcast fires from a real transaction commit,
 # so these need DB access with a real (committable) transaction.
@@ -358,6 +360,158 @@ async def test_sse_subscription_delivers_post_create(author: Author) -> None:
     aclose = getattr(aiter, "aclose", None)
     if aclose is not None:
         await aclose()
+
+
+# --------------------------------------------------------------------------- #
+# Public subscription scope: drafts follow PostType.get_queryset               #
+# --------------------------------------------------------------------------- #
+
+
+@database_sync_to_async
+def _create_posts(author: Author, *statuses: str) -> list[str]:
+    """Create one post per status, in order, and return their titles.
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+        *statuses: The "Post.Status" values to create, one post each.
+
+    Returns:
+        titles: The titles of the created posts, in creation order.
+    """
+    from blog.models import Post
+
+    titles = []
+    for status in statuses:
+        title = f"scope-{status}"
+        Post.objects.create(title=title, author=author, status=status)
+        titles.append(title)
+    return titles
+
+
+async def _ws_first_post_title(author: Author, user: object | None) -> str:
+    """Subscribe over WS, create a draft then a published post, return the first title.
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+        user: The authenticated user placed on the connection scope, or None
+            for an anonymous socket.
+
+    Returns:
+        title: The title of the first "next" frame the subscriber received.
+    """
+    from blog.consumers import AppWSConsumer
+    from blog.models import Post
+    from channels.testing import WebsocketCommunicator
+
+    from django_graphex.subscriptions.transports import ws as ws_module
+
+    communicator = WebsocketCommunicator(
+        AppWSConsumer.as_asgi(), "/ws/graphql/", subprotocols=["graphql-transport-ws"]
+    )
+    if user is not None:
+        communicator.scope["user"] = user
+    connected, _ = await communicator.connect()
+    assert connected
+    await communicator.send_json_to({"type": "connection_init"})
+    assert (await communicator.receive_json_from(timeout=3))["type"] == "connection_ack"
+    await communicator.send_json_to(
+        {"id": "s1", "type": "subscribe", "payload": {"query": _POST_SUB_QUERY}}
+    )
+    await _await_started_group(ws_module, communicator, "s1", timeout=3.0)
+
+    await _create_posts(author, Post.Status.DRAFT, Post.Status.PUBLISHED)
+    frame = await communicator.receive_json_from(timeout=3.0)
+    assert frame["type"] == "next", frame
+    await communicator.disconnect()
+    return frame["payload"]["data"]["postSubscription"]["title"]
+
+
+async def _sse_first_post_title(author: Author, user: object) -> str:
+    """Subscribe over SSE, create a draft then a published post, return the first title.
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+        user: The user placed on the request ("AnonymousUser" or a real one).
+
+    Returns:
+        title: The title of the first "event: next" frame the subscriber received.
+    """
+    from blog.models import Post
+    from blog.schema import schema
+    from django.test import RequestFactory
+
+    from django_graphex.subscriptions.transports import sse
+
+    view = sse.subscription_sse_view(schema=schema.graphql_schema)
+    request = RequestFactory().post(
+        "/graphql/stream",
+        data=json.dumps({"query": _POST_SUB_QUERY}),
+        content_type="application/json",
+    )
+    request.user = user
+    response = await view(request)
+    started = sse.get_started_source(response)
+    assert started is not None and started.joined_groups
+
+    await _create_posts(author, Post.Status.DRAFT, Post.Status.PUBLISHED)
+    aiter = _sse_frames(response).__aiter__()
+    first = await asyncio.wait_for(aiter.__anext__(), timeout=3.0)
+    payload_line = [ln for ln in first.splitlines() if ln.startswith("data: ")][0]
+    title = json.loads(payload_line[len("data: ") :])["data"]["postSubscription"][
+        "title"
+    ]
+    await started.aclose()
+    aclose = getattr(aiter, "aclose", None)
+    if aclose is not None:
+        await aclose()
+    return title
+
+
+async def test_ws_anonymous_subscriber_never_receives_a_draft(author: Author) -> None:
+    """Assert an anonymous WS subscriber skips the draft and gets the published post.
+
+    "PostType.get_queryset" hides drafts from anonymous queries; the public
+    "postSubscription" must follow the same rule through "subscription_scope".
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+    """
+    assert await _ws_first_post_title(author, None) == "scope-published"
+
+
+async def test_ws_authenticated_subscriber_receives_the_draft(
+    author: Author, demo_user: object
+) -> None:
+    """Assert a logged-in WS subscriber still sees every post, drafts included.
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+        demo_user: The persisted user placed on the connection scope.
+    """
+    assert await _ws_first_post_title(author, demo_user) == "scope-draft"
+
+
+async def test_sse_anonymous_subscriber_never_receives_a_draft(author: Author) -> None:
+    """Assert an anonymous SSE subscriber skips the draft and gets the published post.
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+    """
+    from django.contrib.auth.models import AnonymousUser
+
+    assert await _sse_first_post_title(author, AnonymousUser()) == "scope-published"
+
+
+async def test_sse_authenticated_subscriber_receives_the_draft(
+    author: Author, demo_user: object
+) -> None:
+    """Assert a logged-in SSE subscriber still sees every post, drafts included.
+
+    Args:
+        author: The persisted "Author" that owns the posts.
+        demo_user: The persisted user placed on the request.
+    """
+    assert await _sse_first_post_title(author, demo_user) == "scope-draft"
 
 
 # --------------------------------------------------------------------------- #

@@ -296,7 +296,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Subscriptions** | | |
 | Public `Subscription` | ✅ | `PostSubscription` (stream `posts`), `CommentSubscription` (stream `comments`, per-subscriber `filter`) |
 | Private subscription via `DjangoModelType` | ✅ | `NoteModelType.SubscriptionField()` — gated by `AuthenticatedFieldsMiddleware` |
-| `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes |
+| `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes; `PostSubscription.subscription_scope` — anonymous subscribers receive published posts only, mirroring `PostType.get_queryset` |
 | `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
 | `payload_mode` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.payload_mode = "full"` |
 | Native WS consumer (`subscription_ws_consumer`) | ✅ | `consumers.py` — `AppWSConsumer` |
@@ -957,6 +957,19 @@ Unsubscribe with `{"type": "complete", "id": "1"}` (or just close the socket).
 For SSE, POST the same document to `/graphql/stream` and read the
 `event: next` frames (see the [Subscriptions guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/subscriptions.md)
 for the full wire protocol of both transports).
+
+### Public subscription, scoped like the query
+
+Subscriptions do **not** run `PostType.get_queryset`, so the visibility rule a
+query enjoys is not inherited by a stream. Without a scope, an anonymous
+`postSubscription` would receive every `DRAFT` post as it is saved, over both
+transports. `PostSubscription.subscription_scope` restates the rule: anonymous
+subscribers are forced to `{"status": "published"}`, enforced per event at
+delivery, while logged-in subscribers get `None` (no scoping) and see every
+post. Try it with two clients, one logged out and one logged in via `/admin`,
+then create a draft with `postCreate` (drafts are the default status):
+only the logged-in one receives it. `tests/test_subscription_transports_e2e.py`
+pins both transports.
 
 ### Filtered subscription (per-post comments)
 

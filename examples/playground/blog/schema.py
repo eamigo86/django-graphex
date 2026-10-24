@@ -860,6 +860,8 @@ class PostSubscription(Subscription):
     """Public subscription broadcasting post changes on the "posts" stream.
 
     Any client may subscribe; each notification carries the full post payload.
+    Subscriptions never run "PostType.get_queryset", so the same visibility
+    rule is restated by "subscription_scope" below.
     """
 
     class Meta:
@@ -871,6 +873,28 @@ class PostSubscription(Subscription):
         model = Post
         stream = "posts"
         payload_mode = "full"
+
+    @classmethod
+    def subscription_scope(cls, info: GraphQLResolveInfo, **kwargs: Any) -> dict | None:
+        """Mirror "PostType.get_queryset": anonymous subscribers get published posts.
+
+        Evaluated at subscribe time and enforced per event at delivery, on both
+        the WebSocket and the SSE transport. "None" means no scoping, which is
+        correct only for the authenticated branch (they see every post); the
+        anonymous branch always returns a mapping, so it fails closed.
+
+        Args:
+            info: The GraphQL resolve info for the subscribe request.
+            **kwargs: The subscription arguments (unused here).
+
+        Returns:
+            scope: "None" for an authenticated subscriber, otherwise a filter
+                mapping restricting notifications to published posts.
+        """
+        user = getattr(info.context, "user", None)
+        if user is not None and user.is_authenticated:
+            return None
+        return {"status": Post.Status.PUBLISHED.value}
 
 
 class CommentSubscription(Subscription):
