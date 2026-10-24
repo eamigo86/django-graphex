@@ -495,8 +495,9 @@ messages. This includes `EmailField` syntax and non-negative
 be stored, such as `""` into a `blank=False` column or a number below a
 `MinValueValidator`, now returns `ok: false` with one `errors[]` entry per field
 and writes nothing (a nested child error is prefixed with the nested field
-name). Fields the client did not send, including defaults, are not validated; an
-explicit `null` on a nullable column stays valid. `Model.clean()`,
+name). Fields the client did not send, including defaults, are not validated, so
+a create that omits a `blank=False` column stores the model default (often `""`)
+without an error; an explicit `null` on a nullable column stays valid. `Model.clean()`,
 `validate_unique()` and `validate_constraints()` are not run.
 
 Because these are `ok: false` payloads rather than GraphQL execution errors, an
@@ -541,6 +542,13 @@ were not checked. The id membership check runs one query per relation instead of
 one per id. Apps that intentionally linked read-hidden rows must widen the
 destination scope or change the workflow.
 
+The existence checks send their lookups in chunks below the database's
+bound-parameter limit (one query per chunk), so a very long id list no longer
+fails with `too many SQL variables`, and an id beyond the database integer
+range answers `does not exist` as a field error instead of a top-level error.
+A key the database matches in another letter case (a case-insensitive
+collation) counts as existing.
+
 ### Nested child ids that match no visible child
 
 A nested child payload that carries an `id` no longer creates a child when the
@@ -553,8 +561,21 @@ and children the parent already owns still update. Clients that sent an unknown
 
 ```graphql
 # Before: created a child. After: error "Comment with id 999 does not exist."
-postUpdate(id: 1, data: { comments: [{ id: 999, text: "hi" }] }) { ok }
+postUpdate(newPost: { id: 1, comments: [{ id: 999, text: "hi" }] }) { ok }
 ```
+
+Any `id` counts, including `""` and `"0"`, which used to create a child and
+now return the same error. A client-chosen primary key (for example a UUID) on a
+nested create is therefore an error as well: the `id` of a nested payload only
+names an existing visible child, and the database assigns or defaults the key of
+a new one.
+
+The same rule covers existing rows linked by `id` through a many-to-many or a
+forward foreign key: an id hidden only by the child's update host is refused
+with the error a nonexistent id gets (`<Model> with id N does not exist.` for
+many-to-many, `Invalid pk "N" - object does not exist.` for a forward key), where
+the link used to succeed. Re-sending only the `id` of a forward relation's
+current target is a no-op: the row is not saved and no signals fire.
 
 ### Adopting orphan children needs an update host
 
