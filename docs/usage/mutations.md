@@ -920,7 +920,12 @@ host or output scope, or nonexistent) is refused with the same
 `<Model> with id <pk> does not exist.` error and writes nothing, so the
 response cannot reveal which ids exist; only a payload **without** an `id`
 creates a new child. This applies to reverse `ForeignKey`, reverse
-`OneToOneField` and many-to-many nested payloads. The rule is the same for a
+`OneToOneField` and many-to-many nested payloads. A many-to-many
+or forward foreign-key `id` link (an existing row the parent is not yet linked
+to) is scoped the same way: an id hidden only by the child's update host is
+refused exactly like a nonexistent one, so it cannot be probed. Re-sending only
+the `id` of a forward relation's current target writes nothing (no `save()`, no
+signals). The rule is the same for a
 reverse `OneToOneField` (for example `parent = OneToOneField(..., null=True,
 related_name="child")`) as for a reverse `ForeignKey`. Generic relations are
 outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),

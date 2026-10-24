@@ -14,6 +14,7 @@ from numbers import Number
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.db import connections
 from django.db.models import (
     NOT_PROVIDED,
     IntegerField,
@@ -53,6 +54,11 @@ from ._directives_eval import is_selection_skipped
 from ._strconv import to_snake_case
 from .errors import ErrorType
 from .settings import graphql_api_settings
+
+# Bound parameters per IN query when the database reports no limit, and the
+# room kept for the other parameters a scoped queryset carries.
+_DEFAULT_IN_PARAMS = 5000
+_RESERVED_PARAMS = 100
 
 if TYPE_CHECKING:
     from django.db.models import Field
@@ -693,6 +699,64 @@ def get_Object_or_None(klass: Any, *args: Any, **kwargs: Any) -> Model | None:
             return queryset.get(*args, **kwargs)
     except (queryset.model.DoesNotExist, ValueError, TypeError, ValidationError):
         return None
+
+
+def present_values(
+    queryset: QuerySet, model_field: Any, values: Sequence[Any]
+) -> set[Any]:
+    """Find which requested key values exist in a queryset, in few queries.
+
+    A value the field cannot parse matches no row, like an absent key. The
+    lookups are sent in chunks below the database's bound-parameter limit (one
+    query per chunk), so a very long id list never fails with "too many SQL
+    variables". If a batched lookup is rejected (for example an integer beyond
+    the database range), its values are checked one at a time so only that
+    value is reported missing. A key the database returns in another letter case
+    (a case-insensitive collation) still matches the requested value.
+
+    Args:
+        queryset: Rows to look in.
+        model_field: Model field holding the key.
+        values: Requested key values, as supplied by the client.
+
+    Returns:
+        The subset of the requested values that a row holds.
+    """
+    by_coerced: dict[Any, list[Any]] = {}
+    for value in values:
+        try:
+            by_coerced.setdefault(model_field.to_python(value), []).append(value)
+        except (ValueError, TypeError, ValidationError):
+            continue
+    by_folded: dict[str, list[Any]] = {}
+    for key, originals in by_coerced.items():
+        if isinstance(key, str):
+            by_folded.setdefault(key.casefold(), []).extend(originals)
+    name = model_field.name
+    limit = connections[queryset.db].features.max_query_params
+    size = max((limit or _DEFAULT_IN_PARAMS) - _RESERVED_PARAMS, 1)
+    keys = list(by_coerced)
+    found: set[Any] = set()
+    for start in range(0, len(keys), size):
+        chunk = keys[start : start + size]
+        try:
+            found.update(
+                queryset.filter(**{f"{name}__in": chunk}).values_list(name, flat=True)
+            )
+        except (ValueError, TypeError, ValidationError, OverflowError):
+            for coerced in chunk:
+                try:
+                    if queryset.filter(**{name: coerced}).exists():
+                        found.add(coerced)
+                except (ValueError, TypeError, ValidationError, OverflowError):
+                    continue
+    present: set[Any] = set()
+    for key in found:
+        originals = by_coerced.get(key)
+        if originals is None and isinstance(key, str):
+            originals = by_folded.get(key.casefold())
+        present.update(originals or ())
+    return present
 
 
 def get_extra_filters(root: Model, model: type[Model]) -> dict[str, Any]:

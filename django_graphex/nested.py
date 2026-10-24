@@ -36,9 +36,9 @@ from contextlib import nullcontext
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable
 
-from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, router, transaction
-from django.db.models import ForeignKey, ManyToManyField, QuerySet, Subquery
+from django.db.models import ForeignKey, ManyToManyField, Subquery
 from graphql import GraphQLError
 
 from .backends import backend_for_nested
@@ -48,6 +48,7 @@ from .utils import (
     apply_object_type_get_queryset,
     get_Object_or_None,
     not_found_error,
+    present_values,
     scope_to_output_type,
 )
 
@@ -323,48 +324,6 @@ def hosts_serving(registry: Any, child_model: Any, op: str) -> tuple[Any, ...]:
     )
 
 
-def _present_values(
-    queryset: QuerySet, model_field: Any, values: list[Any]
-) -> set[Any]:
-    """Find which requested key values exist in a queryset, in one query.
-
-    A value the field cannot parse matches no row, like an absent key. If the
-    batched lookup itself is rejected (for example an integer beyond the
-    database range), each value is checked on its own so only that value is
-    reported missing.
-
-    Args:
-        queryset: Rows to look in.
-        model_field: Model field holding the key.
-        values: Requested key values, as supplied by the client.
-
-    Returns:
-        The subset of the requested values that a row holds.
-    """
-    by_coerced: dict[Any, list[Any]] = {}
-    for value in values:
-        try:
-            by_coerced.setdefault(model_field.to_python(value), []).append(value)
-        except (ValueError, TypeError, ValidationError):
-            continue
-    name = model_field.name
-    try:
-        found = set(
-            queryset.filter(**{f"{name}__in": list(by_coerced)}).values_list(
-                name, flat=True
-            )
-        )
-    except (ValueError, TypeError, ValidationError, OverflowError):
-        found = set()
-        for coerced in by_coerced:
-            try:
-                if queryset.filter(**{name: coerced}).exists():
-                    found.add(coerced)
-            except (ValueError, TypeError, ValidationError, OverflowError):
-                continue
-    return {value for key in found for value in by_coerced.get(key, ())}
-
-
 class _NestedError(Exception):
     """Carry a list of "ErrorType" entries out of the atomic block.
 
@@ -572,18 +531,45 @@ class NestedFieldsMixin:
                             else None
                         )
                         if item_pk is not None and str(item_pk) != str(current_pk):
+                            # The child's update hosts scope a link exactly as
+                            # they scope a reverse child, and a hidden id answers
+                            # like a missing one (the backend's FK check).
+                            if hosts_serving(cls._meta.registry, child_model, "update"):
+                                try:
+                                    cls._reject_hidden_row(
+                                        field,
+                                        child_model,
+                                        item_pk,
+                                        info,
+                                        output_scope=False,
+                                        **route_kwargs,
+                                    )
+                                except _NestedError:
+                                    raise _NestedError(
+                                        [
+                                            ErrorType(
+                                                field=field,
+                                                messages=[
+                                                    f'Invalid pk "{item_pk}" - '
+                                                    "object does not exist."
+                                                ],
+                                            )
+                                        ]
+                                    ) from None
                             data[field] = item_pk  # link only, no child write
                             continue
                         # An id-only re-send of the current target writes
-                        # nothing, so the output scope applies only when the
-                        # payload carries field data.
+                        # nothing: no save, no signals, so the output scope
+                        # applies only when the payload carries field data.
                         writes = set(item) - {child_model._meta.pk.name, "id"}
+                        if item_pk is not None and not writes:
+                            data[field] = current_pk
+                            continue
                         child = cls._persist_child(
                             field,
                             child_model,
                             item,
                             info,
-                            output_scope=bool(writes),
                             **route_kwargs,
                         )
                         data[field] = child.pk
@@ -704,7 +690,7 @@ class NestedFieldsMixin:
                 if is_m2m and pairs:
                     candidates = [pk for _, pk in pairs]
                     linked = (
-                        _present_values(
+                        present_values(
                             getattr(instance, field).all(), lookup_field, candidates
                         )
                         if instance is not None
@@ -736,7 +722,7 @@ class NestedFieldsMixin:
             distinct = list(dict.fromkeys(ids))
             # Membership, not uniqueness: JOINs may duplicate a row and a
             # sliced scope cannot be filtered after its window is applied.
-            visible = _present_values(
+            visible = present_values(
                 target._default_manager.db_manager(scoped.db).filter(
                     pk__in=Subquery(scoped.values("pk"))
                 ),
@@ -1022,6 +1008,17 @@ class NestedFieldsMixin:
                 )
                 linked = None
                 if existing is not None and not manager.filter(pk=item_pk).exists():
+                    # A link is scoped by the child's update hosts like any
+                    # other id the child's own mutation would refuse; a hidden
+                    # row answers like a missing one.
+                    cls._reject_hidden_row(
+                        field,
+                        child_model,
+                        item_pk,
+                        info,
+                        output_scope=False,
+                        **({"using": using} if using is not None else {}),
+                    )
                     linked = existing
                 if linked is None:
                     # Same de-duplication as the reverse branch, and NO

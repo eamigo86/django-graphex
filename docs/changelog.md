@@ -358,6 +358,19 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Fix: nested and plain id links are checked in chunks below the database's
+  bound-parameter limit, so a list of 32,767 or more ids no longer fails with
+  `too many SQL variables` on SQLite. An id beyond the database integer range
+  (for example `author: {id: "99999999999999999999999"}`) answers `Invalid pk
+  ... does not exist` as a field error instead of a top-level error, and a key
+  that a case-insensitive collation returns in another letter case counts as
+  existing.
+- Fix: a many-to-many or forward foreign-key `id` link hidden only by the
+  child's update host is refused exactly like a nonexistent id (it used to be
+  linked, which revealed which ids exist). Re-sending only the `id` of a forward
+  relation's current target is now a true no-op: the row is not saved and no
+  `post_save` fires.
+
 - Fix: a flat or typed-union `GenericForeignKey` selection only runs the
   `get_queryset` hook of a target type some owner on the page points to. A hook
   of an unrelated type (for example one that raises for anonymous users) no

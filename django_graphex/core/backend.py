@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..backends import SerializerBackend
 from ..errors import ErrorType
+from ..utils import present_values
 from .fields import build_model_schema
 from .input_compiler import translate_validation_error
 
@@ -241,11 +242,10 @@ class PydanticBackend(SerializerBackend):
         fks = self._fk_fields()
         for name, fk in fks.items():
             pk = payload.get(name)
-            if (
-                pk is not None
-                and not fk.related_model._default_manager.db_manager(alias)
-                .filter(**{fk.target_field.name: pk})
-                .exists()
+            if pk is not None and not present_values(
+                fk.related_model._default_manager.db_manager(alias),
+                fk.target_field,
+                [pk],
             ):
                 errors.setdefault(name, []).append(
                     f'Invalid pk "{pk}" - object does not exist.'
@@ -261,20 +261,13 @@ class PydanticBackend(SerializerBackend):
             if not isinstance(pks, (list, tuple)) or not pks:
                 continue
             unique_pks = list(dict.fromkeys(pks))  # deduplicate, preserve order
-            existing_count = (
-                field.related_model._default_manager.db_manager(alias)
-                .filter(pk__in=unique_pks)
-                .count()
+            present = present_values(
+                field.related_model._default_manager.db_manager(alias),
+                field.related_model._meta.pk,
+                unique_pks,
             )
-            if existing_count != len(unique_pks):
-                missing = [
-                    pk
-                    for pk in unique_pks
-                    if not field.related_model._default_manager.db_manager(alias)
-                    .filter(pk=pk)
-                    .exists()
-                ]
-                for pk in missing:
+            for pk in unique_pks:
+                if pk not in present:
                     errors.setdefault(field.name, []).append(
                         f'Invalid pk "{pk}" - object does not exist.'
                     )
@@ -593,12 +586,14 @@ class PydanticBackend(SerializerBackend):
                             ).remote_field.through
                             check_tables.append(through._meta.db_table)
                         db_connection.check_constraints(table_names=check_tables)
-        except IntegrityError:
+        except (IntegrityError, OverflowError):
             # Reproduce the exact structured envelope the eager check produced.
+            # An OverflowError is a key beyond the database integer range: it
+            # cannot name a row, so the diagnostics report it like a missing one.
             errors = self._db_check_errors(diagnostic_payload, instance, using)
             if errors:
                 return False, _errors_to_type(errors)
-            # Integrity error of another kind (not a missing FK/M2M we can
+            # Failure of another kind (not a missing FK/M2M we can
             # attribute): re-raise so the existing generic handling upstream
             # surfaces it unchanged.
             raise
