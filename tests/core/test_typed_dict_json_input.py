@@ -25,29 +25,57 @@ from django_graphex.views import GraphQLView
 
 
 class VariableTypedMapPayload(InputType):
+    """Declare a typed map next to a raw map for variable tests.
+
+    The mapping field is dict of str to int and raw is a bare dict.
+    """
+
     mapping: dict[str, int]
     raw: dict
 
 
 class InvalidTypedMapPayload(InputType):
+    """Declare a typed map used to submit invalid variables.
+
+    The mapping field is dict of str to int.
+    """
+
     mapping: dict[str, int]
 
 
 class HttpTypedMapPayload(InputType):
+    """Declare a typed map used by the HTTP tests.
+
+    The mapping field is dict of str to int.
+    """
+
     mapping: dict[str, int]
 
 
 class TypingAliasMapPayload(InputType):
+    """Declare a typed map with typing.Dict next to a raw map.
+
+    The mapping field is typing.Dict of str to int and raw is a bare dict.
+    """
+
     mapping: Dict[str, int]
     raw: dict
 
 
 class HttpTypingAliasMapPayload(InputType):
+    """Declare a typing.Dict typed map used by the HTTP tests.
+
+    The mapping field is typing.Dict of str to int.
+    """
+
     mapping: Dict[str, int]
 
 
 def test_typing_dict_alias_uses_strict_json_public_input() -> None:
-    """Give the approved typing alias the existing strict JSON contract."""
+    """Give the approved typing alias the existing strict JSON contract.
+
+    Scenario: typing dict alias uses strict json public input.
+    """
     received: list[dict[str, object]] = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -98,7 +126,11 @@ def test_typing_dict_alias_uses_strict_json_public_input() -> None:
     ],
 )
 def test_typing_alias_invalid_map_stops_mutation(bad: object) -> None:
-    """Reject the same invalid shapes without echoing their supplied keys."""
+    """Reject the same invalid shapes without echoing their supplied keys.
+
+    Args:
+        bad: Invalid value supplied by the parametrized case.
+    """
     received: list[dict[str, object]] = []
     schema = _schema_for_payload(
         compile_input_type(TypingAliasMapPayload, name="TypingAliasMapPayload"),
@@ -116,7 +148,10 @@ def test_typing_alias_invalid_map_stops_mutation(bad: object) -> None:
 
 
 def test_typing_alias_wrappers_defaults_and_pruned_clone() -> None:
-    """Keep optional lists, fresh factories and surviving clone checks."""
+    """Keep optional lists, fresh factories and surviving clone checks.
+
+    Scenario: typing alias wrappers defaults and pruned clone.
+    """
     calls: list[int] = []
     received: list[dict[str, object]] = []
 
@@ -235,7 +270,10 @@ def test_typing_alias_http_error_is_safe(inline: bool) -> None:
 
 
 def test_typed_dictionary_accepts_json_object_before_mutation() -> None:
-    """Compile a typed map as JSON and deliver its original object to mutate."""
+    """Compile a typed map as JSON and deliver its original object to mutate.
+
+    Scenario: typed dictionary accepts json object before mutation.
+    """
     received: list[dict[str, object]] = []
 
     class FirstTypedMapPayload(InputType):
@@ -315,7 +353,11 @@ def _schema_for_payload(
 def test_variable_typed_maps_accept_plain_integers_and_share_json(
     mapping: dict[str, int],
 ) -> None:
-    """Retain raw dictionary values and reuse the existing JSON scalar."""
+    """Retain raw dictionary values and reuse the existing JSON scalar.
+
+    Args:
+        mapping: Mapping supplied through the variable.
+    """
     received: list[dict[str, object]] = []
 
     input_type = compile_input_type(VariableTypedMapPayload, name="StrictPayload")
@@ -355,7 +397,11 @@ def test_variable_typed_maps_accept_plain_integers_and_share_json(
     ],
 )
 def test_invalid_typed_map_variable_is_rejected_before_resolver(bad: object) -> None:
-    """Reject wrong shapes without leaking supplied keys or values."""
+    """Reject wrong shapes without leaking supplied keys or values.
+
+    Args:
+        bad: Invalid value supplied by the parametrized case.
+    """
     received: list[dict[str, object]] = []
 
     schema = _schema_for_payload(
@@ -374,7 +420,10 @@ def test_invalid_typed_map_variable_is_rejected_before_resolver(bad: object) -> 
 
 
 def test_inline_typed_map_and_nullability_keep_graphql_coercion() -> None:
-    """Accept inline objects while retaining omission and explicit null."""
+    """Accept inline objects while retaining omission and explicit null.
+
+    Scenario: inline typed map and nullability keep graphql coercion.
+    """
     received: list[dict[str, object]] = []
 
     class WrappedTypedMapPayload(InputType):
@@ -413,7 +462,10 @@ def test_inline_typed_map_and_nullability_keep_graphql_coercion() -> None:
 
 
 def test_alias_nested_defaults_and_pruned_fields_use_final_input_surface() -> None:
-    """Validate surviving fields without freezing factories or pruned fields."""
+    """Validate surviving fields without freezing factories or pruned fields.
+
+    Scenario: alias nested defaults and pruned fields use final input surface.
+    """
     factory_calls: list[int] = []
     received: list[dict[str, object]] = []
 
@@ -486,7 +538,10 @@ def test_alias_nested_defaults_and_pruned_fields_use_final_input_surface() -> No
 
 
 def test_invalid_typed_map_factory_is_rejected_before_resolver() -> None:
-    """Validate a freshly generated default without coercing its values."""
+    """Validate a freshly generated default without coercing its values.
+
+    Scenario: invalid typed map factory is rejected before resolver.
+    """
     received: list[dict[str, object]] = []
 
     class InvalidFactoryTypedMapPayload(InputType):
@@ -504,7 +559,10 @@ def test_invalid_typed_map_factory_is_rejected_before_resolver() -> None:
 
 
 def test_relation_replacement_does_not_keep_typed_map_validator() -> None:
-    """Use only the final emitted field after a relation override."""
+    """Use only the final emitted field after a relation override.
+
+    Scenario: relation replacement does not keep typed map validator.
+    """
     received: list[dict[str, object]] = []
 
     class RelationReplacedTypedMapInput(InputType):
@@ -533,7 +591,10 @@ def test_relation_replacement_does_not_keep_typed_map_validator() -> None:
 
 
 def test_permission_scoped_clone_keeps_only_surviving_typed_map_checks() -> None:
-    """Reject invalid maps in a real clone without restoring hidden fields."""
+    """Reject invalid maps in a real clone without restoring hidden fields.
+
+    Scenario: permission scoped clone keeps only surviving typed map checks.
+    """
     received: list[dict[str, object]] = []
     factory_calls: list[str] = []
 

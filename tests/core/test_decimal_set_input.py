@@ -27,13 +27,19 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class DecimalSetPepPayload(InputType):
-    """Declare the exact PEP 585 Decimal-set input."""
+    """Declare the exact PEP 585 Decimal-set input.
+
+    The field uses the builtin set spelling.
+    """
 
     amounts: set[decimal.Decimal]
 
 
 class DecimalSetTypingPayload(InputType):
-    """Declare the exact typing alias Decimal-set input."""
+    """Declare the exact typing alias Decimal-set input.
+
+    The field uses the typing.Set spelling.
+    """
 
     amounts: Set[decimal.Decimal]  # noqa: UP006
 
@@ -111,7 +117,14 @@ def test_decimal_sets_publish_list_and_reach_resolver_as_set(
     value: object,
     expected: set[decimal.Decimal],
 ) -> None:
-    """Both spellings preserve native precision and Python-set materialization."""
+    """Both spellings preserve native precision and Python-set materialization.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         schema, received = _schema(model, name=name)
@@ -129,7 +142,10 @@ def test_decimal_sets_publish_list_and_reach_resolver_as_set(
 
 
 def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> None:
-    """Custom equality must not admit an unrelated outer annotation."""
+    """Custom equality must not admit an unrelated outer annotation.
+
+    Scenario: custom outer annotation comparing equal to alias keeps fallback.
+    """
 
     class EqualToDecimalSetMeta(type):
         __hash__ = type.__hash__
@@ -166,7 +182,10 @@ def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> No
 
 
 def test_custom_leaf_comparing_equal_to_decimal_keeps_fallback() -> None:
-    """A custom set leaf is not Decimal despite equality."""
+    """A custom set leaf is not Decimal despite equality.
+
+    Scenario: custom leaf comparing equal to decimal keeps fallback.
+    """
 
     class EqualToDecimalMeta(type):
         __hash__ = type.__hash__
@@ -224,7 +243,14 @@ def test_custom_leaf_comparing_equal_to_decimal_keeps_fallback() -> None:
 def test_native_finite_variables_reach_resolver_as_decimal_set(
     model: type[InputType], name: str, value: object, expected: set[decimal.Decimal]
 ) -> None:
-    """Retain native accepted finite values and exact Decimal precision."""
+    """Retain native accepted finite values and exact Decimal precision.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -256,7 +282,14 @@ def test_native_finite_variables_reach_resolver_as_decimal_set(
 def test_inline_finite_singleton_empty_and_duplicates(
     model: type[InputType], name: str, literal: str, expected: set[decimal.Decimal]
 ) -> None:
-    """Apply native Decimal literal/list coercion without a float round-trip."""
+    """Apply native Decimal literal/list coercion without a float round-trip.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{amounts: {literal}}}) {{ result }} }}"
@@ -290,7 +323,13 @@ def test_inline_finite_singleton_empty_and_duplicates(
 def test_nonfinite_variables_fail_before_resolver(
     model: type[InputType], name: str, value: object
 ) -> None:
-    """Reject supplied nonfinite Decimal values without hashing signaling NaN."""
+    """Reject supplied nonfinite Decimal values without hashing signaling NaN.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -316,7 +355,13 @@ def test_nonfinite_variables_fail_before_resolver(
 def test_nonfinite_literals_fail_before_resolver(
     model: type[InputType], name: str, literal: str
 ) -> None:
-    """Reject nonfinite native Decimal literals at the input field boundary."""
+    """Reject nonfinite native Decimal literals at the input field boundary.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{amounts: {literal}}}) {{ result }} }}"
@@ -328,7 +373,11 @@ def test_nonfinite_literals_fail_before_resolver(
 
 @pytest.mark.parametrize("bad", [True, {"x": 1}, [None], "not-a-number"])
 def test_invalid_native_variables_fail_before_resolver(bad: object) -> None:
-    """Leave the native scalar's existing invalid-value policy intact."""
+    """Leave the native scalar's existing invalid-value policy intact.
+
+    Args:
+        bad: Invalid value supplied by the parametrized case.
+    """
     schema, received = _schema(DecimalSetPepPayload, name="DecimalSetPepPayload")
     result = graphql_sync(
         schema,
@@ -341,7 +390,11 @@ def test_invalid_native_variables_fail_before_resolver(bad: object) -> None:
 
 @pytest.mark.parametrize("literal", ['"NaN"', '"sNaN"'])
 def test_nonfinite_variable_default_never_reaches_resolver(literal: str) -> None:
-    """Reject a nonfinite literal variable default before mutation execution."""
+    """Reject a nonfinite literal variable default before mutation execution.
+
+    Args:
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(DecimalSetPepPayload, name="DecimalSetPepPayload")
     result = graphql_sync(
         schema,
@@ -355,7 +408,10 @@ def test_nonfinite_variable_default_never_reaches_resolver(literal: str) -> None
 
 
 def test_required_decimal_set_rejects_omission() -> None:
-    """Keep required-field semantics for exact Decimal-set annotations."""
+    """Keep required-field semantics for exact Decimal-set annotations.
+
+    Scenario: required decimal set rejects omission.
+    """
     schema, received = _schema(DecimalSetPepPayload, name="DecimalSetPepPayload")
     result = graphql_sync(
         schema,
@@ -367,7 +423,10 @@ def test_required_decimal_set_rejects_omission() -> None:
 
 
 def test_optional_decimal_sets_keep_omission_and_null() -> None:
-    """Preserve outer Optional and explicit null for both spellings."""
+    """Preserve outer Optional and explicit null for both spellings.
+
+    Scenario: optional decimal sets keep omission and null.
+    """
 
     class DecimalSetOptionalPayload(InputType):
         pep_amounts: set[decimal.Decimal] | None = None
@@ -398,7 +457,10 @@ def test_optional_decimal_sets_keep_omission_and_null() -> None:
 
 
 def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
-    """Retain valid fixed sets and fresh per-object factory defaults."""
+    """Retain valid fixed sets and fresh per-object factory defaults.
+
+    Scenario: fixed and factory defaults keep lifecycle.
+    """
     calls: list[int] = []
 
     def make_set() -> set[decimal.Decimal]:
@@ -442,7 +504,12 @@ def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
 def test_malformed_legacy_defaults_stay_omittable_but_supplied_nonfinite_fails(
     annotation: object, name: str
 ) -> None:
-    """Preserve malformed omissions and reject explicit nonfinite input."""
+    """Preserve malformed omissions and reject explicit nonfinite input.
+
+    Args:
+        annotation: Field annotation under test.
+        name: GraphQL input type name used for the compiled model.
+    """
     calls: list[int] = []
 
     def bad_factory() -> list[decimal.Decimal]:
@@ -480,7 +547,10 @@ def test_malformed_legacy_defaults_stay_omittable_but_supplied_nonfinite_fails(
 
 
 def test_nonfinite_supplied_field_precedes_omitted_sibling_factory() -> None:
-    """Reject bad input before running any omitted sibling factory."""
+    """Reject bad input before running any omitted sibling factory.
+
+    Scenario: nonfinite supplied field precedes omitted sibling factory.
+    """
     calls: list[int] = []
 
     def sibling_factory() -> str:
@@ -506,7 +576,10 @@ def test_nonfinite_supplied_field_precedes_omitted_sibling_factory() -> None:
 
 
 def test_alias_selection_replacement_and_pruning_project_metadata() -> None:
-    """Convert only final and permission-surviving resolver names."""
+    """Convert only final and permission-surviving resolver names.
+
+    Scenario: alias selection replacement and pruning project metadata.
+    """
 
     class DecimalSetSelectionPayload(InputType):
         kept_amounts: set[decimal.Decimal] = Field(alias="keptAmounts")
@@ -596,7 +669,10 @@ def test_alias_selection_replacement_and_pruning_project_metadata() -> None:
 
 
 def test_pruned_clone_preserves_fixed_default_identity() -> None:
-    """Keep omitted malformed fixed defaults while rejecting supplied values."""
+    """Keep omitted malformed fixed defaults while rejecting supplied values.
+
+    Scenario: pruned clone preserves fixed default identity.
+    """
 
     class DecimalSetPrunedDefaultPayload(InputType):
         kept_amounts: set[decimal.Decimal] = Field(
@@ -653,7 +729,10 @@ def test_pruned_clone_preserves_fixed_default_identity() -> None:
 
 
 def test_other_leaves_and_nested_forms_keep_fallback() -> None:
-    """Do not promote unapproved leaves or nested set shapes."""
+    """Do not promote unapproved leaves or nested set shapes.
+
+    Scenario: other leaves and nested forms keep fallback.
+    """
 
     class DecimalSetUnsupportedPayload(InputType):
         pep_complex: set[complex]

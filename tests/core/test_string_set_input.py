@@ -27,13 +27,19 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class StringSetPepPayload(InputType):
-    """Declare the approved PEP 585 string-set input."""
+    """Declare the approved PEP 585 string-set input.
+
+    The field uses the builtin set spelling.
+    """
 
     colors: set[str]
 
 
 class StringSetTypingPayload(InputType):
-    """Declare the approved typing alias string-set input."""
+    """Declare the approved typing alias string-set input.
+
+    The field uses the typing.Set spelling.
+    """
 
     colors: Set[str]  # noqa: UP006
 
@@ -99,7 +105,12 @@ def _schema(
 def test_exact_string_sets_publish_list_and_reach_resolver_as_set(
     model: type[InputType], name: str
 ) -> None:
-    """Both approved spellings use native list coercion and set materialization."""
+    """Both approved spellings use native list coercion and set materialization.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+    """
     schema, received = _schema(model, name=name)
     assert "colors: [String!]!" in print_schema(schema)
     result = graphql_sync(
@@ -113,7 +124,10 @@ def test_exact_string_sets_publish_list_and_reach_resolver_as_set(
 
 
 def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> None:
-    """Custom equality must not admit an unrelated annotated scalar."""
+    """Custom equality must not admit an unrelated annotated scalar.
+
+    Scenario: custom outer annotation comparing equal to alias keeps fallback.
+    """
 
     class EqualToStringSetMeta(type):
         __hash__ = type.__hash__
@@ -153,7 +167,10 @@ def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> No
 
 
 def test_custom_string_set_leaf_comparing_equal_to_str_keeps_fallback() -> None:
-    """A custom set leaf is not the approved str leaf despite equality."""
+    """A custom set leaf is not the approved str leaf despite equality.
+
+    Scenario: custom string set leaf comparing equal to str keeps fallback.
+    """
 
     class EqualToStrMeta(type):
         __hash__ = type.__hash__
@@ -193,11 +210,17 @@ def test_custom_string_set_leaf_comparing_equal_to_str_keeps_fallback() -> None:
 
 
 class NativeStringSubclass(str):
-    """A hashable string value accepted by native GraphQLString."""
+    """A hashable string value accepted by native GraphQLString.
+
+    Instances compare as strings and can be stored in a set.
+    """
 
 
 class NativeStringEnum(enum.StrEnum):
-    """A hashable string enum accepted by native GraphQLString."""
+    """A hashable string enum accepted by native GraphQLString.
+
+    Members compare as strings and can be stored in a set.
+    """
 
     RED = "red"
 
@@ -213,7 +236,13 @@ class NativeStringEnum(enum.StrEnum):
 def test_native_string_values_still_become_a_python_set(
     value: str, model: type[InputType], name: str
 ) -> None:
-    """Preserve native acceptance of str subclasses without custom casting."""
+    """Preserve native acceptance of str subclasses without custom casting.
+
+    Args:
+        value: Value supplied by the parametrized case.
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -235,7 +264,12 @@ def test_native_string_values_still_become_a_python_set(
 def test_approved_string_sets_have_list_introspection_without_warning(
     model: type[InputType], name: str
 ) -> None:
-    """The published input field is a non-null list of non-null strings."""
+    """The published input field is a non-null list of non-null strings.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         schema, _received = _schema(model, name=name)
@@ -279,7 +313,14 @@ def test_approved_string_sets_have_list_introspection_without_warning(
 def test_variable_singleton_empty_and_duplicates(
     model: type[InputType], name: str, value: object, expected: set[str]
 ) -> None:
-    """Retain whole-string singleton and ordinary list coercion."""
+    """Retain whole-string singleton and ordinary list coercion.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -305,7 +346,14 @@ def test_variable_singleton_empty_and_duplicates(
 def test_inline_singleton_empty_and_duplicates(
     model: type[InputType], name: str, literal: str, expected: set[str]
 ) -> None:
-    """Apply native literal validation before set materialization."""
+    """Apply native literal validation before set materialization.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{colors: {literal}}}) {{ result }} }}"
@@ -325,7 +373,13 @@ def test_inline_singleton_empty_and_duplicates(
 def test_invalid_native_string_variables_fail_before_resolver(
     model: type[InputType], name: str, value: object
 ) -> None:
-    """Do not cast invalid variable values or nullable list items."""
+    """Do not cast invalid variable values or nullable list items.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -347,7 +401,13 @@ def test_invalid_native_string_variables_fail_before_resolver(
 def test_invalid_native_string_literals_fail_before_resolver(
     model: type[InputType], name: str, literal: str
 ) -> None:
-    """Use GraphQLString's native literal boundary."""
+    """Use GraphQLString's native literal boundary.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{colors: {literal}}}) {{ result }} }}"
@@ -357,7 +417,10 @@ def test_invalid_native_string_literals_fail_before_resolver(
 
 
 def test_required_string_set_rejects_omission() -> None:
-    """Keep required-field semantics for approved sets."""
+    """Keep required-field semantics for approved sets.
+
+    Scenario: required string set rejects omission.
+    """
     schema, received = _schema(StringSetPepPayload, name="StringSetPepPayload")
     result = graphql_sync(
         schema,
@@ -369,7 +432,10 @@ def test_required_string_set_rejects_omission() -> None:
 
 
 def test_optional_string_sets_keep_omission_and_null() -> None:
-    """Preserve outer Optional and explicit-null behavior for both spellings."""
+    """Preserve outer Optional and explicit-null behavior for both spellings.
+
+    Scenario: optional string sets keep omission and null.
+    """
 
     class StringSetOptionalPayload(InputType):
         pep_colors: set[str] | None = None
@@ -397,7 +463,10 @@ def test_optional_string_sets_keep_omission_and_null() -> None:
 
 
 def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
-    """Do not freeze a factory or convert already valid fixed set defaults."""
+    """Do not freeze a factory or convert already valid fixed set defaults.
+
+    Scenario: fixed and factory defaults keep lifecycle.
+    """
     calls: list[int] = []
 
     def make_set() -> set[str]:
@@ -427,7 +496,10 @@ def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
 
 
 def test_alias_and_emitted_field_identity() -> None:
-    """Convert only the emitted field using its resolver-facing out-name."""
+    """Convert only the emitted field using its resolver-facing out-name.
+
+    Scenario: alias and emitted field identity.
+    """
 
     class StringSetAliasPayload(InputType):
         chosen_colors: Set[str] = Field(alias="chosenColors")  # noqa: UP006
@@ -444,7 +516,10 @@ def test_alias_and_emitted_field_identity() -> None:
 
 
 def test_only_exclude_include_and_replacement_remove_stale_conversion() -> None:
-    """Do not register metadata for fields absent from the emitted wire type."""
+    """Do not register metadata for fields absent from the emitted wire type.
+
+    Scenario: only exclude include and replacement remove stale conversion.
+    """
 
     class StringSetSelectionPayload(InputType):
         kept_colors: set[str]
@@ -485,7 +560,10 @@ def test_only_exclude_include_and_replacement_remove_stale_conversion() -> None:
 
 
 def test_permission_clone_projects_only_surviving_string_set_metadata() -> None:
-    """A pruned input must never inspect or reinsert a hidden set field."""
+    """A pruned input must never inspect or reinsert a hidden set field.
+
+    Scenario: permission clone projects only surviving string set metadata.
+    """
 
     class StringSetScopedPayload(InputType):
         public_colors: set[str]
@@ -539,7 +617,10 @@ def test_permission_clone_projects_only_surviving_string_set_metadata() -> None:
 
 
 def test_unapproved_set_leaves_and_nested_forms_keep_fallback() -> None:
-    """Preserve the legacy String fallback outside both exact string leaves."""
+    """Preserve the legacy String fallback outside both exact string leaves.
+
+    Scenario: unapproved set leaves and nested forms keep fallback.
+    """
 
     class StringSetUnsupportedPayload(InputType):
         pep_bytes: set[bytes]

@@ -25,10 +25,20 @@ from django_graphex.views import GraphQLView
 
 
 class BuiltinStringMapPayload(InputType):
+    """Declare a string map input with the builtin dict spelling.
+
+    The mapping field is dict of str to str.
+    """
+
     mapping: dict[str, str]
 
 
 class TypingStringMapPayload(InputType):
+    """Declare a string map input with the typing alias spelling.
+
+    The mapping field is typing.Dict of str to str.
+    """
+
     mapping: Dict[str, str]
 
 
@@ -73,7 +83,11 @@ def _schema_for_payload(
 def test_string_map_spellings_use_strict_json_public_input(
     payload_type: type[InputType],
 ) -> None:
-    """Expose both approved spellings as raw JSON rather than String fallback."""
+    """Expose both approved spellings as raw JSON rather than String fallback.
+
+    Args:
+        payload_type: Input payload type under test.
+    """
     received: list[dict[str, object]] = []
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
@@ -117,7 +131,12 @@ def test_string_map_spellings_use_strict_json_public_input(
 def test_invalid_string_map_variable_is_rejected_before_resolver(
     payload_type: type[InputType], bad: object
 ) -> None:
-    """Reject wrong shapes without exposing supplied keys or values."""
+    """Reject wrong shapes without exposing supplied keys or values.
+
+    Args:
+        payload_type: Input payload type under test.
+        bad: Invalid value supplied by the parametrized case.
+    """
     received: list[dict[str, object]] = []
     input_type = compile_input_type(payload_type, name=payload_type.__name__)
     schema = _schema_for_payload(input_type, received).graphql_schema
@@ -132,7 +151,10 @@ def test_invalid_string_map_variable_is_rejected_before_resolver(
 
 
 def test_inline_string_maps_preserve_values_and_reject_nonstrings() -> None:
-    """Apply the same declared contract to GraphQL object literals."""
+    """Apply the same declared contract to GraphQL object literals.
+
+    Scenario: inline string maps preserve values and reject nonstrings.
+    """
     received: list[dict[str, object]] = []
     schema = _schema_for_payload(
         compile_input_type(BuiltinStringMapPayload, name="BuiltinStringMapPayload"),
@@ -151,7 +173,10 @@ def test_inline_string_maps_preserve_values_and_reject_nonstrings() -> None:
 
 
 def test_wrappers_defaults_factory_and_nested_inputs_keep_string_validation() -> None:
-    """Validate wrapped values without freezing an omitted-field factory."""
+    """Validate wrapped values without freezing an omitted-field factory.
+
+    Scenario: wrappers defaults factory and nested inputs keep string validation.
+    """
     received: list[dict[str, object]] = []
     calls: list[int] = []
 
@@ -212,7 +237,10 @@ def test_wrappers_defaults_factory_and_nested_inputs_keep_string_validation() ->
 
 
 def test_permission_clone_preserves_surviving_string_map_validator() -> None:
-    """Keep validators only for actual fields in a permission-pruned clone."""
+    """Keep validators only for actual fields in a permission-pruned clone.
+
+    Scenario: permission clone preserves surviving string map validator.
+    """
     received: list[dict[str, object]] = []
 
     class PermissionScopedStringMapInput(InputType):
@@ -246,7 +274,10 @@ def test_permission_clone_preserves_surviving_string_map_validator() -> None:
 
 
 def test_fixed_string_map_lists_render_only_valid_metadata() -> None:
-    """Print valid fixed lists while retaining malformed default behavior."""
+    """Print valid fixed lists while retaining malformed default behavior.
+
+    Scenario: fixed string map lists render only valid metadata.
+    """
     received: list[dict[str, object]] = []
 
     class FixedStringMapListPayload(InputType):

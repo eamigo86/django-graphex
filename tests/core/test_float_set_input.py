@@ -28,13 +28,19 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class FloatSetPepPayload(InputType):
-    """Declare the exact PEP 585 float-set input."""
+    """Declare the exact PEP 585 float-set input.
+
+    The field uses the builtin set spelling.
+    """
 
     amounts: set[float]
 
 
 class FloatSetTypingPayload(InputType):
-    """Declare the exact typing alias float-set input."""
+    """Declare the exact typing alias float-set input.
+
+    The field uses the typing.Set spelling.
+    """
 
     amounts: Set[float]  # noqa: UP006
 
@@ -104,7 +110,14 @@ def _schema(
 def test_float_sets_publish_list_and_reach_resolver_as_set(
     model: type[InputType], name: str, value: object, expected: set[float]
 ) -> None:
-    """Both spellings use native list coercion and Python-set materialization."""
+    """Both spellings use native list coercion and Python-set materialization.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         schema, received = _schema(model, name=name)
@@ -122,7 +135,10 @@ def test_float_sets_publish_list_and_reach_resolver_as_set(
 
 
 def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> None:
-    """Custom equality must not admit an unrelated outer annotation."""
+    """Custom equality must not admit an unrelated outer annotation.
+
+    Scenario: custom outer annotation comparing equal to alias keeps fallback.
+    """
 
     class EqualToFloatSetMeta(type):
         __hash__ = type.__hash__
@@ -162,7 +178,10 @@ def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> No
 
 
 def test_custom_leaf_comparing_equal_to_float_keeps_fallback() -> None:
-    """A custom set leaf is not the approved float despite equality."""
+    """A custom set leaf is not the approved float despite equality.
+
+    Scenario: custom leaf comparing equal to float keeps fallback.
+    """
 
     class EqualToFloatMeta(type):
         __hash__ = type.__hash__
@@ -203,15 +222,24 @@ def test_custom_leaf_comparing_equal_to_float_keeps_fallback() -> None:
 
 
 class NativeFloatChild(float):
-    """Exercise a hashable float subclass accepted by native GraphQLFloat."""
+    """Exercise a hashable float subclass accepted by native GraphQLFloat.
+
+    Instances compare as floats and can be stored in a set.
+    """
 
 
 class NativeIntChild(int):
-    """Exercise a hashable int subclass accepted by native GraphQLFloat."""
+    """Exercise a hashable int subclass accepted by native GraphQLFloat.
+
+    Instances compare as integers and can be stored in a set.
+    """
 
 
 class NativeIntEnum(enum.IntEnum):
-    """Exercise a hashable integer enum accepted by native GraphQLFloat."""
+    """Exercise a hashable integer enum accepted by native GraphQLFloat.
+
+    Members compare as integers and can be stored in a set.
+    """
 
     TWO = 2
 
@@ -235,7 +263,14 @@ class NativeIntEnum(enum.IntEnum):
 def test_native_numeric_variables_become_float_set(
     model: type[InputType], name: str, value: object, expected: set[float]
 ) -> None:
-    """Retain zero and native-accepted numeric subclasses without recasting."""
+    """Retain zero and native-accepted numeric subclasses without recasting.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -262,7 +297,14 @@ def test_native_numeric_variables_become_float_set(
 def test_inline_numeric_singleton_empty_and_duplicates(
     model: type[InputType], name: str, literal: str, expected: set[float]
 ) -> None:
-    """Apply native list coercion and set conversion to inline Float literals."""
+    """Apply native list coercion and set conversion to inline Float literals.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{amounts: {literal}}}) {{ result }} }}"
@@ -284,7 +326,13 @@ def test_inline_numeric_singleton_empty_and_duplicates(
 def test_invalid_native_float_variables_fail_before_resolver(
     model: type[InputType], name: str, value: object
 ) -> None:
-    """Reject invalid supplied leaves before the resolver without casts."""
+    """Reject invalid supplied leaves before the resolver without casts.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -318,7 +366,13 @@ def test_invalid_native_float_variables_fail_before_resolver(
 def test_invalid_native_float_literals_fail_before_resolver(
     model: type[InputType], name: str, literal: str
 ) -> None:
-    """Use native GraphQLFloat literal validation on public mutations."""
+    """Use native GraphQLFloat literal validation on public mutations.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{amounts: {literal}}}) {{ result }} }}"
@@ -337,7 +391,12 @@ def test_invalid_native_float_literals_fail_before_resolver(
 def test_literal_overflow_rejects_even_with_malformed_legacy_defaults(
     annotation: object, name: str
 ) -> None:
-    """Reject supplied overflow while retaining omitted malformed defaults."""
+    """Reject supplied overflow while retaining omitted malformed defaults.
+
+    Args:
+        annotation: Field annotation under test.
+        name: GraphQL input type name used for the compiled model.
+    """
     model = type(
         name,
         (InputType,),
@@ -378,7 +437,13 @@ def test_literal_overflow_rejects_even_with_malformed_legacy_defaults(
 def test_overflowing_variable_default_never_reaches_resolver(
     model: type[InputType], name: str, literal: str
 ) -> None:
-    """Reject a literal variable default before invoking the mutation."""
+    """Reject a literal variable default before invoking the mutation.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -401,7 +466,12 @@ def test_overflowing_variable_default_never_reaches_resolver(
 def test_literal_overflow_rejects_through_alias_and_pruned_clone(
     annotation: object, name: str
 ) -> None:
-    """Keep fixed-default distinction on a surviving alias after pruning."""
+    """Keep fixed-default distinction on a surviving alias after pruning.
+
+    Args:
+        annotation: Field annotation under test.
+        name: GraphQL input type name used for the compiled model.
+    """
     model = type(
         name,
         (InputType,),
@@ -458,7 +528,10 @@ def test_literal_overflow_rejects_through_alias_and_pruned_clone(
 
 
 def test_exact_float_sets_have_list_introspection_without_warning() -> None:
-    """Both approved spellings publish non-null Float list items."""
+    """Both approved spellings publish non-null Float list items.
+
+    Scenario: exact float sets have list introspection without warning.
+    """
     for model, name in (
         (FloatSetPepPayload, "FloatSetPepPayload"),
         (FloatSetTypingPayload, "FloatSetTypingPayload"),
@@ -489,7 +562,10 @@ def test_exact_float_sets_have_list_introspection_without_warning() -> None:
 
 
 def test_required_float_set_rejects_omission() -> None:
-    """Retain required-field semantics for approved exact annotations."""
+    """Retain required-field semantics for approved exact annotations.
+
+    Scenario: required float set rejects omission.
+    """
     schema, received = _schema(FloatSetPepPayload, name="FloatSetPepPayload")
     result = graphql_sync(
         schema,
@@ -501,7 +577,10 @@ def test_required_float_set_rejects_omission() -> None:
 
 
 def test_optional_float_sets_keep_omission_and_null() -> None:
-    """Preserve outer Optional and explicit-null behavior for both spellings."""
+    """Preserve outer Optional and explicit-null behavior for both spellings.
+
+    Scenario: optional float sets keep omission and null.
+    """
 
     class FloatSetOptionalPayload(InputType):
         pep_amounts: set[float] | None = None
@@ -527,7 +606,10 @@ def test_optional_float_sets_keep_omission_and_null() -> None:
 
 
 def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
-    """Retain valid fixed sets and fresh per-object factory defaults."""
+    """Retain valid fixed sets and fresh per-object factory defaults.
+
+    Scenario: fixed and factory defaults keep lifecycle.
+    """
     calls: list[int] = []
 
     def make_set() -> set[float]:
@@ -555,7 +637,10 @@ def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
 
 
 def test_alias_selection_replacement_and_pruning_project_metadata() -> None:
-    """Convert only emitted and permission-surviving resolver out-names."""
+    """Convert only emitted and permission-surviving resolver out-names.
+
+    Scenario: alias selection replacement and pruning project metadata.
+    """
 
     class FloatSetSelectionPayload(InputType):
         kept_amounts: set[float] = Field(alias="keptAmounts")
@@ -642,7 +727,10 @@ def test_alias_selection_replacement_and_pruning_project_metadata() -> None:
 
 
 def test_other_set_leaves_and_nested_forms_keep_fallback() -> None:
-    """Do not promote unapproved leaves, bare sets or nested set forms."""
+    """Do not promote unapproved leaves, bare sets or nested set forms.
+
+    Scenario: other set leaves and nested forms keep fallback.
+    """
 
     class FloatSetUnsupportedPayload(InputType):
         pep_bytes: set[bytes]

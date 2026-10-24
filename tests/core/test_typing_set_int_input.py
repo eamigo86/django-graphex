@@ -1,4 +1,4 @@
-"""Public GraphQL input contract for exact ``typing.Set[int]`` annotations."""
+"""Public GraphQL input contract for exact typing.Set of int annotations."""
 
 from __future__ import annotations
 
@@ -26,7 +26,10 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class TypingSetIntPayload(InputType):
-    """Expose the one approved typing alias on a public mutation."""
+    """Expose the one approved typing alias on a public mutation.
+
+    The numbers field uses typing.Set of int.
+    """
 
     numbers: Set[int]  # noqa: UP006
 
@@ -73,13 +76,19 @@ def _schema(
 
 
 def test_typing_set_int_prints_int_list() -> None:
-    """Publish the approved input list rather than the String fallback."""
+    """Publish the approved input list rather than the String fallback.
+
+    Scenario: typing set int prints int list.
+    """
     schema, _received = _schema()
     assert "numbers: [Int!]!" in print_schema(schema)
 
 
 def test_typing_set_int_list_reaches_resolver_as_set() -> None:
-    """Deduplicate a supplied list into the resolver's actual Python set."""
+    """Deduplicate a supplied list into the resolver's actual Python set.
+
+    Scenario: typing set int list reaches resolver as set.
+    """
     schema, received = _schema()
     result = graphql_sync(
         schema,
@@ -94,7 +103,11 @@ def test_typing_set_int_list_reaches_resolver_as_set() -> None:
 
 @pytest.mark.parametrize("value", [3, [3], 3.0, []])
 def test_typing_set_int_variable_uses_native_list_coercion(value: object) -> None:
-    """Keep native singleton and integral-float variable behavior."""
+    """Keep native singleton and integral-float variable behavior.
+
+    Args:
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema()
     result = graphql_sync(
         schema,
@@ -108,7 +121,10 @@ def test_typing_set_int_variable_uses_native_list_coercion(value: object) -> Non
 
 
 def test_typing_set_int_inline_values_use_native_coercion() -> None:
-    """Coerce inline scalar and duplicate-list inputs before resolution."""
+    """Coerce inline scalar and duplicate-list inputs before resolution.
+
+    Scenario: typing set int inline values use native coercion.
+    """
     schema, received = _schema()
     for literal in ("3", "[2, 1, 2]"):
         result = graphql_sync(
@@ -120,7 +136,11 @@ def test_typing_set_int_inline_values_use_native_coercion() -> None:
 
 @pytest.mark.parametrize("value", [True, "3", 3.5, [None], [True], ["3"], [2147483648]])
 def test_invalid_typing_set_int_variable_fails_before_resolver(value: object) -> None:
-    """Use strict native GraphQLInt validation without custom casts."""
+    """Use strict native GraphQLInt validation without custom casts.
+
+    Args:
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema()
     result = graphql_sync(
         schema,
@@ -133,7 +153,11 @@ def test_invalid_typing_set_int_variable_fails_before_resolver(value: object) ->
 
 @pytest.mark.parametrize("literal", ["true", '"3"', "3.0", "[null]"])
 def test_invalid_typing_set_int_literal_fails_before_resolver(literal: str) -> None:
-    """Reject an invalid inline item before mutation execution."""
+    """Reject an invalid inline item before mutation execution.
+
+    Args:
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema()
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{numbers: {literal}}}) {{ result }} }}"
@@ -143,7 +167,10 @@ def test_invalid_typing_set_int_literal_fails_before_resolver(literal: str) -> N
 
 
 def test_typing_set_int_optional_omission_and_null_are_unchanged() -> None:
-    """Retain the established outer Optional and default behavior."""
+    """Retain the established outer Optional and default behavior.
+
+    Scenario: typing set int optional omission and null are unchanged.
+    """
 
     class OptionalTypingSetPayload(InputType):
         """Expose a nullable typing alias."""
@@ -169,7 +196,10 @@ def test_typing_set_int_optional_omission_and_null_are_unchanged() -> None:
 
 
 def test_typing_set_int_required_field_stays_required() -> None:
-    """Reject omission of a required typing alias field."""
+    """Reject omission of a required typing alias field.
+
+    Scenario: typing set int required field stays required.
+    """
     schema, received = _schema()
     result = graphql_sync(
         schema,
@@ -181,7 +211,10 @@ def test_typing_set_int_required_field_stays_required() -> None:
 
 
 def test_typing_set_int_fixed_and_factory_defaults_keep_lifecycle() -> None:
-    """Keep fixed defaults and fresh omitted-field factories separate."""
+    """Keep fixed defaults and fresh omitted-field factories separate.
+
+    Scenario: typing set int fixed and factory defaults keep lifecycle.
+    """
     calls: list[int] = []
 
     def make_set() -> set[int]:
@@ -212,7 +245,10 @@ def test_typing_set_int_fixed_and_factory_defaults_keep_lifecycle() -> None:
 
 
 def test_typing_set_int_alias_uses_resolver_field_name() -> None:
-    """Materialize the set under the emitted field's snake out-name."""
+    """Materialize the set under the emitted field's snake out-name.
+
+    Scenario: typing set int alias uses resolver field name.
+    """
 
     class AliasTypingSetPayload(InputType):
         """Use an explicit multiword wire alias."""
@@ -231,7 +267,10 @@ def test_typing_set_int_alias_uses_resolver_field_name() -> None:
 
 
 def test_pruned_typing_set_int_metadata_keeps_only_visible_field() -> None:
-    """Project the existing set conversion through permission pruning."""
+    """Project the existing set conversion through permission pruning.
+
+    Scenario: pruned typing set int metadata keeps only visible field.
+    """
 
     class ScopedTypingSetPayload(InputType):
         """Expose one public and one restricted typing alias."""
@@ -287,7 +326,10 @@ def test_pruned_typing_set_int_metadata_keeps_only_visible_field() -> None:
 
 
 def test_typing_set_int_emits_no_fallback_warning() -> None:
-    """Distinguish the approved typing alias from other set fallbacks."""
+    """Distinguish the approved typing alias from other set fallbacks.
+
+    Scenario: typing set int emits no fallback warning.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         fields = compile_input_type(
@@ -298,7 +340,10 @@ def test_typing_set_int_emits_no_fallback_warning() -> None:
 
 
 def test_unrelated_custom_scalar_equality_keeps_string_fallback() -> None:
-    """Do not compare an unrelated annotation with the approved typing alias."""
+    """Do not compare an unrelated annotation with the approved typing alias.
+
+    Scenario: unrelated custom scalar equality keeps string fallback.
+    """
 
     class EqualToTypingSetMeta(type):
         __hash__ = type.__hash__
@@ -337,7 +382,10 @@ def test_unrelated_custom_scalar_equality_keeps_string_fallback() -> None:
 
 
 def test_typing_set_custom_leaf_equality_keeps_string_fallback() -> None:
-    """Do not admit a typing set whose leaf only compares equal to int."""
+    """Do not admit a typing set whose leaf only compares equal to int.
+
+    Scenario: typing set custom leaf equality keeps string fallback.
+    """
 
     class EqualToIntMeta(type):
         __hash__ = type.__hash__

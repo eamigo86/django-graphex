@@ -23,7 +23,10 @@ from django_graphex.schema import DjangoGraphQLSchema
 
 
 def test_public_mutation_uses_literal_enum_and_raw_resolver_value() -> None:
-    """Expose an enum on the wire while returning the original Python string."""
+    """Expose an enum on the wire while returning the original Python string.
+
+    Scenario: public mutation uses literal enum and raw resolver value.
+    """
     seen: list[dict[str, object]] = []
 
     class ArticleInput(InputType):
@@ -106,7 +109,10 @@ def test_public_mutation_uses_literal_enum_and_raw_resolver_value() -> None:
 
 
 def test_wrapped_literal_alias_and_nested_input_keep_enum_values() -> None:
-    """Preserve wrapper nullability and resolver-facing names inside nested input."""
+    """Preserve wrapper nullability and resolver-facing names inside nested input.
+
+    Scenario: wrapped literal alias and nested input keep enum values.
+    """
 
     class InnerInput(InputType):
         publish_state: Literal["draft", "published"] | None = Field(
@@ -177,7 +183,10 @@ def test_wrapped_literal_alias_and_nested_input_keep_enum_values() -> None:
 
 
 def test_literal_defaults_and_factory_are_not_frozen_at_compile_time() -> None:
-    """Render a fixed enum default but evaluate a factory for each input."""
+    """Render a fixed enum default but evaluate a factory for each input.
+
+    Scenario: literal defaults and factory are not frozen at compile time.
+    """
     calls: list[str] = []
 
     def next_status() -> str:
@@ -235,7 +244,10 @@ def test_literal_defaults_and_factory_are_not_frozen_at_compile_time() -> None:
 
 
 def test_compiled_name_and_inherited_public_alias_define_enum_name() -> None:
-    """Name the enum from the compiled type and inherited wire alias."""
+    """Name the enum from the compiled type and inherited wire alias.
+
+    Scenario: compiled name and inherited public alias define enum name.
+    """
 
     class BaseInput(InputType):
         publication_state: Literal["draft", "published"] = Field(alias="publishState")
@@ -252,7 +264,10 @@ def test_compiled_name_and_inherited_public_alias_define_enum_name() -> None:
 
 
 def test_member_collision_rejects_ambiguous_literals() -> None:
-    """Reject values that normalize to the same enum member name."""
+    """Reject values that normalize to the same enum member name.
+
+    Scenario: member collision rejects ambiguous literals.
+    """
 
     class AmbiguousInput(InputType):
         status: Literal["draft-one", "draft one"]

@@ -27,13 +27,19 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class UUIDSetPepPayload(InputType):
-    """Declare the exact PEP 585 UUID-set input."""
+    """Declare the exact PEP 585 UUID-set input.
+
+    The field uses the builtin set spelling.
+    """
 
     values: set[uuid.UUID]
 
 
 class UUIDSetTypingPayload(InputType):
-    """Declare the exact typing alias UUID-set input."""
+    """Declare the exact typing alias UUID-set input.
+
+    The field uses the typing.Set spelling.
+    """
 
     values: Set[uuid.UUID]  # noqa: UP006
 
@@ -112,7 +118,14 @@ def _schema(
 def test_uuid_sets_publish_list_and_reach_resolver_as_set(
     model: type[InputType], name: str, value: object, expected: set[uuid.UUID]
 ) -> None:
-    """Both spellings use native UUID coercion and Python-set materialization."""
+    """Both spellings use native UUID coercion and Python-set materialization.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         schema, received = _schema(model, name=name)
@@ -130,7 +143,10 @@ def test_uuid_sets_publish_list_and_reach_resolver_as_set(
 
 
 def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> None:
-    """Custom outer equality must not admit an unrelated annotation."""
+    """Custom outer equality must not admit an unrelated annotation.
+
+    Scenario: custom outer annotation comparing equal to alias keeps fallback.
+    """
 
     class EqualToUUIDSetMeta(type):
         __hash__ = type.__hash__
@@ -167,7 +183,10 @@ def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> No
 
 
 def test_custom_leaf_comparing_equal_to_uuid_keeps_fallback() -> None:
-    """A custom set leaf is not UUID despite equality."""
+    """A custom set leaf is not UUID despite equality.
+
+    Scenario: custom leaf comparing equal to uuid keeps fallback.
+    """
 
     class EqualToUUIDMeta(type):
         __hash__ = type.__hash__
@@ -204,7 +223,10 @@ def test_custom_leaf_comparing_equal_to_uuid_keeps_fallback() -> None:
 
 
 class NativeUUIDChild(uuid.UUID):
-    """Exercise a native-accepted UUID subclass variable."""
+    """Exercise a native-accepted UUID subclass variable.
+
+    Instances compare as UUIDs and can be stored in a set.
+    """
 
 
 @pytest.mark.parametrize(
@@ -232,7 +254,14 @@ class NativeUUIDChild(uuid.UUID):
 def test_native_uuid_variables_reach_resolver_as_exact_uuid_set(
     model: type[InputType], name: str, value: object, expected: set[uuid.UUID]
 ) -> None:
-    """Honor native UUID normalization, subclasses, zero and deduplication."""
+    """Honor native UUID normalization, subclasses, zero and deduplication.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -268,7 +297,14 @@ def test_native_uuid_variables_reach_resolver_as_exact_uuid_set(
 def test_native_uuid_literals_use_list_coercion(
     model: type[InputType], name: str, literal: str, expected: set[uuid.UUID]
 ) -> None:
-    """Apply native UUID and list coercion to inline mutation literals."""
+    """Apply native UUID and list coercion to inline mutation literals.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{values: {literal}}}) {{ result }} }}"
@@ -288,7 +324,13 @@ def test_native_uuid_literals_use_list_coercion(
 def test_invalid_uuid_variables_reject_before_mutation(
     model: type[InputType], name: str, value: object
 ) -> None:
-    """Reject invalid native UUID leaves without resolver execution."""
+    """Reject invalid native UUID leaves without resolver execution.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -310,7 +352,13 @@ def test_invalid_uuid_variables_reject_before_mutation(
 def test_invalid_uuid_literals_reject_before_mutation(
     model: type[InputType], name: str, literal: str
 ) -> None:
-    """Keep native UUID literal validation ahead of mutation execution."""
+    """Keep native UUID literal validation ahead of mutation execution.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{values: {literal}}}) {{ result }} }}"
@@ -320,7 +368,10 @@ def test_invalid_uuid_literals_reject_before_mutation(
 
 
 def test_uuid_sets_introspect_as_non_null_uuid_lists() -> None:
-    """Publish the exact UUID scalar and required list wrappers."""
+    """Publish the exact UUID scalar and required list wrappers.
+
+    Scenario: uuid sets introspect as non null uuid lists.
+    """
     for model, name in (
         (UUIDSetPepPayload, "UUIDSetPepPayload"),
         (UUIDSetTypingPayload, "UUIDSetTypingPayload"),
@@ -348,7 +399,10 @@ def test_uuid_sets_introspect_as_non_null_uuid_lists() -> None:
 
 
 def test_required_uuid_set_rejects_omission() -> None:
-    """Keep required-field semantics for exact UUID sets."""
+    """Keep required-field semantics for exact UUID sets.
+
+    Scenario: required uuid set rejects omission.
+    """
     schema, received = _schema(UUIDSetPepPayload, name="UUIDSetPepPayload")
     result = graphql_sync(
         schema,
@@ -360,7 +414,10 @@ def test_required_uuid_set_rejects_omission() -> None:
 
 
 def test_optional_uuid_sets_keep_omission_and_null() -> None:
-    """Preserve outer Optional and explicit null for both spellings."""
+    """Preserve outer Optional and explicit null for both spellings.
+
+    Scenario: optional uuid sets keep omission and null.
+    """
 
     class UUIDSetOptionalPayload(InputType):
         pep_values: set[uuid.UUID] | None = None
@@ -392,7 +449,10 @@ def test_optional_uuid_sets_keep_omission_and_null() -> None:
 
 
 def test_fixed_and_factory_uuid_defaults_keep_lifecycle() -> None:
-    """Retain valid fixed sets and fresh per-object factory defaults."""
+    """Retain valid fixed sets and fresh per-object factory defaults.
+
+    Scenario: fixed and factory uuid defaults keep lifecycle.
+    """
     calls: list[int] = []
 
     def make_set() -> set[uuid.UUID]:
@@ -419,7 +479,10 @@ def test_fixed_and_factory_uuid_defaults_keep_lifecycle() -> None:
 
 
 def test_malformed_legacy_uuid_defaults_remain_unchanged() -> None:
-    """Avoid extending validation to malformed omitted defaults or factories."""
+    """Avoid extending validation to malformed omitted defaults or factories.
+
+    Scenario: malformed legacy uuid defaults remain unchanged.
+    """
 
     class UUIDSetLegacyDefaultsPayload(InputType):
         fixed_values: set[uuid.UUID] = ["legacy"]
@@ -439,7 +502,10 @@ def test_malformed_legacy_uuid_defaults_remain_unchanged() -> None:
 
 
 def test_alias_selection_replacement_and_pruning_project_uuid_metadata() -> None:
-    """Convert only emitted and permission-surviving resolver out-names."""
+    """Convert only emitted and permission-surviving resolver out-names.
+
+    Scenario: alias selection replacement and pruning project uuid metadata.
+    """
 
     class UUIDSetSelectionPayload(InputType):
         kept_values: set[uuid.UUID] = Field(alias="keptValues")
@@ -530,7 +596,10 @@ def test_alias_selection_replacement_and_pruning_project_uuid_metadata() -> None
 
 
 def test_other_set_leaves_and_nested_forms_keep_fallback() -> None:
-    """Do not promote unapproved leaves, bare sets or nested set forms."""
+    """Do not promote unapproved leaves, bare sets or nested set forms.
+
+    Scenario: other set leaves and nested forms keep fallback.
+    """
 
     class UUIDSetUnsupportedPayload(InputType):
         pep_bytes: set[bytes]

@@ -533,6 +533,9 @@ def test_compile_output_fields_get_fields_exception_aborts_with_cause() -> None:
 
     The fake model has no metadata label, so the diagnostic must still identify
     its class without masking the original RuntimeError.
+
+    Raises:
+        RuntimeError: Injected by the fake model metadata when its fields are enumerated.
     """
     from django.core.exceptions import ImproperlyConfigured
 

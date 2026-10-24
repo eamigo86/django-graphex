@@ -13,11 +13,19 @@ from django_graphex.schema import DjangoGraphQLSchema
 
 
 class RecursiveIntRowsPayload(InputType):
+    """Declare a doubly nested list of integers.
+
+    The rows field is list of list of int.
+    """
+
     rows: list[list[int]]
 
 
 def test_nested_integer_lists_use_recursive_graphql_wrappers() -> None:
-    """Compile nested supported scalars and deliver their structured values."""
+    """Compile nested supported scalars and deliver their structured values.
+
+    Scenario: nested integer lists use recursive graphql wrappers.
+    """
     input_type = compile_input_type(
         RecursiveIntRowsPayload, name="RecursiveIntRowsPayload"
     )
@@ -94,7 +102,10 @@ def _schema_for_payload(
 
 
 def test_nested_list_nullability_and_singleton_coercion() -> None:
-    """Retain nullable positions and GraphQL wrapping at each list level."""
+    """Retain nullable positions and GraphQL wrapping at each list level.
+
+    Scenario: nested list nullability and singleton coercion.
+    """
 
     class NullableRecursiveRowsPayload(InputType):
         cells: list[list[int | None] | None] | None = None
@@ -137,7 +148,10 @@ def test_nested_list_nullability_and_singleton_coercion() -> None:
 
 
 def test_supported_nested_input_and_literal_enum_leaves() -> None:
-    """Keep nested object inputs and Literal values on their approved wires."""
+    """Keep nested object inputs and Literal values on their approved wires.
+
+    Scenario: supported nested input and literal enum leaves.
+    """
     from typing import Literal
 
     class RecursiveChildPayload(InputType):
@@ -179,18 +193,38 @@ def test_supported_nested_input_and_literal_enum_leaves() -> None:
 
 
 class RecursiveIntMapPayload(InputType):
+    """Declare nested lists of integer maps with builtin dict.
+
+    The maps field is list of list of dict of str to int.
+    """
+
     maps: list[list[dict[str, int]]]
 
 
 class RecursiveTypingIntMapPayload(InputType):
+    """Declare nested lists of integer maps with typing.Dict.
+
+    The maps field is list of list of typing.Dict of str to int.
+    """
+
     maps: list[list[Dict[str, int]]]
 
 
 class RecursiveStringMapPayload(InputType):
+    """Declare nested lists of string maps with builtin dict.
+
+    The maps field is list of list of dict of str to str.
+    """
+
     maps: list[list[dict[str, str]]]
 
 
 class RecursiveTypingStringMapPayload(InputType):
+    """Declare nested lists of string maps with typing.Dict.
+
+    The maps field is list of list of typing.Dict of str to str.
+    """
+
     maps: list[list[Dict[str, str]]]
 
 
@@ -206,7 +240,13 @@ class RecursiveTypingStringMapPayload(InputType):
 def test_deep_typed_maps_keep_strict_leaf_contract(
     payload_type: type[InputType], good: dict[str, object], bad: dict[str, object]
 ) -> None:
-    """Reject invalid deep leaves with indexed paths before mutation."""
+    """Reject invalid deep leaves with indexed paths before mutation.
+
+    Args:
+        payload_type: Input payload type under test.
+        good: Valid payload accepted by the case.
+        bad: Invalid value supplied by the parametrized case.
+    """
     from django_graphex.core.schema_pruner import prune_schema
 
     input_type = compile_input_type(payload_type, name=payload_type.__name__)
@@ -230,7 +270,10 @@ def test_deep_typed_maps_keep_strict_leaf_contract(
 
 
 def test_nested_json_fixed_default_and_factory_keep_runtime_shape() -> None:
-    """Publish valid fixed metadata but run omitted factories each time."""
+    """Publish valid fixed metadata but run omitted factories each time.
+
+    Scenario: nested json fixed default and factory keep runtime shape.
+    """
     from graphql import build_schema, parse, print_schema
     from pydantic import Field
 
@@ -271,10 +314,20 @@ def test_nested_json_fixed_default_and_factory_keep_runtime_shape() -> None:
 
 
 class RecursiveNullableInnerBareJsonDefaultPayload(InputType):
+    """Declare nested lists whose inner list is nullable and holds bare JSON maps.
+
+    The rows field carries a fixed default that includes a null inner list.
+    """
+
     rows: list[list[dict] | None] = [None, [{"x": 1}, {"y": 2}]]
 
 
 class RecursiveNullableLeafBareJsonDefaultPayload(InputType):
+    """Declare nested lists whose leaf is a nullable bare JSON map.
+
+    The rows field carries a fixed default that includes a null leaf.
+    """
+
     rows: list[list[dict | None]] = [[None, {"x": 1}]]
 
 
@@ -296,7 +349,13 @@ class RecursiveNullableLeafBareJsonDefaultPayload(InputType):
 def test_nullable_nested_bare_json_fixed_defaults_remain_printable(
     payload_type: type[InputType], expected_type: str, expected_default: str
 ) -> None:
-    """Publish nullable nested JSON defaults without changing omitted values."""
+    """Publish nullable nested JSON defaults without changing omitted values.
+
+    Args:
+        payload_type: Input payload type under test.
+        expected_type: Printed type the case expects.
+        expected_default: Printed default literal the case expects.
+    """
     from graphql import build_schema, parse, print_schema
 
     input_type = compile_input_type(payload_type, name=payload_type.__name__)
@@ -330,7 +389,10 @@ def test_nullable_nested_bare_json_fixed_defaults_remain_printable(
 
 
 def test_unsupported_nested_leaves_keep_legacy_fallback() -> None:
-    """Avoid inventing wrappers for leaves outside the approved set."""
+    """Avoid inventing wrappers for leaves outside the approved set.
+
+    Scenario: unsupported nested leaves keep legacy fallback.
+    """
     import warnings
     from typing import Union
 
@@ -373,7 +435,10 @@ def test_unsupported_nested_leaves_keep_legacy_fallback() -> None:
 
 
 def test_deep_map_alias_factory_and_permission_clone() -> None:
-    """Retain surviving validators and fresh factories in a pruned schema."""
+    """Retain surviving validators and fresh factories in a pruned schema.
+
+    Scenario: deep map alias factory and permission clone.
+    """
     from pydantic import Field
 
     from django_graphex.core.schema_pruner import prune_schema
@@ -425,7 +490,10 @@ def test_deep_map_alias_factory_and_permission_clone() -> None:
 
 
 def test_nested_bare_json_keeps_leaf_identity_and_single_list_parity() -> None:
-    """Wrap lists without copying the existing raw JSON leaf contract."""
+    """Wrap lists without copying the existing raw JSON leaf contract.
+
+    Scenario: nested bare json keeps leaf identity and single list parity.
+    """
 
     class RecursiveBareJsonPayload(InputType):
         nested: list[list[dict]]
@@ -451,7 +519,10 @@ def test_nested_bare_json_keeps_leaf_identity_and_single_list_parity() -> None:
 
 
 def test_typing_list_and_nullable_nested_map_elements() -> None:
-    """Keep typing aliases and nullable strict-map leaves on their wires."""
+    """Keep typing aliases and nullable strict-map leaves on their wires.
+
+    Scenario: typing list and nullable nested map elements.
+    """
     from typing import List
 
     class TypingRecursiveRowsPayload(InputType):
@@ -509,7 +580,12 @@ def test_typing_list_and_nullable_nested_map_elements() -> None:
 def test_ineligible_nested_json_defaults_keep_legacy_metadata(
     case: str, default: object
 ) -> None:
-    """Avoid publishing malformed or unprintable nested default literals."""
+    """Avoid publishing malformed or unprintable nested default literals.
+
+    Args:
+        case: Name or index of the parametrized case.
+        default: Default value under test.
+    """
     payload_type = type(
         f"RecursiveBadDefault{case}Payload",
         (InputType,),
@@ -524,7 +600,10 @@ def test_ineligible_nested_json_defaults_keep_legacy_metadata(
 
 
 def test_deep_typed_maps_validate_when_defaults_are_not_emitted() -> None:
-    """Keep strict validation on Django-style input compilation."""
+    """Keep strict validation on Django-style input compilation.
+
+    Scenario: deep typed maps validate when defaults are not emitted.
+    """
 
     class NoDefaultsRecursiveMapPayload(InputType):
         maps: list[list[dict[str, int]]]

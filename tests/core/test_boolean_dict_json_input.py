@@ -25,10 +25,20 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class BuiltinBooleanMapPayload(InputType):
+    """Declare a boolean map input with the builtin dict spelling.
+
+    The mapping field uses dict of str to bool.
+    """
+
     mapping: dict[str, bool]
 
 
 class TypingBooleanMapPayload(InputType):
+    """Declare a boolean map input with the typing alias spelling.
+
+    The mapping field uses typing.Dict of str to bool.
+    """
+
     mapping: Dict[str, bool]  # noqa: UP006
 
 
@@ -73,14 +83,22 @@ def _schema(
 
 @pytest.mark.parametrize("model", [BuiltinBooleanMapPayload, TypingBooleanMapPayload])
 def test_exact_boolean_map_uses_json_input(model: type[InputType]) -> None:
-    """Publish JSON for both approved direct-map spellings."""
+    """Publish JSON for both approved direct-map spellings.
+
+    Args:
+        model: Input model declaring the field under test.
+    """
     schema, _received = _schema(model, name=model.__name__)
     assert "mapping: JSON!" in print_schema(schema)
 
 
 @pytest.mark.parametrize("model", [BuiltinBooleanMapPayload, TypingBooleanMapPayload])
 def test_boolean_map_variable_reaches_resolver(model: type[InputType]) -> None:
-    """Accept native Boolean values without converting the supplied object."""
+    """Accept native Boolean values without converting the supplied object.
+
+    Args:
+        model: Input model declaring the field under test.
+    """
     schema, received = _schema(model, name=model.__name__)
     mapping = {"enabled": True, "disabled": False}
     result = graphql_sync(
@@ -94,7 +112,10 @@ def test_boolean_map_variable_reaches_resolver(model: type[InputType]) -> None:
 
 
 def test_unrelated_dictionary_leaf_keeps_string_fallback() -> None:
-    """Do not generalize the approved Boolean leaf to other map values."""
+    """Do not generalize the approved Boolean leaf to other map values.
+
+    Scenario: unrelated dictionary leaf keeps string fallback.
+    """
 
     class OtherLeaf(InputType):
         mapping: Dict[str, float]  # noqa: UP006
@@ -104,7 +125,10 @@ def test_unrelated_dictionary_leaf_keeps_string_fallback() -> None:
 
 
 def test_list_wrapped_boolean_map_keeps_existing_fallback() -> None:
-    """Do not enable an unapproved list of Boolean dictionaries."""
+    """Do not enable an unapproved list of Boolean dictionaries.
+
+    Scenario: list wrapped boolean map keeps existing fallback.
+    """
 
     class Wrapped(InputType):
         mappings: list[dict[str, bool]]
@@ -134,7 +158,12 @@ def test_list_wrapped_boolean_map_keeps_existing_fallback() -> None:
 def test_supplied_invalid_boolean_map_rejected_before_resolver(
     model: type[InputType], invalid: object
 ) -> None:
-    """Reject supplied non-Booleans without leaking key names in errors."""
+    """Reject supplied non-Booleans without leaking key names in errors.
+
+    Args:
+        model: Input model declaring the field under test.
+        invalid: Invalid value supplied by the parametrized case.
+    """
     schema, received = _schema(model, name=model.__name__)
     result = graphql_sync(
         schema,
@@ -151,7 +180,11 @@ def test_supplied_invalid_boolean_map_rejected_before_resolver(
 def test_literals_accept_exact_bool_and_reject_numbers(
     model: type[InputType],
 ) -> None:
-    """Apply the direct Boolean-map contract to GraphQL literals."""
+    """Apply the direct Boolean-map contract to GraphQL literals.
+
+    Args:
+        model: Input model declaring the field under test.
+    """
     schema, received = _schema(model, name=model.__name__)
     ok = graphql_sync(
         schema,
@@ -167,7 +200,10 @@ def test_literals_accept_exact_bool_and_reject_numbers(
 
 
 def test_empty_map_and_optional_null_preserve_outer_rules() -> None:
-    """Keep empty objects and existing outer nullability semantics."""
+    """Keep empty objects and existing outer nullability semantics.
+
+    Scenario: empty map and optional null preserve outer rules.
+    """
 
     class OptionalMap(InputType):
         mapping: Dict[str, bool] | None = None  # noqa: UP006
@@ -186,7 +222,10 @@ def test_empty_map_and_optional_null_preserve_outer_rules() -> None:
 
 
 def test_fixed_default_omission_and_explicit_same_object_have_distinct_policy() -> None:
-    """Preserve a malformed default yet reject that same object when supplied."""
+    """Preserve a malformed default yet reject that same object when supplied.
+
+    Scenario: fixed default omission and explicit same object have distinct policy.
+    """
     fixed = {"legacy": 1}
 
     class FixedMap(InputType):
@@ -220,7 +259,11 @@ def test_fixed_default_omission_and_explicit_same_object_have_distinct_policy() 
 def test_malformed_fixed_nonobject_default_keeps_omission_policy(
     fixed: object,
 ) -> None:
-    """Do not newly validate a fixed default merely because it is omitted."""
+    """Do not newly validate a fixed default merely because it is omitted.
+
+    Args:
+        fixed: Fixed default value under test.
+    """
 
     name = {
         str: "LegacyStringFixed",
@@ -244,7 +287,10 @@ def test_malformed_fixed_nonobject_default_keeps_omission_policy(
 
 
 def test_unprintable_fixed_dictionary_default_keeps_original_object() -> None:
-    """Retain a legacy dict subclass on omission without exempting input."""
+    """Retain a legacy dict subclass on omission without exempting input.
+
+    Scenario: unprintable fixed dictionary default keeps original object.
+    """
 
     class LegacyDict(dict):
         pass
@@ -272,7 +318,13 @@ def test_unprintable_fixed_dictionary_default_keeps_original_object() -> None:
 def test_legacy_dictionary_subclass_default_remains_printable(
     spelling: str, annotation: object, pruned: bool
 ) -> None:
-    """Keep legacy fixed-default metadata printable on full and pruned schemas."""
+    """Keep legacy fixed-default metadata printable on full and pruned schemas.
+
+    Args:
+        spelling: Spelling of the field annotation under test.
+        annotation: Field annotation under test.
+        pruned: Whether the schema is pruned before it is inspected.
+    """
 
     class LegacyDict(dict):
         pass
@@ -311,7 +363,10 @@ def test_legacy_dictionary_subclass_default_remains_printable(
 def test_factory_omission_retains_malformed_output_but_invalid_input_stops_factory() -> (
     None
 ):
-    """Validate supplied input before running a sibling omitted factory."""
+    """Validate supplied input before running a sibling omitted factory.
+
+    Scenario: factory omission retains malformed output but invalid input stops factory.
+    """
     calls: list[int] = []
 
     def legacy_factory() -> dict[str, int]:
@@ -335,7 +390,10 @@ def test_factory_omission_retains_malformed_output_but_invalid_input_stops_facto
 
 
 def test_alias_and_permission_clone_keep_only_surviving_validator() -> None:
-    """Project validators by final field identity and resolver-facing name."""
+    """Project validators by final field identity and resolver-facing name.
+
+    Scenario: alias and permission clone keep only surviving validator.
+    """
 
     class Aliased(InputType):
         public_map: Dict[str, bool] = Field(alias="publicMap")  # noqa: UP006
@@ -362,7 +420,10 @@ def test_alias_and_permission_clone_keep_only_surviving_validator() -> None:
 
 
 def test_fixed_default_provenance_survives_permission_clone() -> None:
-    """Clone the exact marker with its final field, not a removed sibling."""
+    """Clone the exact marker with its final field, not a removed sibling.
+
+    Scenario: fixed default provenance survives permission clone.
+    """
     fixed = {"legacy": 1}
 
     class Scoped(InputType):
@@ -389,7 +450,10 @@ def test_fixed_default_provenance_survives_permission_clone() -> None:
 
 
 def test_field_selection_and_replacement_remove_stale_boolean_map_metadata() -> None:
-    """Track only direct Boolean-map fields that survive field construction."""
+    """Track only direct Boolean-map fields that survive field construction.
+
+    Scenario: field selection and replacement remove stale boolean map metadata.
+    """
 
     class Selection(InputType):
         kept_map: dict[str, bool] = Field(alias="keptMap")
@@ -424,7 +488,10 @@ def test_field_selection_and_replacement_remove_stale_boolean_map_metadata() -> 
 
 
 def test_custom_equality_annotations_do_not_gain_boolean_map_contract() -> None:
-    """Avoid invoking custom annotation equality to admit unrelated leaves."""
+    """Avoid invoking custom annotation equality to admit unrelated leaves.
+
+    Scenario: custom equality annotations do not gain boolean map contract.
+    """
 
     class EqualToBoolMeta(type):
         def __eq__(cls, other: object) -> bool:

@@ -21,7 +21,10 @@ from django_graphex.schema import DjangoGraphQLSchema
 
 
 def test_valid_fixed_json_list_default_prints_and_introspects() -> None:
-    """Publish a valid fixed list default without changing its elements."""
+    """Publish a valid fixed list default without changing its elements.
+
+    Scenario: valid fixed json list default prints and introspects.
+    """
     fixed = [{"views": 1}, None]
     received: list[dict[str, object]] = []
 
@@ -88,7 +91,10 @@ def test_valid_fixed_json_list_default_prints_and_introspects() -> None:
 
 
 def test_empty_list_and_nested_pruned_default_remain_printable() -> None:
-    """Publish empty and nested list defaults on full and pruned schemas."""
+    """Publish empty and nested list defaults on full and pruned schemas.
+
+    Scenario: empty list and nested pruned default remain printable.
+    """
 
     class NestedListMetadataChild(InputType):
         values: list[dict] = []
@@ -139,7 +145,10 @@ def test_empty_list_and_nested_pruned_default_remain_printable() -> None:
 
 
 def test_invalid_list_defaults_and_factory_keep_legacy_metadata() -> None:
-    """Avoid changing malformed defaults or evaluating a list factory."""
+    """Avoid changing malformed defaults or evaluating a list factory.
+
+    Scenario: invalid list defaults and factory keep legacy metadata.
+    """
 
     class InvalidListMetadataPayload(InputType):
         wrong_outer: list[dict] = {"views": 0}  # type: ignore[assignment]
@@ -181,7 +190,12 @@ def test_invalid_list_defaults_and_factory_keep_legacy_metadata() -> None:
 def test_ineligible_fixed_json_list_shapes_stay_internal(
     case: int, value: object
 ) -> None:
-    """Do not publish malformed or unprintable list defaults."""
+    """Do not publish malformed or unprintable list defaults.
+
+    Args:
+        case: Name or index of the parametrized case.
+        value: Value supplied by the parametrized case.
+    """
 
     payload_type = type(
         f"IneligibleListShapePayload{case}",

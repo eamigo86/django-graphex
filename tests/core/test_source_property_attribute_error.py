@@ -27,6 +27,9 @@ def test_wrapped_python_property_source_preserves_original_error(
 
     Args:
         getter_shape: Standard-library wrapper applied to the Python getter.
+
+    Raises:
+        AttributeError: The captured property getter failure re-raised by the test stub.
     """
     failure = AttributeError("wrapped Python getter failed")
     calls: list[object] = []
@@ -73,6 +76,9 @@ def test_source_property_attribute_error_surfaces_graphql_resolution_error() -> 
     """Expose a property getter failure as a GraphQL resolution error.
 
     Preserve the original exception and the healthy sibling's data.
+
+    Raises:
+        AttributeError: The captured property getter failure re-raised by the test stub.
     """
     failure = AttributeError("failure inside property getter")
 
@@ -109,6 +115,9 @@ def test_inherited_source_property_failure_preserves_required_propagation() -> N
     """Propagate a required-field failure from an inherited property.
 
     The GraphQL error must retain the inherited getter's original cause.
+
+    Raises:
+        AttributeError: The captured property getter failure re-raised by the test stub.
     """
     failure = AttributeError("inherited property failure")
 
@@ -145,6 +154,9 @@ def test_source_absence_and_successful_dynamic_fallback_remain_nullable() -> Non
     """Keep ordinary source lookup and null behavior unchanged.
 
     Cover missing attributes, explicit nulls, mappings, and dynamic fallback.
+
+    Raises:
+        AttributeError: Raised by test properties and attribute lookups that defer to dynamic fallback.
     """
 
     class Root:
@@ -260,6 +272,9 @@ def test_custom_attribute_lookup_and_nested_required_propagation() -> None:
     """Preserve custom lookup and nested required-field propagation.
 
     The successful sibling and failing property follow separate paths.
+
+    Raises:
+        AttributeError: The captured property getter failure re-raised by the test stub.
     """
     failure = AttributeError("nested property failed")
 
@@ -316,6 +331,9 @@ def test_unrelated_descriptor_and_dynamic_absence_keep_legacy_null() -> None:
     """Keep legacy null behavior for non-property lookup failures.
 
     Neither an unrelated descriptor nor final dynamic absence uses the policy.
+
+    Raises:
+        AttributeError: Raised by test descriptors and attribute lookups that report an absent attribute.
     """
 
     class Descriptor:
@@ -374,6 +392,10 @@ def test_explicit_resolver_precedes_source_and_method_body_error_is_unchanged() 
     """Keep explicit resolver precedence and method errors unchanged.
 
     A source property is skipped when a resolver exists; method failures remain errors.
+
+    Raises:
+        AttributeError: Raised by a source property that must not run when an explicit resolver exists.
+        Exception: The method body failure re-raised unchanged by the test stub.
     """
     method_failure = AttributeError("method failed")
 
@@ -423,6 +445,9 @@ def test_source_property_failure_keeps_safe_http_diagnostics(
 
     Args:
         caplog: Captured internal error records.
+
+    Raises:
+        AttributeError: The captured property getter failure re-raised by the test stub.
     """
     failure = AttributeError("private source property failure")
 

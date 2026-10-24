@@ -24,13 +24,19 @@ from django_graphex.core.mutation import Mutation
 
 
 class BooleanSetPepPayload(InputType):
-    """Declare a PEP 585 boolean-set input."""
+    """Declare a PEP 585 boolean-set input.
+
+    The field uses the builtin set spelling.
+    """
 
     flags: set[bool]
 
 
 class BooleanSetTypingPayload(InputType):
-    """Declare a typing alias boolean-set input."""
+    """Declare a typing alias boolean-set input.
+
+    The field uses the typing.Set spelling.
+    """
 
     flags: Set[bool]  # noqa: UP006
 
@@ -102,7 +108,14 @@ def _schema(
 def test_boolean_sets_publish_list_and_reach_resolver_as_set(
     model: type[InputType], name: str, value: object, expected: set[bool]
 ) -> None:
-    """Both spellings use native list coercion and Python-set materialization."""
+    """Both spellings use native list coercion and Python-set materialization.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         schema, received = _schema(model, name=name)
@@ -119,7 +132,10 @@ def test_boolean_sets_publish_list_and_reach_resolver_as_set(
 
 
 def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> None:
-    """Custom equality must not admit an unrelated outer annotation."""
+    """Custom equality must not admit an unrelated outer annotation.
+
+    Scenario: custom outer annotation comparing equal to alias keeps fallback.
+    """
 
     class EqualToBooleanSetMeta(type):
         __hash__ = type.__hash__
@@ -160,7 +176,10 @@ def test_custom_outer_annotation_comparing_equal_to_alias_keeps_fallback() -> No
 
 
 def test_custom_leaf_comparing_equal_to_bool_keeps_fallback() -> None:
-    """A custom set leaf is not the approved bool despite equality."""
+    """A custom set leaf is not the approved bool despite equality.
+
+    Scenario: custom leaf comparing equal to bool keeps fallback.
+    """
 
     class EqualToBoolMeta(type):
         __hash__ = type.__hash__
@@ -214,7 +233,14 @@ def test_custom_leaf_comparing_equal_to_bool_keeps_fallback() -> None:
 def test_variable_singleton_empty_and_duplicates(
     model: type[InputType], name: str, value: object, expected: set[bool]
 ) -> None:
-    """Apply native list coercion without dropping false or duplicates."""
+    """Apply native list coercion without dropping false or duplicates.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -240,7 +266,14 @@ def test_variable_singleton_empty_and_duplicates(
 def test_inline_singleton_empty_and_duplicates(
     model: type[InputType], name: str, literal: str, expected: set[bool]
 ) -> None:
-    """Use the same native list and set conversion for inline literals."""
+    """Use the same native list and set conversion for inline literals.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+        expected: Result the parametrized case expects.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{flags: {literal}}}) {{ result }} }}"
@@ -260,7 +293,13 @@ def test_inline_singleton_empty_and_duplicates(
 def test_invalid_native_boolean_variables_fail_before_resolver(
     model: type[InputType], name: str, value: object
 ) -> None:
-    """Reject non-booleans and null items without casts or resolver calls."""
+    """Reject non-booleans and null items without casts or resolver calls.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema,
@@ -282,7 +321,13 @@ def test_invalid_native_boolean_variables_fail_before_resolver(
 def test_invalid_native_boolean_literals_fail_before_resolver(
     model: type[InputType], name: str, literal: str
 ) -> None:
-    """Use GraphQLBoolean's native literal boundary."""
+    """Use GraphQLBoolean's native literal boundary.
+
+    Args:
+        model: Input model declaring the field under test.
+        name: GraphQL input type name used for the compiled model.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model, name=name)
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{flags: {literal}}}) {{ result }} }}"
@@ -292,7 +337,10 @@ def test_invalid_native_boolean_literals_fail_before_resolver(
 
 
 def test_approved_boolean_sets_have_list_introspection_without_warning() -> None:
-    """Both spellings publish non-null lists of non-null Boolean items."""
+    """Both spellings publish non-null lists of non-null Boolean items.
+
+    Scenario: approved boolean sets have list introspection without warning.
+    """
     for model, name in (
         (BooleanSetPepPayload, "BooleanSetPepPayload"),
         (BooleanSetTypingPayload, "BooleanSetTypingPayload"),
@@ -324,7 +372,10 @@ def test_approved_boolean_sets_have_list_introspection_without_warning() -> None
 
 
 def test_required_boolean_set_rejects_omission() -> None:
-    """Retain required-field semantics for approved sets."""
+    """Retain required-field semantics for approved sets.
+
+    Scenario: required boolean set rejects omission.
+    """
     schema, received = _schema(BooleanSetPepPayload, name="BooleanSetPepPayload")
     result = graphql_sync(
         schema,
@@ -336,7 +387,10 @@ def test_required_boolean_set_rejects_omission() -> None:
 
 
 def test_optional_boolean_sets_keep_omission_and_null() -> None:
-    """Preserve outer Optional and explicit-null behavior for both spellings."""
+    """Preserve outer Optional and explicit-null behavior for both spellings.
+
+    Scenario: optional boolean sets keep omission and null.
+    """
 
     class BooleanSetOptionalPayload(InputType):
         pep_flags: set[bool] | None = None
@@ -364,7 +418,10 @@ def test_optional_boolean_sets_keep_omission_and_null() -> None:
 
 
 def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
-    """Keep valid fixed sets and fresh per-object factory defaults."""
+    """Keep valid fixed sets and fresh per-object factory defaults.
+
+    Scenario: fixed and factory defaults keep lifecycle.
+    """
     from pydantic import Field
 
     calls: list[int] = []
@@ -396,7 +453,10 @@ def test_fixed_and_factory_defaults_keep_lifecycle() -> None:
 
 
 def test_alias_selection_replacement_and_pruning_project_metadata() -> None:
-    """Convert only emitted and permission-surviving resolver out-names."""
+    """Convert only emitted and permission-surviving resolver out-names.
+
+    Scenario: alias selection replacement and pruning project metadata.
+    """
     from pydantic import Field
 
     from django_graphex.core.input_compiler import RelationInputField
@@ -487,7 +547,10 @@ def test_alias_selection_replacement_and_pruning_project_metadata() -> None:
 
 
 def test_other_set_leaves_and_nested_forms_keep_fallback() -> None:
-    """Do not promote unapproved leaves, bare sets or nested set forms."""
+    """Do not promote unapproved leaves, bare sets or nested set forms.
+
+    Scenario: other set leaves and nested forms keep fallback.
+    """
 
     class BooleanSetUnsupportedPayload(InputType):
         pep_bytes: set[bytes]

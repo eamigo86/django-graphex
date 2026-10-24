@@ -209,6 +209,9 @@ def test_public_schema_rejects_relation_metadata_failure(
 
     Args:
         monkeypatch: Installs one fault only in relation-list enumeration.
+
+    Raises:
+        Exception: The injected metadata enumeration failure raised by the patched field lookup.
     """
     healthy = _public_author_schema("T14fHealthy")
     healthy_fields = healthy.get_type("T14fHealthyAuthorNode").fields
@@ -265,6 +268,9 @@ def test_eager_field_recompile_retains_original_cause() -> None:
     """Keep the original cause when eager field compilation fails.
 
     The unwrapping layer must not replace the metadata failure's cause.
+
+    Raises:
+        ImproperlyConfigured: Injected by the stubbed recompile to chain the original enumeration failure.
     """
     original = RuntimeError("original eager metadata failure")
 
@@ -287,6 +293,9 @@ def test_eager_field_recompile_keeps_uncaused_error_unchained() -> None:
     """Leave an existing uncaused configuration refusal unchained.
 
     Eager field compilation must not invent a cause for this failure.
+
+    Raises:
+        ImproperlyConfigured: Injected by the stubbed recompile without any underlying cause.
     """
 
     def fields() -> NoReturn:
@@ -311,6 +320,10 @@ def test_lazy_schema_keeps_uncaused_configuration_error(
 
     Args:
         monkeypatch: Replaces schema assembly with a deterministic wrapper.
+
+    Raises:
+        ImproperlyConfigured: Injected by a stub to simulate an uncaused configuration error.
+        TypeError: Injected by a stub that chains the configuration error as its cause.
     """
 
     def wrapped_schema(*args: object, **kwargs: object) -> NoReturn:
@@ -348,6 +361,9 @@ def test_lazy_schema_leaves_generic_type_error_untouched(
 
     Args:
         monkeypatch: Replaces schema assembly with a generic type failure.
+
+    Raises:
+        TypeError: Injected by a stub to simulate a genuine GraphQL type failure.
     """
 
     def broken_schema(*args: object, **kwargs: object) -> NoReturn:

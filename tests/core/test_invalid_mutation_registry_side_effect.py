@@ -10,7 +10,10 @@ from django_graphex.registry import Registry
 
 
 def test_rejected_permission_host_does_not_register_user_output() -> None:
-    """Reject the host without reserving its public model output slot."""
+    """Reject the host without reserving its public model output slot.
+
+    Scenario: rejected permission host does not register user output.
+    """
     local_registry = Registry()
 
     with pytest.raises(ImproperlyConfigured, match="permission_classes"):
@@ -26,7 +29,10 @@ def test_rejected_permission_host_does_not_register_user_output() -> None:
 
 
 def test_unknown_operation_precedes_permission_error_without_output() -> None:
-    """Keep declaration-error precedence without reserving an output slot."""
+    """Keep declaration-error precedence without reserving an output slot.
+
+    Scenario: unknown operation precedes permission error without output.
+    """
     local_registry = Registry()
 
     with pytest.raises(ImproperlyConfigured, match="unknown operation"):
@@ -43,7 +49,10 @@ def test_unknown_operation_precedes_permission_error_without_output() -> None:
 
 
 def test_rejected_permission_host_preserves_existing_output() -> None:
-    """Leave an already registered public output unchanged after rejection."""
+    """Leave an already registered public output unchanged after rejection.
+
+    Scenario: rejected permission host preserves existing output.
+    """
     from django_graphex.types import DjangoObjectType
 
     local_registry = Registry()
@@ -66,7 +75,10 @@ def test_rejected_permission_host_preserves_existing_output() -> None:
 
 
 def test_valid_mutation_still_uses_one_public_output() -> None:
-    """Keep the valid host's output and three operation builders available."""
+    """Keep the valid host's output and three operation builders available.
+
+    Scenario: valid mutation still uses one public output.
+    """
     local_registry = Registry()
 
     class ValidUserHost(DjangoModelMutation):

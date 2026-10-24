@@ -1,4 +1,4 @@
-"""Public GraphQL input contract for exact ``set[int]`` annotations."""
+"""Public GraphQL input contract for exact set of int annotations."""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class SetIntRedPayload(InputType):
-    """Expose the approved exact set annotation once per test module."""
+    """Expose the approved exact set annotation once per test module.
+
+    The numbers field uses the builtin set of int spelling.
+    """
 
     numbers: set[int]
 
@@ -73,13 +76,19 @@ def _set_schema(
 
 
 def test_exact_set_int_prints_int_list() -> None:
-    """Expose the approved Int list rather than the legacy String fallback."""
+    """Expose the approved Int list rather than the legacy String fallback.
+
+    Scenario: exact set int prints int list.
+    """
     schema, _received = _set_schema()
     assert "numbers: [Int!]!" in print_schema(schema)
 
 
 def test_set_int_variable_is_deduplicated_for_resolver() -> None:
-    """Deliver a Python set after GraphQL accepts an integer list."""
+    """Deliver a Python set after GraphQL accepts an integer list.
+
+    Scenario: set int variable is deduplicated for resolver.
+    """
     schema, received = _set_schema()
     result = graphql_sync(
         schema,
@@ -94,7 +103,11 @@ def test_set_int_variable_is_deduplicated_for_resolver() -> None:
 
 @pytest.mark.parametrize("value", [3, [3], 3.0])
 def test_graphql_singleton_coercion_yields_python_set(value: object) -> None:
-    """Use ordinary list coercion for scalar variables and deduplicate lists."""
+    """Use ordinary list coercion for scalar variables and deduplicate lists.
+
+    Args:
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _set_schema()
     result = graphql_sync(
         schema,
@@ -107,7 +120,10 @@ def test_graphql_singleton_coercion_yields_python_set(value: object) -> None:
 
 
 def test_inline_set_int_values_use_the_same_boundary() -> None:
-    """Coerce inline scalar/list values before resolver set materialization."""
+    """Coerce inline scalar/list values before resolver set materialization.
+
+    Scenario: inline set int values use the same boundary.
+    """
     schema, received = _set_schema()
     scalar = graphql_sync(schema, "mutation { echo(payload: {numbers: 3}) { result } }")
     array = graphql_sync(
@@ -120,7 +136,11 @@ def test_inline_set_int_values_use_the_same_boundary() -> None:
 
 @pytest.mark.parametrize("value", [True, "3", 3.5, [True], ["3"], [None], [2147483648]])
 def test_invalid_variable_int_values_fail_before_resolver(value: object) -> None:
-    """Leave validation to GraphQLInt with no boolean or string casting."""
+    """Leave validation to GraphQLInt with no boolean or string casting.
+
+    Args:
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _set_schema()
     result = graphql_sync(
         schema,
@@ -133,7 +153,11 @@ def test_invalid_variable_int_values_fail_before_resolver(value: object) -> None
 
 @pytest.mark.parametrize("literal", ["true", '"3"', "3.0", "[null]"])
 def test_invalid_inline_int_values_fail_before_resolver(literal: str) -> None:
-    """Reject invalid inline literals before the mutation resolver runs."""
+    """Reject invalid inline literals before the mutation resolver runs.
+
+    Args:
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _set_schema()
     result = graphql_sync(
         schema, f"mutation {{ echo(payload: {{numbers: {literal}}}) {{ result }} }}"
@@ -143,7 +167,10 @@ def test_invalid_inline_int_values_fail_before_resolver(literal: str) -> None:
 
 
 def test_optional_set_int_keeps_null_and_omission_defaults() -> None:
-    """Preserve the existing outer Optional and explicit-null behavior."""
+    """Preserve the existing outer Optional and explicit-null behavior.
+
+    Scenario: optional set int keeps null and omission defaults.
+    """
 
     class OptionalSetIntPayload(InputType):
         """Expose a nullable approved set field."""
@@ -167,7 +194,10 @@ def test_optional_set_int_keeps_null_and_omission_defaults() -> None:
 
 
 def test_fixed_set_default_and_fresh_factory_keep_existing_lifecycle() -> None:
-    """Keep fixed/default-factory values usable without freezing factories."""
+    """Keep fixed/default-factory values usable without freezing factories.
+
+    Scenario: fixed set default and fresh factory keep existing lifecycle.
+    """
     calls: list[int] = []
 
     def make_set() -> set[int]:
@@ -200,7 +230,10 @@ def test_fixed_set_default_and_fresh_factory_keep_existing_lifecycle() -> None:
 
 
 def test_set_field_uses_wire_alias_and_snake_resolver_name() -> None:
-    """Register conversion against the emitted field and its out-name."""
+    """Register conversion against the emitted field and its out-name.
+
+    Scenario: set field uses wire alias and snake resolver name.
+    """
 
     class AliasSetIntPayload(InputType):
         """Expose a multiword set field through its public alias."""
@@ -219,7 +252,10 @@ def test_set_field_uses_wire_alias_and_snake_resolver_name() -> None:
 
 
 def test_permission_clone_keeps_only_surviving_set_conversion() -> None:
-    """Convert a visible set and never inspect a permission-hidden one."""
+    """Convert a visible set and never inspect a permission-hidden one.
+
+    Scenario: permission clone keeps only surviving set conversion.
+    """
 
     class ScopedSetIntPayload(InputType):
         """Expose a public set beside a restricted set."""
@@ -264,7 +300,10 @@ def test_permission_clone_keeps_only_surviving_set_conversion() -> None:
 
 
 def test_other_set_forms_keep_legacy_fallback() -> None:
-    """Approve string leaves only; retain nested-set legacy fallback."""
+    """Approve string leaves only; retain nested-set legacy fallback.
+
+    Scenario: other set forms keep legacy fallback.
+    """
 
     class UnsupportedSetPayload(InputType):
         """Collect representative unapproved container annotations."""

@@ -29,7 +29,10 @@ from django_graphex.schema import DjangoGraphQLSchema
 
 
 def test_fixed_json_object_default_prints_and_introspects() -> None:
-    """Expose a fixed JSON input object default through the public schema."""
+    """Expose a fixed JSON input object default through the public schema.
+
+    Scenario: fixed json object default prints and introspects.
+    """
     received: list[dict[str, object]] = []
 
     class FixedObjectJsonPayload(InputType):
@@ -87,7 +90,10 @@ def test_fixed_json_object_default_prints_and_introspects() -> None:
 
 
 def test_bare_json_default_roundtrips_nested_literal_and_pruned_schema() -> None:
-    """Keep representable nested defaults printable after permission pruning."""
+    """Keep representable nested defaults printable after permission pruning.
+
+    Scenario: bare json default roundtrips nested literal and pruned schema.
+    """
     received: list[dict[str, object]] = []
     fixed = {"flag": True, "nested": [None, {"text": 'a"b', "large": 2**63}]}
 
@@ -132,7 +138,10 @@ def test_bare_json_default_roundtrips_nested_literal_and_pruned_schema() -> None
 
 
 def test_non_name_json_default_keeps_runtime_without_invalid_sdl_promise() -> None:
-    """Preserve an ineligible raw default instead of publishing invalid SDL."""
+    """Preserve an ineligible raw default instead of publishing invalid SDL.
+
+    Scenario: non name json default keeps runtime without invalid sdl promise.
+    """
 
     class NonNameJsonPayload(InputType):
         raw: dict = {"x-y": 1}
@@ -144,7 +153,10 @@ def test_non_name_json_default_keeps_runtime_without_invalid_sdl_promise() -> No
 
 
 def test_oversized_json_integer_default_preserves_public_runtime() -> None:
-    """Keep an unprintable integer default available to a public resolver."""
+    """Keep an unprintable integer default available to a public resolver.
+
+    Scenario: oversized json integer default preserves public runtime.
+    """
     fixed = {"large": 10**4300}
 
     class OversizedIntegerJsonPayload(InputType):
@@ -183,7 +195,10 @@ def test_oversized_json_integer_default_preserves_public_runtime() -> None:
 
 
 def test_surrogate_json_string_default_preserves_public_runtime() -> None:
-    """Keep a non-GraphQL string default on the legacy metadata path."""
+    """Keep a non-GraphQL string default on the legacy metadata path.
+
+    Scenario: surrogate json string default preserves public runtime.
+    """
     fixed = {"text": "\ud800"}
 
     class SurrogateStringJsonPayload(InputType):
@@ -222,7 +237,10 @@ def test_surrogate_json_string_default_preserves_public_runtime() -> None:
 
 
 def test_json_default_factory_is_not_frozen_in_sdl() -> None:
-    """Retain a per-input factory and the omission of SDL fixed metadata."""
+    """Retain a per-input factory and the omission of SDL fixed metadata.
+
+    Scenario: json default factory is not frozen in sdl.
+    """
     calls: list[int] = []
 
     def make_default() -> dict[str, int]:
@@ -241,7 +259,10 @@ def test_json_default_factory_is_not_frozen_in_sdl() -> None:
 
 
 def test_nullable_list_defaults_publish_metadata_and_preserve_elements() -> None:
-    """Expose eligible list metadata while retaining its JSON elements."""
+    """Expose eligible list metadata while retaining its JSON elements.
+
+    Scenario: nullable list defaults publish metadata and preserve elements.
+    """
 
     class ListJsonPayload(InputType):
         mappings: list[dict[str, int] | None] | None = [{"views": 1}, None]
@@ -280,7 +301,10 @@ def test_nullable_list_defaults_publish_metadata_and_preserve_elements() -> None
 
 
 def test_mismatched_list_default_retains_prior_runtime_shape() -> None:
-    """Do not silently wrap a previously accepted fixed object in a list."""
+    """Do not silently wrap a previously accepted fixed object in a list.
+
+    Scenario: mismatched list default retains prior runtime shape.
+    """
 
     class MismatchedListDefaultPayload(InputType):
         mappings: list[dict] = {"views": 0}  # type: ignore[assignment]
@@ -317,7 +341,10 @@ def test_mismatched_list_default_retains_prior_runtime_shape() -> None:
 
 
 def test_ineligible_json_values_do_not_gain_metadata_or_new_validation() -> None:
-    """Reject metadata conversion only, without validating runtime objects."""
+    """Reject metadata conversion only, without validating runtime objects.
+
+    Scenario: ineligible json values do not gain metadata or new validation.
+    """
     cycle: list[object] = []
     cycle.append(cycle)
     for value in ({"x-y": 1}, {1: "one"}, {"bad": float("inf")}, cycle, object()):

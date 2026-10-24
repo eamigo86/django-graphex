@@ -25,18 +25,38 @@ from django_graphex.core.schema_pruner import prune_schema
 
 
 class TypingIntStringInput(InputType):
+    """Declare an int or string union with typing.Union, int first.
+
+    The value field is Union of int and str.
+    """
+
     value: Union[int, str]
 
 
 class PipeIntStringInput(InputType):
+    """Declare an int or string union with the pipe operator, int first.
+
+    The value field is int or str.
+    """
+
     value: int | str
 
 
 class TypingStringIntInput(InputType):
+    """Declare an int or string union with typing.Union, string first.
+
+    The value field is Union of str and int.
+    """
+
     value: Union[str, int]
 
 
 class PipeStringIntInput(InputType):
+    """Declare an int or string union with the pipe operator, string first.
+
+    The value field is str or int.
+    """
+
     value: str | int
 
 
@@ -89,13 +109,20 @@ def _schema(
     ],
 )
 def test_direct_union_publishes_shared_scalar(model: type[InputType]) -> None:
-    """Publish the same strict scalar for either spelling and member order."""
+    """Publish the same strict scalar for either spelling and member order.
+
+    Args:
+        model: Input model declaring the field under test.
+    """
     schema, _received = _schema(model)
     assert "value: IntOrString!" in print_schema(schema)
 
 
 def test_integer_variable_reaches_resolver_without_string_cast() -> None:
-    """Keep an integer input on its original Python branch."""
+    """Keep an integer input on its original Python branch.
+
+    Scenario: integer variable reaches resolver without string cast.
+    """
     schema, received = _schema(TypingIntStringInput)
     result = graphql_sync(
         schema,
@@ -108,7 +135,10 @@ def test_integer_variable_reaches_resolver_without_string_cast() -> None:
 
 
 def test_plain_string_input_is_not_split_or_cast() -> None:
-    """Retain the supported String input behavior as a control."""
+    """Retain the supported String input behavior as a control.
+
+    Scenario: plain string input is not split or cast.
+    """
 
     class R08qPlainInput(InputType):
         value: str
@@ -136,7 +166,12 @@ def test_plain_string_input_is_not_split_or_cast() -> None:
 def test_direct_union_preserves_variable_branch(
     model: type[InputType], value: int | str
 ) -> None:
-    """Accept signed Int32 values and text without converting Python types."""
+    """Accept signed Int32 values and text without converting Python types.
+
+    Args:
+        model: Input model declaring the field under test.
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(model)
     query = f"mutation($payload: {model.__name__}!) {{ echo(payload: $payload) {{ result }} }}"
     result = graphql_sync(schema, query, variable_values={"payload": {"value": value}})
@@ -150,7 +185,12 @@ def test_direct_union_preserves_variable_branch(
 def test_direct_union_accepts_matching_literals(
     model: type[InputType], literal: str
 ) -> None:
-    """Preserve literal integer and string branches through public execution."""
+    """Preserve literal integer and string branches through public execution.
+
+    Args:
+        model: Input model declaring the field under test.
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(model)
     result = graphql_sync(
         schema,
@@ -164,7 +204,11 @@ def test_direct_union_accepts_matching_literals(
 
 @pytest.mark.parametrize("value", [True, False, 1.0, 1.5, 2**31, -(2**31) - 1, [], {}])
 def test_direct_union_rejects_invalid_variable_before_resolver(value: object) -> None:
-    """Reject non-branch values and out-of-range integers before mutation."""
+    """Reject non-branch values and out-of-range integers before mutation.
+
+    Args:
+        value: Value supplied by the parametrized case.
+    """
     schema, received = _schema(TypingIntStringInput)
     result = graphql_sync(
         schema,
@@ -179,7 +223,11 @@ def test_direct_union_rejects_invalid_variable_before_resolver(value: object) ->
     "literal", ["true", "1.0", "2147483648", "-2147483649", "[]", "{}", "null"]
 )
 def test_direct_union_rejects_invalid_literal_before_resolver(literal: str) -> None:
-    """Reject invalid literal kinds, ranges and null for required fields."""
+    """Reject invalid literal kinds, ranges and null for required fields.
+
+    Args:
+        literal: GraphQL literal source written inline by the case.
+    """
     schema, received = _schema(PipeIntStringInput)
     result = graphql_sync(
         schema,
@@ -198,7 +246,12 @@ def test_direct_union_rejects_invalid_literal_before_resolver(literal: str) -> N
     ],
 )
 def test_outer_nullable_direct_union(name: str, annotation: object) -> None:
-    """Keep only the approved outer nullable form nullable in SDL."""
+    """Keep only the approved outer nullable form nullable in SDL.
+
+    Args:
+        name: GraphQL input type name used for the compiled model.
+        annotation: Field annotation under test.
+    """
     model = type(
         name,
         (InputType,),
@@ -216,7 +269,10 @@ def test_outer_nullable_direct_union(name: str, annotation: object) -> None:
 
 
 def test_nullable_union_without_default_still_accepts_null() -> None:
-    """Treat the outer None member as nullable even for a required model field."""
+    """Treat the outer None member as nullable even for a required model field.
+
+    Scenario: nullable union without default still accepts null.
+    """
 
     class R08qNullableRequiredUnionInput(InputType):
         value: int | str | None
@@ -236,7 +292,12 @@ def test_nullable_union_without_default_still_accepts_null() -> None:
 def test_malformed_fixed_default_preserves_omission_and_printing(
     legacy: object, pruned: bool
 ) -> None:
-    """Print legacy defaults yet reject the same invalid object if supplied."""
+    """Print legacy defaults yet reject the same invalid object if supplied.
+
+    Args:
+        legacy: Legacy default value under test.
+        pruned: Whether the schema is pruned before it is inspected.
+    """
     name = f"LegacyUnion{type(legacy).__name__}{'Pruned' if pruned else 'Full'}"
     model = type(
         name,
@@ -262,7 +323,10 @@ def test_malformed_fixed_default_preserves_omission_and_printing(
 
 
 def test_legacy_dictionary_subclass_default_retains_old_printing() -> None:
-    """Keep old String-style SDL for an unprintable fixed default."""
+    """Keep old String-style SDL for an unprintable fixed default.
+
+    Scenario: legacy dictionary subclass default retains old printing.
+    """
 
     class LegacyDict(dict):
         pass
@@ -283,7 +347,10 @@ def test_legacy_dictionary_subclass_default_retains_old_printing() -> None:
 
 
 def test_factory_values_stay_fresh_and_bad_input_stops_sibling_factory() -> None:
-    """Keep per-object factories while rejecting supplied invalid values first."""
+    """Keep per-object factories while rejecting supplied invalid values first.
+
+    Scenario: factory values stay fresh and bad input stops sibling factory.
+    """
     calls: list[int] = []
     sibling_calls: list[int] = []
 
@@ -312,7 +379,10 @@ def test_factory_values_stay_fresh_and_bad_input_stops_sibling_factory() -> None
 
 
 def test_alias_projection_and_permission_pruning() -> None:
-    """Retain the scalar and alias only for fields surviving pruning."""
+    """Retain the scalar and alias only for fields surviving pruning.
+
+    Scenario: alias projection and permission pruning.
+    """
 
     class R08qAliasedUnionInput(InputType):
         public_value: int | str = Field(alias="publicValue")
@@ -342,7 +412,10 @@ def test_alias_projection_and_permission_pruning() -> None:
 
 
 def test_selected_and_replaced_fields_keep_final_wire_type() -> None:
-    """Only final surviving fields own the approved scalar projection."""
+    """Only final surviving fields own the approved scalar projection.
+
+    Scenario: selected and replaced fields keep final wire type.
+    """
 
     class R08qSelection(InputType):
         kept_value: int | str = Field(alias="keptValue")
@@ -382,7 +455,10 @@ def test_selected_and_replaced_fields_keep_final_wire_type() -> None:
 
 
 def test_scalar_name_collision_reports_an_error() -> None:
-    """Do not silently rename or shadow a user-defined scalar with this name."""
+    """Do not silently rename or shadow a user-defined scalar with this name.
+
+    Scenario: scalar name collision reports an error.
+    """
     schema, _received = _schema(TypingIntStringInput)
     conflicting = GraphQLScalarType(name="IntOrString")
     with pytest.raises(TypeError, match="multiple types named 'IntOrString'"):
@@ -394,7 +470,10 @@ def test_scalar_name_collision_reports_an_error() -> None:
 
 
 def test_valid_fixed_default_and_disabled_default_emission() -> None:
-    """Keep valid fixed defaults and the existing omit-defaults switch."""
+    """Keep valid fixed defaults and the existing omit-defaults switch.
+
+    Scenario: valid fixed default and disabled default emission.
+    """
 
     class R08qValidDefaultUnionInput(InputType):
         value: int | str = 123
@@ -415,7 +494,10 @@ def test_valid_fixed_default_and_disabled_default_emission() -> None:
 
 
 def test_string_fixed_default_keeps_string_branch_in_schema() -> None:
-    """Render a valid text default as text without numeric conversion."""
+    """Render a valid text default as text without numeric conversion.
+
+    Scenario: string fixed default keeps string branch in schema.
+    """
 
     class R08qTextDefaultUnionInput(InputType):
         value: int | str = "123"
@@ -432,7 +514,10 @@ def test_string_fixed_default_keeps_string_branch_in_schema() -> None:
 
 
 def test_custom_equality_leaf_does_not_match_direct_union() -> None:
-    """Do not invoke a custom annotation equality method to grant support."""
+    """Do not invoke a custom annotation equality method to grant support.
+
+    Scenario: custom equality leaf does not match direct union.
+    """
 
     class EqualToIntMeta(type):
         def __eq__(cls, other: object) -> bool:
@@ -458,7 +543,10 @@ def test_custom_equality_leaf_does_not_match_direct_union() -> None:
 
 
 def test_custom_equality_outer_does_not_match_direct_union() -> None:
-    """Require a native Union origin rather than equality with one."""
+    """Require a native Union origin rather than equality with one.
+
+    Scenario: custom equality outer does not match direct union.
+    """
 
     class EqualToUnionMeta(type):
         def __eq__(cls, other: object) -> bool:
@@ -484,7 +572,10 @@ def test_custom_equality_outer_does_not_match_direct_union() -> None:
 
 
 def test_unapproved_wrapped_union_retains_string_fallback() -> None:
-    """Do not grant list-wrapped unions or unrelated leaves new support."""
+    """Do not grant list-wrapped unions or unrelated leaves new support.
+
+    Scenario: unapproved wrapped union retains string fallback.
+    """
 
     class R08qWrappedUnionInput(InputType):
         values: list[Union[int, str]]

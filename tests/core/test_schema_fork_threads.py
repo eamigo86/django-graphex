@@ -45,6 +45,9 @@ def test_concurrent_fork_preserves_sibling_output_projections(
     Args:
         monkeypatch: Replaces the compiler hook to pause A's schema build.
         local_b_pair: Whether B's projected types use a separate registry pair.
+
+    Raises:
+        AssertionError: The patched compiler or sibling thread never reached its synchronization point in time.
     """
     import django_graphex.core.registry_compiler as compiler
 
