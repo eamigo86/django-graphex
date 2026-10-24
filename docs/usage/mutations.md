@@ -1624,19 +1624,17 @@ instance with `.filename`, `.data`, `.content_type` attributes **and** a
 
 For hand-authored `InputType` fields, a zero-argument Pydantic
 `default_factory` runs for each **new coerced input object** when that field is
-omitted. It no longer runs while the schema is built or puts a fixed value in
-the SDL. For example, a `uid` factory previously rendered a snapshot such as
-`uid: String = "uid-1"`; it now renders `uid: String`, and each separately
-coerced `{}` input gets a fresh UID. Update clients that relied on the SDL's
-fixed factory value. Plain scalar and enum defaults still render as SDL
-defaults; fixed JSON defaults have the representability rule below.
-explicit values and `null` still bypass a zero-argument factory. A resolver
+omitted. It does not run while the schema is built and puts no fixed value in
+the SDL. For example, a `uid` factory renders `uid: String`, and each
+separately coerced `{}` input gets a fresh UID. Plain scalar and enum
+defaults render as SDL defaults; fixed JSON defaults have the representability
+rule below. Explicit values and `null` bypass a zero-argument factory. A resolver
 still receives a snake-keyed `dict`, not an automatically validated Pydantic
 instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
 
 ### String Literal input enums and unsupported annotations
 
-An all-string `Literal` on a hand-authored input now compiles to a GraphQL
+An all-string `Literal` on a hand-authored input compiles to a GraphQL
 enum. For `ArticleInput.status: Literal["draft", "published"]`, the generated
 type is `ArticleInputStatusEnum` with `DRAFT` and `PUBLISHED` members. The
 compiler uses the **compiled input type name** and **public field alias**;
@@ -1648,28 +1646,28 @@ because GraphQL reserves member names with that prefix; rename the value.
 `Optional`, list, nested, and inherited fields keep their existing wrapping
 and resolver names.
 
-Clients must change inline values from `status: "draft"` to `status: DRAFT`,
-and JSON variables from `"status": "draft"` to `"status": "DRAFT"`. A
+Clients send inline values as enum members (`status: DRAFT`) and JSON
+variables by member name (`"status": "DRAFT"`); a string such as
+`status: "draft"` is not an enum member and fails input validation. A
 mutation resolver still receives the original string value (`"draft"`) in
 its plain input dictionary. A value outside the enum fails GraphQL input
 validation before the resolver. Fixed defaults render as enum members in SDL;
 factories still run for each newly coerced input object.
 
-An input field annotated `dict[str, int]` or `typing.Dict[str, int]` now uses
-the existing raw GraphQL `JSON` scalar instead of the legacy `String` fallback.
-Both spellings have the same strict input behavior; clients using the typing
-alias must migrate from encoded text to an object. Send an object, not
-JSON-encoded text: inline `mapping: {count: 3}` or the JSON variable
+An input field annotated `dict[str, int]` or `typing.Dict[str, int]` uses
+the existing raw GraphQL `JSON` scalar. Both spellings have the same strict
+input behavior. Send an object, not JSON-encoded text: inline `mapping: {count: 3}` or the JSON variable
 `"mapping": {"count": 3}`. Every key must be a string and every value must
 be a plain integer; `true`, `3.5`, `"3"`, nested containers, and non-object
-values fail before the mutation resolver. An empty object and integers beyond
-GraphQL `Int`'s 32-bit range are accepted. Error messages name the declared
+values fail before the mutation resolver. An empty object is accepted, and
+values follow Python `int` and JSON semantics, so integers beyond GraphQL
+`Int`'s 32-bit range are accepted. Error messages name the declared
 field without echoing supplied keys or values. Optionality, omission, list
 wrapping, and fixed or factory defaults follow the field's existing input
 contract. A bare `dict` remains permissive raw `JSON`.
 
 Exact `dict[str, str]` and `typing.Dict[str, str]` input fields also use the
-shared `JSON` scalar instead of `String`. Send an object such as
+shared `JSON` scalar. Send an object such as
 `"mapping": {"name": "Ada"}` in variables or `mapping: {name: "Ada"}`
 inline. Object string keys and string values are required: numbers, booleans, null, nested
 containers, non-object values, and non-string keys fail before mutation
@@ -1677,10 +1675,10 @@ resolution without conversion. Empty objects are valid. The same
 optional, list, nested, omission, fixed-default, factory-default, and
 permission-pruned input behavior applies; bare `dict` stays permissive.
 
-Exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation inputs now
-use the same `JSON` scalar instead of `String`. Send a JSON object such as
+Exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation inputs
+use the same `JSON` scalar. Send a JSON object such as
 `"mapping": {"enabled": true}` or inline `mapping: {enabled: true}`;
-encoded JSON strings no longer match the wire type. Every key must be a
+encoded JSON strings do not match the wire type. Every key must be a
 string and every value must be an exact Boolean (`true` or `false`): `1`,
 `0`, `"true"`, null and nested values fail before the resolver or omitted
 sibling factories run. Empty objects are valid. Outer Optional, alias and
@@ -1691,7 +1689,7 @@ other maps, list-wrapped maps or the global JSON scalar.
 !!! note "Fixed JSON defaults and schema metadata"
 
     A fixed JSON default whose object keys are valid GraphQL Names (for
-    example, `{"views": 0}`) now prints as `mapping: JSON = { views: 0 }`
+    example, `{"views": 0}`) prints as `mapping: JSON = { views: 0 }`
     and appears in default-value introspection. It still supplies the same
     value to an omitted input, without JSON string encoding. Nested objects,
     lists, and finite scalar values inside that JSON value follow the same
@@ -1714,8 +1712,7 @@ other maps, list-wrapped maps or the global JSON scalar.
     their legacy runtime defaults without new SDL metadata. A nullable `None`
     default is unaffected.
 
-Exact `set[int]` and `typing.Set[int]` input fields now expose `[Int!]!`
-instead of `String!`.
+Exact `set[int]` and `typing.Set[int]` input fields expose `[Int!]!`.
 Send an integer list such as `"numbers": [2, 1, 2]` rather than an encoded
 string. GraphQL also accepts a singleton integer such as `"numbers": 3`
 and wraps it as a list. The resolver receives a Python `set`, so both inputs
@@ -1726,8 +1723,8 @@ Optional, required, and defaulted outer fields keep their existing behavior.
 Both spellings have the same resolver behavior. Other set leaves and sets
 inside lists remain unsupported.
 
-Exact `set[str]` and `typing.Set[str]` mutation inputs now expose
-`[String!]!` instead of `String!`. Send a string list such as
+Exact `set[str]` and `typing.Set[str]` mutation inputs expose
+`[String!]!`. Send a string list such as
 `"colors": ["red", "red", "blue"]`; GraphQL also accepts the singleton
 `"colors": "ab"`. The resolver receives an actual Python set:
 `{"red", "blue"}` or `{"ab"}`, never the characters of `"ab"`.
@@ -1737,8 +1734,8 @@ custom casting. Optional, required, fixed-default and fresh-factory behavior
 remains unchanged. Other unapproved set leaves and sets inside lists still use the
 legacy warning/`String` fallback.
 
-Exact `set[bool]` and `typing.Set[bool]` mutation inputs now expose
-`[Boolean!]!` instead of `String!`. Send a boolean list such as
+Exact `set[bool]` and `typing.Set[bool]` mutation inputs expose
+`[Boolean!]!`. Send a boolean list such as
 `"flags": [true, false, true]`; GraphQL also accepts the singleton
 `"flags": false`. The resolver receives a Python set (`{True, False}`
 or `{False}`), with duplicates removed and no ordering guarantee.
@@ -1747,8 +1744,8 @@ resolution; no truthiness cast or automatic Pydantic validation is added.
 Outer Optional, required, fixed-default and fresh-factory behavior remains.
 Other unapproved set leaves and nested sets retain the warning/`String` fallback.
 
-Exact `set[float]` and `typing.Set[float]` mutation inputs now expose
-`[Float!]!` instead of `String!`. Send a finite numeric list such as
+Exact `set[float]` and `typing.Set[float]` mutation inputs expose
+`[Float!]!`. Send a finite numeric list such as
 `"amounts": [1.5, 1.5, 2.0]` or a singleton integer such as
 `"amounts": 2`. Native `GraphQLFloat` converts the integer to `2.0` and
 rejects booleans, strings and null items; variable coercion also rejects
@@ -1759,8 +1756,8 @@ fixed-default, fresh-factory, alias and pruning behavior remains established;
 no additional Pydantic or global validation is added. Other unapproved set
 leaves and nested sets retain the warning/`String` fallback.
 
-Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs now expose
-`[UUID!]!` instead of `String!`. Send UUID strings as a list, for example
+Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs expose
+`[UUID!]!`. Send UUID strings as a list, for example
 `"keys": ["12345678-1234-5678-1234-567812345678", "12345678123456781234567812345678"]`,
 or a singleton `"keys": "12345678123456781234567812345678"`.
 The existing native UUID scalar accepts canonical, uppercase and 32-hex
@@ -1772,7 +1769,7 @@ and permission pruning retain their established behavior. Other unapproved
 set leaves and nested sets retain the warning/`String` fallback.
 
 Exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]` mutation inputs
-now expose `[Decimal!]!` instead of `String!`. Send native Decimal values in a
+expose `[Decimal!]!`. Send native Decimal values in a
 list, for example `"amounts": ["10.10", "10.10"]`, or a whole-value
 singleton `"amounts": "10.10"`. The existing Decimal scalar preserves
 precision and accepts its established finite representations; even a finite
@@ -1786,16 +1783,14 @@ including malformed legacy omitted defaults. The global Decimal scalar and
 other unapproved set forms are unchanged.
 
 Exact direct `typing.Union[int, str]`, `int | str`, and reversed-order
-annotations now expose the shared `IntOrString` input scalar instead of
-`String`. A required field is `IntOrString!`; an outer nullable union is
+annotations expose the shared `IntOrString` input scalar. A required field is `IntOrString!`; an outer nullable union is
 `IntOrString`. Send `value: 123` or a JSON variable `{"value": 123}` for
 a Python integer, and `value: "123"` or `{"value": "123"}` for a Python
 string. The resolver receives the same branch without an implicit cast.
 Only signed 32-bit integers are accepted; booleans, all floats (including
 `1.0`), objects, lists, and out-of-range integers reject before resolution.
-Clients using `$value: String!` must change that variable declaration to
-`$value: IntOrString!` (or nullable `IntOrString`) and regenerate typed
-client bindings. Existing omitted fixed and factory defaults remain unchanged,
+Declare variables as `$value: IntOrString!` (or nullable `IntOrString`)
+and regenerate typed client bindings. Existing omitted fixed and factory defaults remain unchanged,
 including malformed legacy defaults. This does not change the global `Int`,
 `String`, `ID`, or `JSON` scalars, and does not support list-wrapped or other
 Union leaves.
