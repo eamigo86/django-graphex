@@ -6,6 +6,7 @@ used to recurse once per fragment link and per inline nesting level, so a
 """
 
 import json
+import logging
 import sys
 from types import SimpleNamespace
 from typing import Any
@@ -24,7 +25,7 @@ from graphql import (
 
 from django_graphex.cost import CostLimitValidationRule, analyze_cost
 from django_graphex.validation import DepthLimitValidationRule, run_validation
-from django_graphex.views import GraphQLView
+from django_graphex.views import DEFAULT_VALIDATION_RULES, GraphQLView
 
 
 def _schema() -> GraphQLSchema:
@@ -194,14 +195,16 @@ def test_deeply_nested_inline_fragments_are_not_a_depth_violation() -> None:
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_DEPTH": 100000})
-def test_depth_limit_far_above_the_stack_still_walks_deep_chains() -> None:
-    """With a huge limit the walker must traverse the chain without recursion.
+def test_depth_limit_far_above_the_ceiling_is_capped_without_recursion() -> None:
+    """A huge configured limit is capped by the structural ceiling.
 
-    Every nested level is visited and none exceeds the limit.
+    The walker reaches the ceiling through a 1500-fragment chain without
+    recursing and reports a single depth error.
     """
     errors = validate(_schema(), parse(_nested_chain(1500)), [DepthLimitValidationRule])
 
-    assert errors == []
+    assert [e.extensions["code"] for e in errors] == ["QUERY_TOO_DEEP"]
+    assert "maximum nesting depth of 200" in errors[0].message
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 10**9})
@@ -285,3 +288,66 @@ def test_run_validation_only_converts_stack_exhaustion() -> None:
     with pytest.raises(ValueError, match="custom rule bug"):
         run_validation(_buggy_rule)
     assert run_validation(lambda *a: (a[0],), "ok") == ["ok"]
+
+
+@pytest.mark.parametrize(
+    "settings_dict", [{}, {"MAX_QUERY_DEPTH": 100000}], ids=["unset", "above-ceiling"]
+)
+def test_fragment_nested_document_hits_the_structural_ceiling(
+    settings_dict: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fragments cannot nest deeper than the ceiling inline documents obey.
+
+    Each fragment is shallow, so parsing succeeds; the depth rule's hard
+    ceiling must answer 400 even with no (or a larger) MAX_QUERY_DEPTH, and
+    nothing may reach the internal-error log.
+
+    Args:
+        settings_dict: The DJANGO_GRAPHEX override under test.
+        caplog: Pytest log capture.
+    """
+    caplog.set_level(logging.DEBUG)
+    with override_settings(DJANGO_GRAPHEX=settings_dict):
+        status, body = _post(_nested_chain(300))
+
+    assert status == 400
+    assert _codes(body) == {"QUERY_TOO_DEEP"}
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@override_settings(DJANGO_GRAPHEX={})
+def test_documents_under_the_structural_ceiling_are_untouched() -> None:
+    """A 100-level fragment chain still gets a normal response without limits.
+
+    Documents under the ceiling must behave exactly as before.
+    """
+    status, body = _post(_nested_chain(100))
+
+    assert status == 200
+    assert "errors" not in body
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_QUERY_DEPTH": 5})
+def test_configured_limit_below_the_ceiling_still_wins() -> None:
+    """The ceiling never loosens a stricter configured limit.
+
+    The configured limit is the one named in the error.
+    """
+    errors = validate(_schema(), parse(_nested_chain(50)), [DepthLimitValidationRule])
+
+    assert [e.message for e in errors] == [
+        "Query exceeds the maximum nesting depth of 5 for 'query'."
+    ]
+
+
+@override_settings(DJANGO_GRAPHEX={})
+def test_default_rules_used_by_subscription_transports_enforce_the_ceiling() -> None:
+    """The shared rule tuple (HTTP, WS and SSE) carries the ceiling.
+
+    All three surfaces validate with this tuple.
+    """
+    errors = validate(
+        _schema(), parse(_nested_chain(300)), list(DEFAULT_VALIDATION_RULES)
+    )
+
+    assert [e.extensions["code"] for e in errors] == ["QUERY_TOO_DEEP"]

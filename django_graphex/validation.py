@@ -37,6 +37,14 @@ if TYPE_CHECKING:
     from graphql import GraphQLNamedType, OperationDefinitionNode, SelectionSetNode
     from graphql.validation import ValidationContext
 
+#: Hard ceiling on nested object levels, applied even when MAX_QUERY_DEPTH is
+#: None or larger. graphql-core's parser refuses inline documents at about 232
+#: levels (measured under the default recursion limit), but fragments split a
+#: deep document into shallow pieces that parse fine and then exhaust the stack
+#: in the optimizer and the executor. Staying a little below the parser's limit
+#: gives fragment-nested documents the same refusal as inline ones.
+_MAX_STRUCTURAL_DEPTH = 200
+
 __all__ = ("DepthLimitValidationRule", "run_validation")
 
 
@@ -170,6 +178,8 @@ class DepthLimitValidationRule(ValidationRule):
             # tuple, so a hardcoded "query" would refuse a subscription for an
             # operation it never wrote.
             constraints.append(_Constraint(int(global_max), 0, node.operation.value))
+        # Last, so a stricter configured limit is the one reported.
+        constraints.append(_Constraint(_MAX_STRUCTURAL_DEPTH, 0, node.operation.value))
 
         self._walk(node.selection_set, root_type, 0, constraints)
 
