@@ -28,8 +28,8 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 50,
-    "partial": 26,
+    "bounded-fixed": 51,
+    "partial": 25,
     "contract": 9,
     "recommendation": 7,
     "negative-limited": 6,
@@ -47,12 +47,16 @@ def _report() -> str:
 
 
 def test_report_bounds_direct_int_or_string_union_disposition() -> None:
-    """Record the accepted direct form without closing the wider audit claim."""
+    """Record the accepted direct form and original-scope audit resolution."""
     report = _report()
-    assert "M-D10 | partial" in report
+    assert "M-D10 | bounded-fixed" in report
     assert "shared strict IntOrString" in report
     assert "list-wrapped and other Union shapes" in report
     assert "tests/core/test_int_or_string_union_input.py" in report
+    assert "line 133" in report
+    assert "without warning" in report
+    assert "UserWarning when the field type is materialized" in report
+    assert "not an open M-D10 silent-degradation defect" in " ".join(report.split())
 
 
 def _section(text: str, heading: str) -> str:
@@ -106,7 +110,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "50 does not mean 50 fully closed issues" in report
+    assert "51 does not mean 51 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
@@ -119,7 +123,9 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert rows["SD1"][1] == "partial" and "get_queryset" in rows["SD1"][2]
     assert rows["M-D5"][1] == "contract" and "JSONString" in rows["M-D5"][2]
     assert rows["M-D4"][1] == "partial" and "1E+999999999" in rows["M-D4"][2]
-    assert rows["M-D10"][1] == "partial"
+    assert rows["M-D10"][1] == "bounded-fixed"
+    assert "original report's line 133" in rows["M-D10"][2]
+    assert "does not promise typed support for every annotation" in rows["M-D10"][2]
     assert "all-string Literal" in rows["M-D10"][2]
     assert "numeric/mixed Literal" in rows["M-D10"][2]
     assert "dict[str, int]" in rows["M-D10"][2]
@@ -145,7 +151,7 @@ def test_dispositions_keep_important_counterexamples_and_boundaries() -> None:
     assert "tests/core/test_decimal_set_input.py" in rows["M-D10"][2]
     assert "supplied NaN/sNaN/±Infinity" in rows["M-D10"][2]
     assert "field-local overflow-literal rejection" in rows["M-D10"][2]
-    assert "tests/core/test_set_int_input.py" in rows["M-D10"][4]
+    assert "tests/core/test_input_typing_fallback_warnings.py" in rows["M-D10"][4]
     assert "tests/core/test_typing_set_int_input.py" in rows["M-D10"][2]
     assert "other parameterized dict/set" in rows["M-D10"][2]
     assert rows["M-U1"][1] == "partial" and "retry works" in rows["M-U1"][2]
