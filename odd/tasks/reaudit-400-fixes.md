@@ -48,14 +48,14 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T20 | P10 | Mutation `only_fields`/`exclude_fields` validated like object types | D | [ ] | |
 | T21 | P11 | Pagination args matched in snake_case (pageSize = page_size); custom names via `COST_PAGINATION_ARGS` documented | D | [x] | `ea2e4ca`; RED 101 > 5000 |
 | T22 | P12 | Tampered in-memory cursors return "Invalid cursor" | D | [ ] | |
-| T23 | P13 | Multipart size limit enforced before CSRF reads `request.POST` | D | [ ] | |
+| T23 | P13 | Body cap runs in `dispatch` before `@ensure_csrf_cookie` (moved to an inner method); auth-before-cap precedence kept | D | [x] | `2b5c99b`; RED parse calls 1 != 0 with cookie |
 | T24 | P14 | Remaining runtime `assert`s replaced by explicit errors | D | [ ] | |
-| T25 | P15 | `format_graphql_error` regex linear | D | [ ] | |
+| T25 | P15 | `_SUGGESTION_RE` replaced by linear `_strip_suggestion`; old regex kept as test oracle (4000 random + 22 samples equal) | D | [x] | `97461e2`; RED 2.55 s |
 | T26 | P16 | Subscription snapshot int vs Float/Decimal filter values match | D | [ ] | |
 | T27 | P19 | `cached_property` and `__getattr__` AttributeError not turned into null | D | [ ] | |
 | T28 | P20 | Not changed (user chose 4.1.0): document range fields and subscription DurationField mapping as a known limitation | D | [ ] | |
 | T29 | P21 | Mutable literal defaults not shared between requests | D | [ ] | |
-| T30 | P22 | Base64 upload size accounts for padding | D | [ ] | |
+| T30 | P22 | Base64 decoded-size estimate subtracts `=` padding; same byte limit as multipart | D | [x] | `3ebc835`; RED 12 > 10 at the limit; full 6938 passed, cov 97.67 %, gates clean |
 | T31 | P23 | Decimal filter invalid value returns a clean field error | D | [ ] | |
 | T32 | Residual partials (A1, A2, A10, M-D6, M-D10, M-F3, SD6, Q8, others) | Fix compatible residuals; list incompatible ones for approval | D | [ ] | |
 | T33 | D2, D3, D5, D6 | Upgrade guide split by version, audit disposition fixes, docs cleanup | D | [ ] | |
@@ -108,6 +108,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T19, T21 done. Parent review caught a budget bypass through a client-declarable variable name in the first T19 commit; fixed in `bbafd7d`.
 
+- T23, T25, T30 done. Follow-up for T33 docs: `BaseGraphQLView` (not csrf_exempt) behind Django's `CsrfViewMiddleware` still has its multipart body parsed by the middleware before the view's cap; document a proxy/body-size middleware placed before CSRF.
+
 ## Next step
 
-T23 + T25 + T30 (HTTP and uploads).
+T22 + T31 (cursor and Decimal filter errors).
