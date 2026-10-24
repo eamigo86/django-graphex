@@ -863,10 +863,13 @@ GET components before hashing, so existing cached responses cold-miss once.
 The new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
 selection contexts each queryset-optimizer walker expands per request, so
 fragments reached through many distinct relation paths cannot cost seconds of
-CPU. Past the cap deeper relations are not planned and load through the normal
-resolvers: results are identical and scoped relations stay scoped, only the
-query count can grow. A DEBUG log record names the walker. Raise it if a large
-legitimate document shows more queries than before.
+CPU. The budget is shared by every root field (alias) of one request. Once any
+walker spends it, the root field being planned is resolved without the
+optimizer plan, exactly as with `OPTIMIZE_QUERYSET = False`, and so are the
+request's later root fields: the data and the scoping of `get_queryset`
+relations are identical, only the query count can grow. A DEBUG log record
+names the walker. Raise it if a large legitimate document shows more queries
+than before.
 
 ### Custom scalar errors are client errors
 
@@ -1003,7 +1006,7 @@ durations) instead of failing on every read.
 | --- | --- | --- |
 | `DEFAULT_PAGE_SIZE` | `100` (was `None`) | Rows returned when the client omits a size. |
 | `DOCUMENT_CACHE_MAX_QUERY_LENGTH` | `65536` | Longest document kept in the parse and validation caches; `None` removes the bound. |
-| `OPTIMIZER_WORK_BUDGET` | `2000` | Selection contexts each optimizer walker expands per request; `None` disables. |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Selection contexts each optimizer walker expands per request (shared by all root fields); `None` disables. |
 | `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10000000` | Characters directives may add per request; `None` disables. |
 | `MAX_REPLACE_OUTPUT_LENGTH` | `1000000` | Characters per `@replace` result; `None` restores uncapped behavior. |
 | `COST_DIRECTIVE` | `0` | Cost added per custom directive use. |

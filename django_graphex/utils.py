@@ -6,6 +6,7 @@ import dataclasses
 import inspect
 import logging
 import re
+import threading
 from collections import OrderedDict
 from collections.abc import Iterator, Sequence
 from decimal import Decimal
@@ -1154,6 +1155,57 @@ def _concrete_field_map(
     return result
 
 
+#: Private attribute on the request context holding the per-execution budgets.
+_WORK_ATTR = "_graphex_optimizer_work"
+
+#: Most executions tracked per table; the oldest entry is dropped beyond this.
+_WORK_TABLE_SIZE = 64
+
+#: Budgets for contexts that cannot take attributes (a dict or None).
+_WORK_FALLBACK: OrderedDict[tuple[int, int], list[Any]] = OrderedDict()
+
+_WORK_LOCK = threading.Lock()
+
+#: Key of the shared work state inside a root field's field-map cache.
+_WORK_KEY = (0, "work")
+
+
+def _request_work(info: GraphQLResolveInfo) -> dict[str, Any]:
+    """Return the optimizer work state shared by one whole execution.
+
+    The state lives in a small table on the request context (or, for a context
+    that cannot take attributes, a bounded module table) keyed by the identity
+    of the execution's variable values and root value. Entries hold both
+    objects, so an identity can only match while its execution is alive.
+
+    Args:
+        info: Resolve information of any root field of the execution.
+
+    Returns:
+        State with the per-walker expansion counters under "used" and the
+        "exhausted" flag set once any walker ran out of budget.
+    """
+    variables = getattr(info, "variable_values", None)
+    root = getattr(info, "root_value", None)
+    context = getattr(info, "context", None)
+    key = (id(variables), id(root))
+    with _WORK_LOCK:
+        table = getattr(context, _WORK_ATTR, None)
+        if not isinstance(table, OrderedDict):
+            table = OrderedDict()
+            try:
+                setattr(context, _WORK_ATTR, table)
+            except (AttributeError, TypeError):
+                table = _WORK_FALLBACK
+        entry = table.get(key)
+        if entry is None or entry[0] is not variables or entry[1] is not root:
+            entry = table[key] = [variables, root, {"used": {}, "exhausted": False}]
+            while len(table) > _WORK_TABLE_SIZE:
+                table.popitem(last=False)
+        table.move_to_end(key)
+        return entry[2]
+
+
 def _within_work_budget(
     cache: dict[tuple[int, str], Any] | None, walker: str, model: type[Model] | None
 ) -> bool:
@@ -1162,13 +1214,16 @@ def _within_work_budget(
     Memoizing a walker by selection context cannot help when a fragment is
     reached through DISTINCT relation paths: every path is another ORM lookup,
     so the lookups the document describes are exponential in its size. Each
-    walker therefore counts its expansions in the request-scoped cache and
-    stops planning once "OPTIMIZER_WORK_BUDGET" is spent. Unplanned relations
-    load lazily through the normal resolvers, so only the query count changes.
+    walker therefore counts its expansions in the request-wide work state and
+    stops planning once "OPTIMIZER_WORK_BUDGET" is spent. The first walker to
+    run dry flags the state as exhausted; the caller then discards the whole
+    plan of that root field, because walkers that stopped at different points
+    would otherwise leave an inconsistent partial plan.
 
     Args:
-        cache: Request-scoped cache created by "_apply_optimizations". None
-            (a walker called outside the optimizer) means unbounded.
+        cache: Field-map cache created per root field, carrying the shared
+            work state. None (a walker called outside the optimizer) means
+            unbounded.
         walker: Name of the walker being charged; each has its own counter.
         model: Model at the expansion, used only for the debug message.
 
@@ -1178,13 +1233,14 @@ def _within_work_budget(
     limit = graphql_api_settings.OPTIMIZER_WORK_BUDGET
     if cache is None or limit is None:
         return True
-    key = (0, "budget:" + walker)
-    used = cache.get(key, 0) + 1
-    cache[key] = used
+    state = cache.setdefault(_WORK_KEY, {"used": {}, "exhausted": False})
+    used = state["used"].get(walker, 0) + 1
+    state["used"][walker] = used
     if used == limit + 1:
+        state["exhausted"] = True
         logging.getLogger("django_graphex.utils").debug(
-            "OPTIMIZER_WORK_BUDGET (%d) exhausted in %s at %s; deeper relations "
-            "are not planned and load lazily.",
+            "OPTIMIZER_WORK_BUDGET (%d) exhausted in %s at %s; the root field "
+            "is resolved without the optimizer plan.",
             limit,
             walker,
             model.__name__ if model is not None else "?",
@@ -4051,7 +4107,7 @@ def _apply_optimizations(
     # threaded through all walkers so each (model, map-kind) pair calls
     # _meta.get_fields() at most once regardless of how many call-sites
     # inspect the same model's field map.
-    _fmap_cache: dict[tuple[int, str], Any] = {}
+    _fmap_cache: dict[tuple[int, str], Any] = {_WORK_KEY: _request_work(info)}
 
     # GraphQL types expose the source class on
     # ``extensions['gdx']._meta.graphene_type``. ``_gdx_graphene_type`` reads it
@@ -4646,37 +4702,42 @@ def queryset_factory(
     model = base.model
     # -------------------------------------------------------------------------
 
-    if not graphql_api_settings.OPTIMIZE_QUERYSET:
-        root_type = get_named_type(info.return_type)
-        scoped_fks = _scoped_fk_prefetches(
-            root_type if isinstance(root_type, GraphQLObjectType) else None,
-            model,
-            _root_selection_set(info.field_nodes),
-            info,
-            alias=base.db,
-            _fmap_cache={},
-        )
-        if scoped_fks:
-            prefetches = list(scoped_fks.values())
-            base = _drop_superseded_prefetches(base, prefetches)
-            base = base.prefetch_related(*prefetches)
-        return base
+    work = _request_work(info)
+    if graphql_api_settings.OPTIMIZE_QUERYSET and not work["exhausted"]:
+        if graphql_api_settings.OPTIMIZER_SAFE_MODE:
+            try:
+                optimized = _apply_optimizations(base, model, info, kwargs, custom_used)
+            except Exception as exc:  # noqa: BLE001 - intentional broad degrade guard
+                logging.getLogger("django_graphex.utils").warning(
+                    "Queryset optimization failed for %s; serving un-optimized "
+                    "queryset (OPTIMIZER_SAFE_MODE). %r",
+                    model.__name__,
+                    exc,
+                )
+                return base
+        else:
+            optimized = _apply_optimizations(base, model, info, kwargs, custom_used)
+        # A walker that ran out of budget leaves a partial plan whose pieces
+        # disagree (the plain prefetch survives while the filtered prefetch
+        # carrying ordering, limit and offset is dropped), so a truncated plan
+        # is discarded whole and the field resolves exactly as unoptimized.
+        if not work["exhausted"]:
+            return _get_queryset(optimized)
 
-    if graphql_api_settings.OPTIMIZER_SAFE_MODE:
-        try:
-            base = _apply_optimizations(base, model, info, kwargs, custom_used)
-        except Exception as exc:  # noqa: BLE001 - intentional broad degrade guard
-            logging.getLogger("django_graphex.utils").warning(
-                "Queryset optimization failed for %s; serving un-optimized "
-                "queryset (OPTIMIZER_SAFE_MODE). %r",
-                model.__name__,
-                exc,
-            )
-            return base
-    else:
-        base = _apply_optimizations(base, model, info, kwargs, custom_used)
-
-    return _get_queryset(base)
+    root_type = get_named_type(info.return_type)
+    scoped_fks = _scoped_fk_prefetches(
+        root_type if isinstance(root_type, GraphQLObjectType) else None,
+        model,
+        _root_selection_set(info.field_nodes),
+        info,
+        alias=base.db,
+        _fmap_cache={_WORK_KEY: work},
+    )
+    if scoped_fks:
+        prefetches = list(scoped_fks.values())
+        base = _drop_superseded_prefetches(base, prefetches)
+        base = base.prefetch_related(*prefetches)
+    return base
 
 
 def parse_validation_exc(validation_exc: Any) -> list[dict[str, Any]]:

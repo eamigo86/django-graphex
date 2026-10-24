@@ -168,9 +168,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   ~1 KB anonymous request took more than 20 s of CPU on an empty database. The
   new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
   selection contexts each optimizer walker expands per request, including the
-  scoped to-one walker that ran a second exponential pass. Past the cap deeper
-  relations are not planned and load through the normal resolvers (results are
-  identical, scoped relations stay scoped); a DEBUG record names the walker.
+  scoped to-one walker that ran a second exponential pass. The budget is shared
+  by every root field of the request. Once spent, the root field is resolved
+  without the optimizer plan, exactly like `OPTIMIZE_QUERYSET = False` (the
+  data is identical and scoped relations stay scoped; a truncated plan is never
+  kept because it could drop the ordering, limit or offset of nested lists); a
+  DEBUG record names the walker.
 
 - Scope automatic declared and reverse M2M output lists with the destination
   type's request-specific `get_queryset`. A visible parent retains its row,
