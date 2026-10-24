@@ -57,6 +57,7 @@ from .utils import (
     maybe_queryset,
     not_found_error,
     queryset_factory,
+    scope_to_output_type,
 )
 
 if TYPE_CHECKING:
@@ -3707,10 +3708,13 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
 
         # SECURITY: resolve the target row through the SAME scoped queryset the
         # read path uses ("get_queryset" -> "filter_queryset"), never the bare
-        # model. A row outside the caller's scope must be "not found" for a
+        # model, intersected with the registered output type's own scope. A row
+        # outside the caller's scope must be "not found" for a
         # write exactly as it already is for a read, so the response cannot be
         # used to probe another tenant's primary keys.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             try:
@@ -3750,7 +3754,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         # returns a clean "not found" error rather than a 500.
         pk = data.pop("id", None)
         # SECURITY: same scoped lookup as "delete" -- see the comment there.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(

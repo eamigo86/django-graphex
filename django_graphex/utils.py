@@ -3764,6 +3764,39 @@ def _scoped_gfk_queryset(
     return scoped
 
 
+def scope_to_output_type(
+    queryset: QuerySet, info: GraphQLResolveInfo | None
+) -> QuerySet:
+    """Restrict a write target queryset to its registered output type's scope.
+
+    A generated update or delete resolves its row through the mutation host.
+    When the request schema's registered output type for the same model also
+    overrides "get_queryset", the row must be visible there too, so a row hidden
+    on reads cannot be edited or deleted by id. The result is the intersection
+    of the host scope and the output scope, in one query. A model without a
+    registered output type, or whose type keeps the default hook, is returned
+    unchanged and costs nothing.
+
+    Args:
+        queryset: The host-scoped queryset the target row is resolved from.
+        info: Current request's resolve information.
+
+    Returns:
+        The queryset limited to rows the output type also exposes.
+    """
+    registry = _gfk_registry(info)
+    if registry is None or info is None:
+        return queryset
+    model = queryset.model
+    output_type = registry.get_type_for_model(model) or registry.get_type_for_model(
+        model._meta.concrete_model
+    )
+    if not has_object_type_queryset_override(output_type):
+        return queryset
+    scoped = _scoped_gfk_queryset(model, output_type, info, queryset.db)
+    return queryset.filter(pk__in=Subquery(scoped.values("pk")))
+
+
 def gfk_target_is_visible(target: Any, info: GraphQLResolveInfo | None) -> bool:
     """Report whether a GenericForeignKey target passes its type's row scope.
 

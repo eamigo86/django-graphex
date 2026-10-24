@@ -891,6 +891,17 @@ All notable changes to this library are documented here. The format is based on
   relied on sending an unknown `id` together with child data to create a row
   must omit the `id`.
 
+- Generated `update` and `delete` (`DjangoModelMutation` and `DjangoModelType`)
+  now also require the target row to be visible in the model's registered
+  output type: when that `DjangoObjectType` overrides `get_queryset`, a row it
+  hides on reads can no longer be edited or deleted by id (`postUpdate` and
+  `postDelete` returned `ok: true` for a hidden row). The host scope and the
+  output scope are intersected in one query, a hidden row answers exactly like
+  a nonexistent id. Nested child updates by id are unchanged. Types keeping
+  the default hook add no query. Code that relied on writing rows its
+  public type hides must widen that type's `get_queryset` (or register a
+  broader type) for the schema that serves the write.
+
 ## 4.0.0 — 2026-10-05
 
 Release validation now checks the exact pure-branch coverage percentage in

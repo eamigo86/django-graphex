@@ -38,7 +38,7 @@ from .types import (
     _check_unknown_options,
 )
 from .uploads import merge_uploaded_files
-from .utils import get_Object_or_None, not_found_error
+from .utils import get_Object_or_None, not_found_error, scope_to_output_type
 
 if TYPE_CHECKING:
     from django.db.models import QuerySet
@@ -992,10 +992,13 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
 
         # SECURITY: resolve the target row through "get_queryset" ->
         # "filter_queryset", never the bare model, so a declared scope hides a
-        # row from a write exactly as it does on "DjangoModelType". A row
+        # row from a write exactly as it does on "DjangoModelType" (and the
+        # registered output type's own "get_queryset", intersected). A row
         # outside the scope answers as missing, so the response cannot be used
         # to probe another tenant's primary keys.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             try:
@@ -1043,7 +1046,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         # ``null``/``[]``/``{}`` as a NO-OP (see ``NestedMutationMixin`` in
         # ``nested.py``); that asymmetry is deliberate and documented there.
         # SECURITY: same scoped lookup as ``delete`` -- see the comment there.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(

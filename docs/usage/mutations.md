@@ -254,6 +254,16 @@ A row outside the scope answers exactly as a missing one (`ok: false`,
 `<Model> with id <pk> does not exist.`), so the response cannot be used to probe
 which primary keys exist. `create` has no target row, so nothing is scoped there.
 
+The model's registered public output type is a second scope. When the request
+schema registers a `DjangoObjectType` for the model that overrides
+`get_queryset`, `update` and `delete` (on both `DjangoModelMutation` and
+`DjangoModelType`) also require the target row to be visible there: the host
+scope and the output type scope are intersected in a single query. A row the
+output type hides on reads can therefore no longer be edited or deleted by id;
+it answers exactly like a missing one. An output type that keeps the default
+hook, or a model with no registered output type, adds no query. Nested child
+updates by id keep their own host-scope rule and are not affected.
+
 #### Permissions are `DjangoModelType`-only
 
 The two hosts are **not** symmetric on authorization. `permission_classes` /
