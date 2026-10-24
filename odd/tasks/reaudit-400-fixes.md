@@ -42,8 +42,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T14 | R7 | Automatic sync fan-out isolates each group like the async path; drop log names the qualified exception cause chain (no payload/message); manual broadcast still raises | D | [x] | `83ebcd2`; RED 2 tests; full 6849 passed |
 | T15 | R6 | SSE lease renew errors tolerated while `renewed_at + TTL - 5 s` holds (retry every 5 s), stamped at acquire; one shared Redis client per URL | D | [x] | `3747d9b`, `962fc9d`; RED behavior + sharing + first-renewal; full 6853 passed, cov 97.75 %, gates clean |
 | T16 | R8, P17 | `_flat_and` splices nested `and` (flat sibling EXISTS, same results); approved rule: `not` inside a to-many relation object = NOT EXISTS of a matching related row (scoped rows respected) | D | [x] | `7afa80c`, `be4f85b`, `038c191`; RED 10/35 + matrix f/i/k/o; full 6899 passed, cov 97.65 %; parent re-ran t_fdeep (data) and t_ident (f x,xy; i; k x,xz; o all 8) |
-| T17 | R11 | Interfaces do not change unrelated `name=` handling | D | [ ] | |
-| T18 | R12 | `Literal` values that map to reserved `__` names rejected or renamed at build | D | [ ] | |
+| T17 | R11 | Only fields declared by an interface use the explicit `name=`; other fields keep their no-interface naming | D | [x] | `1625f3b`; RED non-interface name changed |
+| T18 | R12 | `Literal["__x"]` rejected at build (`ImproperlyConfigured`); Django choice values with `__` prefix fall back to the label/`A_` cascade | D | [x] | `2508127`; RED 2 tests; full 6902 passed, cov 97.65 %, gates clean |
 | T19 | P8 | Aggregate output cap / directive cost | D | [ ] | |
 | T20 | P10 | Mutation `only_fields`/`exclude_fields` validated like object types | D | [ ] | |
 | T21 | P11 | `pageSize` counted by cost analysis | D | [ ] | |
@@ -104,6 +104,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T16 done. Case k under the approved rule is `x, xz` (the question text said `x, xy`; the rule, not the example, was approved).
 
+- T17, T18 done. Audit note: explicit field `name=` is ignored on types without interfaces (pre-existing; SDL unchanged).
+
 ## Next step
 
-T17 + T18 (schema names).
+T19 + T21 (cost and response size).
