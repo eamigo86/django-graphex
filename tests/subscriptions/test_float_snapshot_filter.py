@@ -36,6 +36,9 @@ from tests.models import ScalarKindsModel
         (1.25, 1.5, "variable", False),
         (1.0, 1, "literal", True),
         (1.0, 1, "variable", True),
+        (1, 1.0, "variable", True),
+        (1, 1, "variable", True),
+        (1, 1.5, "variable", False),
     ],
 )
 async def test_real_float_field_exact_event(
@@ -50,7 +53,9 @@ async def test_real_float_field_exact_event(
         delivers: Whether the event must reach the subscriber.
     """
     assert isinstance(ScalarKindsModel._meta.get_field("floating"), models.FloatField)
-    label = f"mu3_{stored.hex()}_{float(expected).hex()}_{syntax}".replace("-", "n")
+    label = f"mu3_{float(stored).hex()}_{float(expected).hex()}_{syntax}".replace(
+        "-", "n"
+    )
     parsed_filters: list[dict[str, Any]] = []
 
     class FloatSubscription(Subscription):
@@ -159,11 +164,14 @@ async def test_real_float_field_exact_event(
 
         row = await sync_to_async(save_row, thread_sensitive=True)()
         assert signals == [(stored, True)]
-        assert row.floating.hex() == stored.hex()
+        assert float(row.floating).hex() == float(stored).hex()
         next_event = asyncio.create_task(stream.__anext__())
         await asyncio.wait_for(consumed.wait(), timeout=1.0)
         assert len(received) == 1
-        assert received[0]["payload"]["data"]["floating"].hex() == stored.hex()
+        assert (
+            float(received[0]["payload"]["data"]["floating"]).hex()
+            == float(stored).hex()
+        )
         if delivers:
             event = await asyncio.wait_for(next_event, timeout=0.5)
             assert not event.errors
@@ -217,3 +225,28 @@ def test_float_pair_only_changes_finite_exact_equality() -> None:
         ) is matches
     assert split_filters({"value": 1.0}, {"value__exact": 1.0}) == {"value__exact": 1.0}
     assert split_filters({}, {"value": 1.0}) == {"value": 1.0}
+
+
+def test_integer_snapshot_matches_float_and_decimal_filters_exactly() -> None:
+    """Match an int snapshot to equal Float/Decimal filters.
+
+    Unequal values, non-finite filters and booleans never match.
+    """
+    cases: list[tuple[Any, Any, bool]] = [
+        (1, 1.0, True),
+        (1, 1.5, False),
+        (1, float("inf"), False),
+        (1, float("nan"), False),
+        (2**70, float(2**70), True),
+        (2**70 + 1, float(2**70), False),
+        (1, Decimal("1"), True),
+        (1, Decimal("1.0"), True),
+        (1, Decimal("1.5"), False),
+        (1, Decimal("NaN"), False),
+        (True, 1.0, False),
+        (True, Decimal("1"), False),
+    ]
+    for snapshot, expected, matches in cases:
+        assert (
+            split_filters({"value": snapshot}, {"value": expected}) == {}
+        ) is matches

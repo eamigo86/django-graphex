@@ -275,7 +275,8 @@ def test_decimal_snapshot_gate_preserves_non_decimal_and_fallback_filters() -> N
     assert split_filters(snapshot, {"decimal": "1.0"}) is None
     assert split_filters(snapshot, {"decimal": "1.00"}) == {}
     assert split_filters(snapshot, {"decimal": 1.0}) is None
-    assert split_filters({"decimal": 1}, {"decimal": Decimal("1.0")}) is None
+    assert split_filters({"decimal": 1}, {"decimal": Decimal("1.0")}) == {}
+    assert split_filters({"decimal": 1}, {"decimal": Decimal("2.0")}) is None
     assert split_filters(snapshot, {"decimal": Decimal("NaN")}) is None
     assert split_filters(snapshot, {"id": 1}) == {}
     assert split_filters(snapshot, {"uuid": UUID(snapshot["uuid"])}) == {}

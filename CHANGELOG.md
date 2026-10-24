@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fix: a subscription `exact` filter on a `Float` or `Decimal` field now matches
+  an event whose snapshot holds a plain integer. A FloatField or DecimalField
+  saved with an int (`floating=1`) serializes to the JSON number `1`, which never
+  equalled the typed filter `1.0` or `Decimal("1")`, so the event was silently
+  dropped. A non-bool int snapshot now matches an equal finite float or Decimal
+  exactly; unequal values, NaN, Infinity and booleans still do not match. Other
+  lookups (`in`, `gt`, `range`, `isnull`) were never affected: they are decided
+  by the database check against the current row.
+
 - Fix: a mutable literal default is no longer shared between requests. A
   default such as `tags: list[str] = []` or `flags: dict[str, bool] = {"a":
   True}` on an `InputType` field, or `default=[...]` on a field argument, was

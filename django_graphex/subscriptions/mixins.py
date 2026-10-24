@@ -61,6 +61,29 @@ def _matches_datetime_snapshot(snapshot: Any, expected: datetime) -> bool:
     return captured == expected
 
 
+def _matches_integer_snapshot(snapshot: Any, expected: Any) -> bool:
+    """Compare an integer snapshot to a finite Float or Decimal filter value.
+
+    A FloatField or DecimalField can hold a plain int on an unrefreshed
+    instance, so the serialized snapshot is an int while the typed filter is a
+    float or Decimal. Python compares int with float and Decimal exactly.
+
+    Args:
+        snapshot: The value captured when the notification was produced.
+        expected: The parsed filter value.
+
+    Returns:
+        Whether a non-bool int snapshot equals a finite float or Decimal.
+    """
+    if type(snapshot) is not int:
+        return False
+    if type(expected) is float:
+        return math.isfinite(expected) and snapshot == expected
+    return (
+        isinstance(expected, Decimal) and expected.is_finite() and snapshot == expected
+    )
+
+
 class _LosslessDateTimeJSONEncoder(DjangoJSONEncoder):
     """Keep DateTime microseconds while retaining Django's other JSON rules."""
 
@@ -107,8 +130,9 @@ def split_filters(
     "data" are compared in memory. Existing equal string forms still match
     (including 7 and "7"); a typed Decimal filter also matches a finite,
     numerically equal JSON-safe string snapshot. Two actual finite floats also
-    use exact numeric equality, including opposite signed zeros. A mismatch
-    short-circuits the notification without consulting the current database row.
+    use exact numeric equality, including opposite signed zeros. An int snapshot
+    (a Float or Decimal field holding a plain int) matches an equal finite float
+    or Decimal. A mismatch short-circuits the notification without consulting the current database row.
 
     Args:
         data: The serialized instance mapping carried by the notification.
@@ -132,6 +156,7 @@ def split_filters(
                     isinstance(value, datetime)
                     and _matches_datetime_snapshot(data[key], value)
                 )
+                and not _matches_integer_snapshot(data[key], value)
                 and not (
                     type(data[key]) is float
                     and type(value) is float
