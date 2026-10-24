@@ -414,6 +414,14 @@ request-level rollback on any error. Malformed outer bodies, a batch larger than
 and keep a single request-level error object; non-400 transport errors keep
 their existing envelope.
 
+Rollback covers **every database alias** that is inside a transaction opened for
+the request: each alias with `ATOMIC_REQUESTS` enabled is rolled back (or, in a
+batch, its entry savepoint is), and a mutation additionally runs in
+`transaction.atomic()` on the default alias when `ATOMIC_MUTATIONS` is `True`
+and on any alias whose `DATABASES[alias]["ATOMIC_MUTATIONS"]` is `True`. An
+alias outside any atomic block is never touched, so its writes persist, and the
+global setting alone still covers only the default alias.
+
 ## Request body size
 
 With [`MAX_REQUEST_BODY_SIZE`](settings.md#file-uploads) set, `dispatch` refuses

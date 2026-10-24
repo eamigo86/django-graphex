@@ -36,7 +36,12 @@ from typing import TYPE_CHECKING, Any
 from django.conf import settings as django_settings
 from django.core.cache import caches
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DatabaseError, connection, connections, transaction
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    DatabaseError,
+    connections,
+    transaction,
+)
 from django.http import HttpResponse, HttpResponseNotAllowed
 from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render
@@ -543,12 +548,44 @@ def instantiate_middleware(middlewares: Any) -> Any:
 def set_rollback() -> None:
     """Roll back the current request transaction when atomic requests are on.
 
-    A no-op unless the connection has "ATOMIC_REQUESTS" enabled and is inside an
-    atomic block; otherwise the request's transaction is marked for rollback.
+    Every database alias with "ATOMIC_REQUESTS" enabled that is inside an atomic
+    block is marked for rollback; aliases outside an atomic block are untouched.
     """
-    atomic_requests = connection.settings_dict.get("ATOMIC_REQUESTS", False)
-    if atomic_requests and connection.in_atomic_block:
-        transaction.set_rollback(True)
+    for alias in _request_atomic_aliases():
+        transaction.set_rollback(True, using=alias)
+
+
+def _request_atomic_aliases() -> list[str]:
+    """Return the aliases whose request transaction is currently open.
+
+    Returns:
+        Aliases with "ATOMIC_REQUESTS" enabled that are inside an atomic block.
+    """
+    return [
+        alias
+        for alias in connections
+        if connections[alias].settings_dict.get("ATOMIC_REQUESTS", False)
+        and connections[alias].in_atomic_block
+    ]
+
+
+def _atomic_mutation_aliases() -> list[str]:
+    """Return the aliases a mutation operation must run inside "atomic" on.
+
+    The default alias is included when the global "ATOMIC_MUTATIONS" setting or
+    its own "ATOMIC_MUTATIONS" database option is true; every other alias only
+    through its own "DATABASES[alias]['ATOMIC_MUTATIONS']" option.
+
+    Returns:
+        Aliases to wrap, in connection order.
+    """
+    global_on = graphql_api_settings.ATOMIC_MUTATIONS is True
+    return [
+        alias
+        for alias in connections
+        if connections[alias].settings_dict.get("ATOMIC_MUTATIONS", False) is True
+        or (global_on and alias == DEFAULT_DB_ALIAS)
+    ]
 
 
 @contextlib.contextmanager
@@ -563,12 +600,8 @@ def _item_savepoints() -> Iterator[None]:
         Control to the batch item.
     """
     with contextlib.ExitStack() as stack:
-        for alias in connections:
-            if (
-                connections[alias].settings_dict.get("ATOMIC_REQUESTS", False)
-                and connections[alias].in_atomic_block
-            ):
-                stack.enter_context(transaction.atomic(using=alias, savepoint=True))
+        for alias in _request_atomic_aliases():
+            stack.enter_context(transaction.atomic(using=alias, savepoint=True))
         yield
 
 
@@ -1759,11 +1792,11 @@ class BaseGraphQLView(View):
                 operation_ast is not None
                 and operation_ast.operation == OperationType.MUTATION
             )
-            if is_mutation and (
-                graphql_api_settings.ATOMIC_MUTATIONS is True
-                or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
-            ):
-                with transaction.atomic():
+            atomic_aliases = _atomic_mutation_aliases() if is_mutation else []
+            if atomic_aliases:
+                with contextlib.ExitStack() as stack:
+                    for alias in atomic_aliases:
+                        stack.enter_context(transaction.atomic(using=alias))
                     result = _mark_request_errors(
                         _execute_synchronously(schema, document, execute_options)
                     )
@@ -1771,7 +1804,8 @@ class BaseGraphQLView(View):
                         request, MUTATION_ERRORS_FLAG, False
                     ) is True or bool(result.errors)
                     if rolled_back:
-                        transaction.set_rollback(True)
+                        for alias in atomic_aliases:
+                            transaction.set_rollback(True, using=alias)
                 if not rolled_back:
                     setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
                 return result

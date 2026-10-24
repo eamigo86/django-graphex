@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: a GraphQL error now rolls back writes on every database alias that is
+  inside a transaction opened for the request, not only the default one. Each
+  alias with `ATOMIC_REQUESTS` is marked for rollback (in a batch, its entry
+  savepoint is), and `DATABASES[alias]["ATOMIC_MUTATIONS"] = True` now wraps
+  that alias in `transaction.atomic()` for mutations. The global
+  `ATOMIC_MUTATIONS` setting still covers only the default alias, and aliases
+  outside an atomic block are untouched.
+
 - Fix: a populated `DecimalRangeField` and a `DurationField` selected on a
   subscription event type no longer fail on every read. The declared types are
   unchanged (the SDL is the same). A finite `Decimal` range bound is now
