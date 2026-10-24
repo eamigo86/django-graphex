@@ -42,6 +42,7 @@ DJANGO_GRAPHEX = {
     "OPTIMIZE_ONLY_FIELDS": True,
     "OPTIMIZE_NESTED_PAGINATION": True,
     "OPTIMIZER_SAFE_MODE": False,
+    "OPTIMIZER_WORK_BUDGET": 2000,  # per-request optimizer expansion cap per walker (None disables)
     "OPTIMIZE_ANNOTATED_FIELDS": True,
 
     # --- Subscriptions ----------------------------------------------------- #
@@ -215,6 +216,7 @@ the set of documents your clients send is finite, since nothing is ever evicted.
 | `OPTIMIZE_ONLY_FIELDS` | `True` | Also narrow columns with `.only()` across the `select_related` span **and** inside each `Prefetch` child queryset. Set `False` if resolvers/properties read non-selected columns. |
 | `OPTIMIZE_NESTED_PAGINATION` | `True` | DB-side `ROW_NUMBER()` window slicing for reverse-FK nested paginated lists (`LimitOffset` / `Page`). `False` = in-memory order+slice fallback. See [Nested Lists](nested-lists.md#performance-n1). |
 | `OPTIMIZER_SAFE_MODE` | `False` | When `True`, any exception in the optimization block degrades to the un-optimized queryset and logs a `WARNING` (instead of a 500). Default fail-loud. See [Query Optimization](query-optimization.md). |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-request cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap deeper relations are not planned and load lazily (same results, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
 | `OPTIMIZE_ANNOTATED_FIELDS` | `True` | Inject `AnnotatedField` DB annotations only when the field is selected. Runtime kill-switch for annotation injection. See [Fields → AnnotatedField](fields.md#annotatedfield). |
 
 ## Subscriptions

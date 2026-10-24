@@ -14,6 +14,18 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Bound the queryset optimizer for fragments reached through distinct relation
+  paths. Memoizing by selection context only helped a fragment repeated in the
+  same context; a document such as `author { ...A }` / `coAuthors { results {
+  ...A } }` where each fragment reaches the next through four relations
+  describes 4**n distinct `select_related`/`prefetch_related` lookups, so a
+  ~1 KB anonymous request took more than 20 s of CPU on an empty database. The
+  new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
+  selection contexts each optimizer walker expands per request, including the
+  scoped to-one walker that ran a second exponential pass. Past the cap deeper
+  relations are not planned and load through the normal resolvers (results are
+  identical, scoped relations stay scoped); a DEBUG record names the walker.
+
 - Fix import-time failures of the one-public-output-type guard. A user
   `DjangoObjectType` declared after a mutation (or `DjangoModelType`, or list
   type) for the same model now replaces the generated placeholder, and the

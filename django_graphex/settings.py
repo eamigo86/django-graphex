@@ -136,6 +136,13 @@ DEFAULTS = {
     # optimization block degrades to the un-optimized queryset and logs a WARNING
     # instead of surfacing a 500. Default False (fail loud).
     "OPTIMIZER_SAFE_MODE": False,
+    # Per-request, per-walker cap on the selection contexts the queryset
+    # optimizer expands. A fragment reached through distinct relation paths
+    # describes exponentially many select/prefetch lookups, so no memo can plan
+    # it in linear time. Past the cap the optimizer stops planning deeper
+    # relations (results stay correct; those relations load lazily). Far above
+    # any realistic document. None disables the cap.
+    "OPTIMIZER_WORK_BUDGET": 2000,
     # Inject DB annotations declared via AnnotatedField only when the field is
     # selected in the GraphQL query. This is the DEPENDABLE runtime kill-switch
     # for annotation injection — independent of OPTIMIZE_ONLY_FIELDS.
@@ -222,6 +229,7 @@ LIMIT_MINIMUMS = {
     "MAX_QUERY_DEPTH": (1, "Use None to disable the global depth guard."),
     "MAX_QUERY_COST": (1, "Use None to disable the cost budget."),
     "MAX_REPLACE_OUTPUT_LENGTH": (1, "Use None to disable the output cap."),
+    "OPTIMIZER_WORK_BUDGET": (1, "Use None to disable the optimizer work cap."),
     "PERMISSION_SCHEMA_CACHE_MAXSIZE": (
         0,
         "Use 0 to cache nothing, or None to keep the calibrated default.",

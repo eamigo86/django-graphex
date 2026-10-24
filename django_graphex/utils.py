@@ -1153,6 +1153,44 @@ def _concrete_field_map(
     return result
 
 
+def _within_work_budget(
+    cache: dict[tuple[int, str], Any] | None, walker: str, model: type[Model] | None
+) -> bool:
+    """Charge one selection-context expansion against the optimizer budget.
+
+    Memoizing a walker by selection context cannot help when a fragment is
+    reached through DISTINCT relation paths: every path is another ORM lookup,
+    so the lookups the document describes are exponential in its size. Each
+    walker therefore counts its expansions in the request-scoped cache and
+    stops planning once "OPTIMIZER_WORK_BUDGET" is spent. Unplanned relations
+    load lazily through the normal resolvers, so only the query count changes.
+
+    Args:
+        cache: Request-scoped cache created by "_apply_optimizations". None
+            (a walker called outside the optimizer) means unbounded.
+        walker: Name of the walker being charged; each has its own counter.
+        model: Model at the expansion, used only for the debug message.
+
+    Returns:
+        Whether the walker may expand this context.
+    """
+    limit = graphql_api_settings.OPTIMIZER_WORK_BUDGET
+    if cache is None or limit is None:
+        return True
+    key = (0, "budget:" + walker)
+    used = cache.get(key, 0) + 1
+    cache[key] = used
+    if used == limit + 1:
+        logging.getLogger("django_graphex.utils").debug(
+            "OPTIMIZER_WORK_BUDGET (%d) exhausted in %s at %s; deeper relations "
+            "are not planned and load lazily.",
+            limit,
+            walker,
+            model.__name__ if model is not None else "?",
+        )
+    return used <= limit
+
+
 def recursive_params(
     selection_set: SelectionSetNode,
     fragments: dict[str, Any],
@@ -1205,6 +1243,8 @@ def recursive_params(
         _seen = set()
     context = (id(selection_set), _prefix, current_type_name, current_model)
     if context in _seen:
+        return select_related, prefetch_related
+    if not _within_work_budget(_fmap_cache, "recursive_params", current_model):
         return select_related, prefetch_related
     _seen.add(context)
     _vars: dict[str, Any] = variable_values or {}
@@ -1381,6 +1421,8 @@ def _collect_only_fields(
         id(current_gql_type),
     )
     if context in _seen:
+        return sorted(_only)
+    if not _within_work_budget(_fmap_cache, "only_fields", model):
         return sorted(_only)
     _seen.add(context)
 
@@ -2167,6 +2209,8 @@ def _collect_prefetch_only_sets(
     if context in _memo:
         _out.update(_memo[context])
         return _out
+    if not _within_work_budget(fmap_cache, "prefetch_only", model):
+        return _out
     # The context's effect is independent of entries already in the caller's
     # map. Keep it local so a later repeated spread can restore overwritten
     # plans, even when its first write happened to equal the prior value.
@@ -2729,6 +2773,8 @@ def _walk_filtered_prefetches(
         _seen = set()
     context = (id(selection_set), id(gql_type), model, prefix)
     if context in _seen:
+        return
+    if not _within_work_budget(_fmap_cache, "filtered_prefetches", model):
         return
     _seen.add(context)
     relation_map = _relation_field_map(model, _fmap_cache) if model is not None else {}
@@ -3715,6 +3761,8 @@ def _scoped_fk_prefetches(
     key = (id(gql_type), id(selection_set), prefix)
     if key in visited:
         return found
+    if not _within_work_budget(_fmap_cache, "scoped_fk", model):
+        return found
     visited.add(key)
     relations = _relation_field_map(model, _fmap_cache)
     for node in _iter_unique_promotion_fields(
@@ -4401,6 +4449,7 @@ def queryset_factory(
             _root_selection_set(info.field_nodes),
             info,
             alias=base.db,
+            _fmap_cache={},
         )
         if scoped_fks:
             prefetches = list(scoped_fks.values())

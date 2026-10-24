@@ -215,6 +215,7 @@ Configure in `settings.py` under `DJANGO_GRAPHEX`:
 | `OPTIMIZE_ONLY_FIELDS` | `True` | Additionally narrow columns with `.only()` across the `select_related` span **and** inside each `Prefetch` child queryset (conservative; see the warning above). |
 | `OPTIMIZE_NESTED_PAGINATION` | `True` | DB-side `ROW_NUMBER()` window slicing for reverse-FK nested paginated lists (`LimitOffset`/`Page`). `False` = in-memory order+slice fallback. See [DB-side nested pagination](#db-side-nested-pagination-window-slicing) (this page) and [Nested Lists](nested-lists.md#performance-n1). |
 | `OPTIMIZER_SAFE_MODE` | `False` | When `True`, any exception in the optimization block degrades to the un-optimized queryset and logs a `WARNING` (instead of a 500). Default fail-loud. See [`OPTIMIZER_SAFE_MODE`](#optimizer_safe_mode-fail-safe-degrade) below. |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-request cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap deeper relations are not planned and load lazily (same results, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
 | `OPTIMIZE_ANNOTATED_FIELDS` | `True` | Inject `AnnotatedField` DB annotations only when the field is selected. Runtime kill-switch for annotation injection. See [Fields → AnnotatedField](fields.md#annotatedfield). |
 
 ```python
@@ -223,6 +224,7 @@ DJANGO_GRAPHEX = {
     "OPTIMIZE_ONLY_FIELDS": True,
     "OPTIMIZE_NESTED_PAGINATION": True,
     "OPTIMIZER_SAFE_MODE": False,
+    "OPTIMIZER_WORK_BUDGET": 2000,
     "OPTIMIZE_ANNOTATED_FIELDS": True,
 }
 ```
@@ -247,6 +249,26 @@ DJANGO_GRAPHEX = {
     "OPTIMIZER_SAFE_MODE": True,
 }
 ```
+
+## `OPTIMIZER_WORK_BUDGET` (work cap)
+
+Fragments make a short document describe a huge selection tree. When a fragment
+reaches the next one through *different* relations (`author`, `coAuthors`,
+`posts`, `coauthoredPosts`, ...), every path is a different ORM lookup, so the
+lookups the optimizer would emit grow as `4**n` for `n` fragments. Memoizing by
+fragment cannot plan an exponential set in linear time, and emitting it would
+also mean one query per lookup once there is data.
+
+`OPTIMIZER_WORK_BUDGET` (default `2000`) therefore caps, per request and per
+walker, how many selection contexts the optimizer expands. A realistic document
+stays orders of magnitude below it. Past the cap the optimizer stops planning
+deeper relations: results are identical and relations behind a
+`get_queryset` scope stay scoped, but the unplanned relations load through the
+normal resolvers (possibly one query per parent). A `DEBUG` record on the
+`django_graphex.utils` logger names the walker that hit the cap. Use
+[`MAX_QUERY_DEPTH` / `MAX_QUERY_COST`](query-limits.md) to reject such
+documents outright; set the budget to `None` only to restore the unbounded
+planning.
 
 ## DB-side nested pagination (window slicing)
 
