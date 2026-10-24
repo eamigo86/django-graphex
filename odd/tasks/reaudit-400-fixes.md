@@ -31,10 +31,10 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T03 | P9 | Depth and cost walkers iterative; parse/validate stack exhaustion -> 400 `QUERY_TOO_DEEP`; private structural depth ceiling 100 (sync execution with cyclic data fails at ~130) applied even with `MAX_QUERY_DEPTH` unset | D | [x] | `c863deb`, `e24dbbc`, `d8188f3`; RED 9+3+1 tests; full 6731 passed, cov 97.83 %; parent re-ran chain/deep-frag/inline-band repros: no 500, no internal error, no ERROR log |
 | T04 | P3, R9 | Forward OneToOne destinations scoped like FK (hidden = missing error); one batched membership query per relation | D | [x] | `56c5be3`; RED 3 tests (hidden accepted; 13/68 queries for 5/60 tags; SQLite int overflow); full 6737 passed, cov 97.81 %; parent re-ran t_sd3 write attacks: all rejected |
 | T05 | P4 | Reverse OneToOne orphan adoption needs a child update host (same rule as reverse FK) | D | [x] | `e2d7de1`; RED adoption without host; full 6741 passed, cov 97.81 %; parent re-ran t_sd4: refused |
-| T06 | P7 | Hidden and nonexistent IDs in nested child updates give the same error (option B approved: fail-closed) | D | [ ] | |
+| T06 | P7 | Id-bearing nested child payload matching no visible child (hidden or missing) -> same not-found error, nothing written; id-less payload still creates | D | [x] | `6ab28e5`; RED 5/7; 4 pinned tests rewritten to the approved contract; parent re-ran t_oracle: identical errors |
 | T07 | P2 | Typed GFK union targets resolve through the member type `get_queryset` (hidden -> null), batched via scoped GenericPrefetch | D | [x] | `6673531`; RED 4 leak tests; parent re-ran t_gfk_union: target null |
 | T08 | P5 | Flat GFK target redacted by the registered type's `get_queryset` in every schema (pruned or not); unregistered targets unchanged | D | [x] | `3e6535b`; RED 4 tests; full 6751 passed, cov 97.78 %; parent re-ran t_sd5 matrix |
-| T09 | P6 | Generated update/delete also scoped by the registered output type's `get_queryset` (approved: close it) | D | [ ] | |
+| T09 | P6 | Generated update/delete (DjangoModelMutation, DjangoModelType) and nested child writes scoped by the registered output type's `get_queryset`; hidden = missing byte-for-byte | D | [x] | `0583f62`, `47cfed9`; RED hidden rows rewritten; parent full run 6770 passed / 6 skipped, cov 97.78 %; t_sd3 update/delete refused |
 | T10 | R3 | Custom scalar coercion errors stay client errors (no INTERNAL, no ERROR log) | D | [ ] | |
 | T11 | R4, P18 | Batch with `ATOMIC_REQUESTS`: item errors do not roll back other items; consistent batch abort | D | [ ] | |
 | T12 | R5, R10 | Numeric directives correct on Decimal/BigInt; Decimal output without scientific notation | D | [ ] | |
@@ -91,6 +91,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T07, T08 done.
 
+- T06, T09 done.
+
 ## Next step
 
-T06 + T09 (one agent, two commits).
+T10 + T11 (views.py), then T12.
