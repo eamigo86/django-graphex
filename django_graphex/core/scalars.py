@@ -250,10 +250,12 @@ GdxFilterTime = GraphQLScalarType(
 
 
 def _decimal_serialize(value: Any) -> str:
+    # "f" keeps the stored scale but never switches to scientific notation
+    # ("0E-8", "5.0E-7"), which str() does for small exponents.
     if isinstance(value, decimal.Decimal):
-        return str(value)
+        return format(value, "f")
     try:
-        return str(decimal.Decimal(value))
+        return format(decimal.Decimal(value), "f")
     except (decimal.InvalidOperation, ValueError, TypeError) as exc:
         raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
 

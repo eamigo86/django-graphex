@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Serialize `Decimal` output in plain positional notation. Values loaded with
+  `decimal_places >= 7` were emitted through `str()` as `0E-8` or `5.0E-7`; they
+  now come out as `0.00000000` and `0.00000050`. Normal values are unchanged.
+
 - Make the numeric directives work on `Decimal` and `BigInt` fields. `@round`,
   `@floor`, `@ceil` and `@abs` converted the value to `float`, so `@round` on a
   `Decimal` returned the binary expansion of the float
