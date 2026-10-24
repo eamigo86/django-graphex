@@ -185,10 +185,29 @@ The seed creates superuser **`demo` / `demo12345`**.
 ### Authenticating (for private fields)
 
 Private fields (`me`, `myNotes`, `noteSubscription`), the note and comment
-writes, and `postWithCommentsCreate` **when it carries a `comments` list**
-require an authenticated user. The remaining writes (`postCreate`,
-`createCategory`, `uploadDocument`) are deliberately open, so you can compare a
-gated write against an ungated one. Auth here is **Django session-based**:
+writes, `postUpdate`, `postDelete`, `documentUpdate`, and
+`postWithCommentsCreate` **when it carries a `comments` list** require an
+authenticated user. Exactly these writes are deliberately open to anonymous
+callers, so you can compare a gated write against an ungated one:
+
+| Open mutation | Why it is open |
+|---|---|
+| `postCreate` | Drives the public `postSubscription` demo without a session |
+| `postWithCommentsCreate` (no `comments`) | Behaves like `postCreate`; with comments the child's `IsOwnerOrReadOnly` gate applies |
+| `createCategory` | Hand-written mutation demo (duplicate names return `ok: false`) |
+| `documentCreate` | The multipart `curl` demo needs no session |
+| `uploadDocument` | The base64 upload demo |
+| `registerUser` | Account registration is public by nature |
+
+The destructive or modifying siblings, `postUpdate`, `postDelete` and
+`documentUpdate`, are mounted under `PrivateMutation`
+(`private_mutation=` on `DjangoGraphQLSchema`), so `AuthenticatedFieldsMiddleware`
+answers an anonymous call with `Authentication required.`. `DjangoModelMutation`
+honors no `permission_classes`, so a private root is the supported way to gate
+one of its operations; use a `DjangoModelType` (as `NoteModelType` does) when you
+need per-action or per-object rules. Any logged-in user may update or delete any
+post here; add an ownership check for real data. Auth here is **Django
+session-based**:
 
 1. Open <http://127.0.0.1:8000/admin> and log in as `demo` / `demo12345`.
 2. Return to GraphiQL — it shares the session cookie.
@@ -236,7 +255,8 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | Multi-level nesting | ✅ | `authors → posts → comments` (all paginated independently) |
 | `GenericRelation` reverse list | wired | `Post.attachments` — prefetched + `.only()`-narrowed reverse side of the GFK. Wired on the model + schema; the seed leaves it empty so the `attachments` GFK-union demo stays runnable (a `Post` target is not an `AttachmentTargetUnion` member). Query `posts { results { attachments { results { caption } } } }` runs cleanly and returns rows once you attach an `Attachment` to a `Post` |
 | **Mutations** | | |
-| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation` → `postCreate/Update/Delete` |
+| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation` → `postCreate` (open) and `postUpdate/Delete` (mounted under `PrivateMutation`, login required) |
+| `private_mutation` (auth-gated mutation root) | ✅ | `schema.py` — `PrivateMutation`: `postUpdate`, `postDelete`, `documentUpdate`; pinned by `tests/test_write_access.py` |
 | `DjangoModelType.MutationFields()` | ✅ | `NoteModelType` → `noteCreate/Update/Delete`; `CommentModelType` → `commentCreate/Update/Delete` |
 | `Meta.model_operations` | ✅ | `CommentModelType` (writes only, reads served by `CommentType`), `PostWithCommentsMutation` (`create` only) |
 | `DjangoInputObjectType` on hand-written mutation | ✅ | `CategoryInput` / `createCategory` |
@@ -764,8 +784,8 @@ grants no model permission. Log in as `editor` / `editor12345`, open
 
 | Document at `/graphql/secure/` | Result |
 |---|---|
-| `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'RootMutation'. Did you mean 'postCreate'?` |
-| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'RootMutation'. Did you mean 'documentCreate', 'postCreate', or 'documentUpdate'?` |
+| `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'Mutation'. Did you mean 'postCreate'?` |
+| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'Mutation'. Did you mean 'documentCreate', 'postCreate', or 'documentUpdate'?` |
 | `postWithCommentsCreate(newPost: { …, comments: [...] })` | Rejected: `comments` is not an input field of `PostCreateNestedCommentsType`; the mutation survives, the **nested input field** does not. |
 | `postWithCommentsCreate(newPost: { … })`, no `comments` | `ok: true` — the parent write is theirs to make |
 | `{ serverTime posts { totalCount } }` | resolves normally — untagged and readable fields are untouched |

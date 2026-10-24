@@ -5,6 +5,8 @@
 - Private queries (require auth): "me" and "myNotes" (scoped to the user).
 - Mutations: Note create/update/delete via DjangoModelType + permissions, plus
   purpose-built account registration through Django's "create_user()".
+- Open vs gated writes: demo-friendly creates stay in "RootMutation"; the
+  update/delete operations of the model mutations live in "PrivateMutation".
 - Nested writes: "postWithCommentsCreate", gated by the child's own permission
   ("CommentModelType") the way 2.2.0 requires.
 - Subscriptions: public "postSubscription" and private "noteSubscription".
@@ -1496,16 +1498,18 @@ compile_all_outputs()
 
 
 class RootMutation(ObjectType):
-    """Root mutation aggregating every mutation field in this schema.
+    """Root mutation fields anyone can run, deliberately open for the demo.
 
     Combines auto-generated CRUD for neutral domain models with purpose-built
     account registration, category creation, document upload and nested writes.
+    The README lists exactly which of these accept an anonymous caller:
+    "postCreate", "postWithCommentsCreate" (without comments), "createCategory",
+    "documentCreate", "uploadDocument" and "registerUser". Their modifying or
+    destructive siblings live in "PrivateMutation" below.
     """
 
     note_create, note_delete, note_update = NoteModelType.MutationFields()
     post_create = PostMutation.CreateField()
-    post_update = PostMutation.UpdateField()
-    post_delete = PostMutation.DeleteField()
     # Gated by CommentModelType.permission_classes — the same gate the nested
     # postWithCommentsCreate below now runs for each inline comment.
     comment_create, comment_delete, comment_update = CommentModelType.MutationFields()
@@ -1517,12 +1521,26 @@ class RootMutation(ObjectType):
     register_user = RegisterUser.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).
     post_with_comments_create = PostWithCommentsMutation.CreateField()
-    # Multipart file upload (2.2.0). Both operations run the merge — see the
-    # curl invocation on DocumentMutation.
+    # Multipart file upload (2.2.0): create is open so the curl demo needs no
+    # session; the update half is private, see PrivateMutation.
     document_create = DocumentMutation.CreateField()
-    document_update = DocumentMutation.UpdateField()
     # Base64 file upload demo (v1.3.0), writing the same column.
     upload_document = UploadDocument.Field()
+
+
+class PrivateMutation(ObjectType):
+    """Root mutation fields that require an authenticated user.
+
+    Enforced by AuthenticatedFieldsMiddleware, the same gate as "PrivateQuery".
+    "DjangoModelMutation" honors no "permission_classes", so the supported way
+    to protect one of its operations is to mount the field under a private
+    root. The creates stay open in "RootMutation"; the operations that modify
+    or destroy existing rows do not.
+    """
+
+    post_update = PostMutation.UpdateField()
+    post_delete = PostMutation.DeleteField()
+    document_update = DocumentMutation.UpdateField()
 
 
 # --------------------------------------------------------------------------- #
@@ -1560,6 +1578,7 @@ schema = DjangoGraphQLSchema(
     query=PublicQuery,
     private_query=PrivateQuery,
     mutation=RootMutation,
+    private_mutation=PrivateMutation,
     subscription=PublicSubscriptions,
     private_subscription=PrivateSubscriptions,
     directives=all_directives,
