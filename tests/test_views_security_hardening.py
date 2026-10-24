@@ -1083,14 +1083,14 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
         variable, with one key misspelled. The rule that fires here is reached
         almost exclusively through the wrapper.
         """
-        from django_graphex.security import _SUGGESTION_RE
+        from django_graphex.security import _strip_suggestion
 
         message = (
             "Variable '$input' got invalid value {'nam': 'x'}; "
             "Field 'nam' is not defined by type 'UserInput'. Did you mean 'name'?"
         )
         self.assertEqual(
-            _SUGGESTION_RE.sub(r"\1", message),
+            _strip_suggestion(message),
             "Variable '$input' got invalid value {'nam': 'x'}; "
             "Field 'nam' is not defined by type 'UserInput'.",
         )
@@ -1101,13 +1101,13 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
         The enum rules are the second pair the wrapper hides, and their
         suggestion names a real member of the enum.
         """
-        from django_graphex.security import _SUGGESTION_RE
+        from django_graphex.security import _strip_suggestion
 
         message = (
             "Variable '$status' got invalid value 'DRAFTT'; "
             "Value 'DRAFTT' does not exist in 'Status' enum. Did you mean 'DRAFT'?"
         )
-        self.assertNotIn("Did you mean", _SUGGESTION_RE.sub(r"\1", message))
+        self.assertNotIn("Did you mean", _strip_suggestion(message))
 
     def test_the_wrapper_does_not_widen_the_strip(self) -> None:
         """Keep a wrapped message whose rule is not one that leaks a schema name.
@@ -1116,13 +1116,13 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
         through, not turn the pattern into a match on any message that happens
         to carry one.
         """
-        from django_graphex.security import _SUGGESTION_RE
+        from django_graphex.security import _strip_suggestion
 
         message = (
             "Variable '$x' got invalid value 1; "
             "Did you mean to call this from a staff account?"
         )
-        self.assertEqual(_SUGGESTION_RE.sub(r"\1", message), message)
+        self.assertEqual(_strip_suggestion(message), message)
 
     def test_an_enum_cannot_represent_suggestion_is_stripped(self) -> None:
         """Strip the suggestion from the OTHER pair of enum coercion messages.
@@ -1138,7 +1138,7 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
         "_SCHEMA_ORACLE_PREFIXES"; deleting that entry today changes no other
         test in the suite.
         """
-        from django_graphex.security import _SUGGESTION_RE
+        from django_graphex.security import _strip_suggestion
 
         # Verbatim from graphql-core: GraphQLEnumType.parse_literal on a string
         # literal where an enum member was expected.
@@ -1147,7 +1147,7 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
             "Did you mean the enum value 'DRAFT'?"
         )
         self.assertEqual(
-            _SUGGESTION_RE.sub(r"\1", literal),
+            _strip_suggestion(literal),
             "Enum 'Status' cannot represent non-enum value: \"DRAFT\".",
         )
 
@@ -1157,7 +1157,7 @@ class SuggestionStripReachesTheVariablePathTest(TestCase):
             "Enum 'Status' cannot represent non-string value: 42. "
             "Did you mean the enum value 'DRAFT'?"
         )
-        stripped = _SUGGESTION_RE.sub(r"\1", wrapped)
+        stripped = _strip_suggestion(wrapped)
         self.assertNotIn("Did you mean", stripped)
         self.assertIn("cannot represent non-string value: 42.", stripped)
 

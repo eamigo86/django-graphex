@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from typing import TYPE_CHECKING, Any, Callable
 
 from graphql import GraphQLError
@@ -45,8 +46,12 @@ _SCHEMA_ORACLE_PREFIXES = (
     r"Field '[^']*' is not defined by type '[^']*'\.",
     # GraphQLEnumType.parse_value / parse_literal - suggest enum members.
     r"Value '[^']*' does not exist in '[^']*' enum\.",
-    r"Enum '[^']*' cannot represent non-(?:string|enum) value: .*?",
 )
+
+#: The one rule whose message continues with free text after its fixed head
+#: (the offending value), so its end is not fixed: the suggestion may start at
+#: any later whitespace on the same line.
+_ENUM_VALUE_PREFIX = r"Enum '[^']*' cannot represent non-(?:string|enum) value: "
 
 #: The coercion wrapper "coerce_variable_values" puts in FRONT of a rule's own
 #: message when the bad value arrived through a variable rather than inline:
@@ -54,21 +59,87 @@ _SCHEMA_ORACLE_PREFIXES = (
 #: type 'UserInput'. Did you mean 'name'?". Anchoring the rule prefixes at the
 #: start of the string made the strip a no-op on that whole path, which is where
 #: two of the prefixes above are reached in practice.
-_COERCION_WRAPPER = r"(?:Variable '\$[^']*' got invalid value .*?; )?"
+_COERCION_WRAPPER = r"Variable '\$[^']*' got invalid value "
 
-#: The schema-derived suggestion sentence, and only that. Anchored at BOTH ends:
-#: at the start on the rules above (behind the optional coercion wrapper), and at
-#: the end because "did_you_mean" is concatenated last and nothing is ever
-#: written after it - so prose following the sentence proves the message did not
-#: come from these rules. Group 1 spans everything before the suggestion, so the
-#: substitution keeps the wrapper and the rule's own message intact.
-_SUGGESTION_RE = re.compile(
-    "^("
-    + _COERCION_WRAPPER
-    + "(?:"
-    + "|".join(_SCHEMA_ORACLE_PREFIXES)
-    + r"))\s+Did you mean .*\?$"
-)
+_SUGGESTION_START = "Did you mean "
+_FIXED_RULES = re.compile("(?:" + "|".join(_SCHEMA_ORACLE_PREFIXES) + ")")
+_ENUM_RULE = re.compile(_ENUM_VALUE_PREFIX)
+_WRAPPER_HEAD = re.compile(_COERCION_WRAPPER)
+
+
+def _strip_suggestion(message: str) -> str:
+    """Remove the schema-derived "Did you mean ...?" sentence from a message.
+
+    The sentence is removed only when the message is one of the rules in
+    "_SCHEMA_ORACLE_PREFIXES" (optionally behind the coercion wrapper) and the
+    suggestion is its final sentence: anchored at BOTH ends, so prose after the
+    sentence proves the message did not come from those rules. The earliest
+    suggestion wins, so a client-controlled value that contains another
+    "Did you mean" never leaves one behind.
+
+    This is a scan, not a regex: the lazy "anything up to the suggestion" the
+    rules need made the pattern quadratic in the message length. Every step here
+    is linear.
+
+    Args:
+        message: The error message.
+
+    Returns:
+        The message without its suggestion sentence, or unchanged when it does
+        not end with one that a schema rule produced.
+    """
+    # "$" in the old pattern matched at the very end or before one final newline.
+    end = len(message) - 1 if message.endswith("\n") else len(message)
+    if end < 2 or message[end - 1] != "?":
+        return message
+    # "." never crosses a newline, so the sentence lies on the final line.
+    line_start = message.rfind("\n", 0, end - 1) + 1
+    # Each suggestion start that follows whitespace: (start of the whitespace
+    # run, start of the sentence). The strip may begin anywhere in the run.
+    runs: list[tuple[int, int]] = []
+    pos = line_start
+    while (j := message.find(_SUGGESTION_START, pos, end - 1)) >= 0:
+        pos = j + 1
+        if j and message[j - 1].isspace():
+            run = j - 1
+            while run and message[run - 1].isspace():
+                run -= 1
+            runs.append((run, j))
+    if not runs:
+        return message
+    starts = [j for _, j in runs]
+
+    def cut(prefix_end: int, open_ended: bool) -> int | None:
+        """Return where the strip starts for a rule prefix ending here, if any."""
+        k = bisect_left(starts, prefix_end + 1)
+        if k == len(starts):
+            return None
+        at = max(runs[k][0], prefix_end)
+        if open_ended:
+            newline = message.find("\n", prefix_end)
+            return at if newline < 0 or at <= newline else None
+        return at if at == prefix_end else None
+
+    def try_rule(at: int) -> int | None:
+        if match := _FIXED_RULES.match(message, at):
+            return cut(match.end(), False)
+        if match := _ENUM_RULE.match(message, at):
+            return cut(match.end(), True)
+        return None
+
+    # The wrapper is tried first, and lazily: its text runs to a "; " and, like
+    # the old "." , cannot span a newline. The bare rule is the fallback.
+    if head := _WRAPPER_HEAD.match(message):
+        newline = message.find("\n", head.end())
+        k = head.end()
+        while (k := message.find("; ", k)) >= 0:
+            if 0 <= newline < k + 1:
+                break
+            if (found := try_rule(k + 2)) is not None:
+                return message[:found] + message[end:]
+            k += 1
+    found = try_rule(0)
+    return message if found is None else message[:found] + message[end:]
 
 
 class DisableIntrospectionMiddleware:
@@ -294,5 +365,5 @@ def format_graphql_error(error: Any, middleware: Any = None) -> dict:
     if not introspection_disabled(middleware):
         return formatted
     # Group 1 is the rule's own message, so the result is never empty.
-    formatted["message"] = _SUGGESTION_RE.sub(r"\1", str(formatted.get("message", "")))
+    formatted["message"] = _strip_suggestion(str(formatted.get("message", "")))
     return formatted

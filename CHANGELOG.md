@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fix: the schema-suggestion strip in error formatting runs in linear time.
+  `format_graphql_error` removed the "Did you mean ...?" sentence with a regex
+  whose cost grew with the square of the message length (2.5 s for 224 KB). It
+  is now a linear scan with the same results.
+
 - Fix: the request body cap now runs before Django's CSRF check. A multipart
   POST carrying a `csrftoken` cookie was parsed (and its files spooled to disk)
   by that check before `MAX_REQUEST_BODY_SIZE` could answer 413. `dispatch` now
