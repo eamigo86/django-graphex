@@ -283,6 +283,14 @@ class Registry:
         """
         return self._types.get((model, for_input))
 
+    def output_types(self) -> list[Any]:
+        """Return every registered model output type.
+
+        Returns:
+            The output (non-input) types, one per registered model.
+        """
+        return [cls for (_, for_input), cls in self._types.items() if for_input is None]
+
     # -- polymorphic (union / interface) types ----------------------------- #
     def register_polymorphic(self, cls: Any) -> None:
         """Register a DjangoUnionType or DjangoInterfaceType by its name.

@@ -1481,7 +1481,13 @@ still builds, but the field is not a union.
 In a [permission-pruned schema](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution),
 the flat fallback retains its SDL but returns `null` for a target lacking the
 actual model's read permission or excluded by its registered row hook. This
-does not change explicitly typed unions or ordinary unpruned schemas.
+does not change ordinary unpruned schemas.
+
+A target excluded by a typed union member's registered `get_queryset` resolves
+to `null` in every schema, like a missing target. Queries optimized or listed
+through a root field scope all targets in one batched prefetch (those members
+then load full rows); a custom resolver without it costs one extra membership
+query per target whose type overrides the hook.
 
 ### `resolve_type` is mandatory (and provided)
 

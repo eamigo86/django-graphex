@@ -569,6 +569,7 @@ def _compile_gfk_union_output_fields(
         return {}
 
     from .core.polymorphic_compiler import compile_union_type
+    from .utils import gfk_target_is_visible, read_gfk_target
 
     gfk_names = {
         f.name for f in model._meta.get_fields() if isinstance(f, GenericForeignKey)
@@ -589,9 +590,13 @@ def _compile_gfk_union_output_fields(
         gql_union = compile_union_type(union_cls, registries)
 
         def _gfk_resolver(root: Any, _info: Any, *, _name: str = fk_name) -> Any:
-            if isinstance(root, dict):
-                return root.get(_name)
-            return getattr(root, _name, None)
+            # A hidden member row resolves to null, like an absent target.
+            target, scoped = read_gfk_target(root, _name)
+            if target is None or scoped or gfk_target_is_visible(target, _info):
+                return target
+            return None
+
+        _gfk_resolver._gqx_automatic_gfk = True  # type: ignore[attr-defined]
 
         out[to_camel_case(fk_name)] = GraphQLField(
             gql_union,

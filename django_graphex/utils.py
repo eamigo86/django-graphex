@@ -22,6 +22,7 @@ from django.db.models import (
     Model,
     Prefetch,
     QuerySet,
+    Subquery,
     UUIDField,
 )
 from django.db.models.base import ModelBase
@@ -3481,12 +3482,15 @@ def _merge_filtered_prefetches(
             # prefetch as already sliced. Dropping it put the page into the
             # ordinary prefetch cache, where the resolver sliced it a second
             # time and reported the page size as the total.
-            children.append(
-                Prefetch(
-                    strip(child.prefetch_through, pf.prefetch_through),
-                    queryset=child.queryset,
-                    to_attr=child.to_attr,
+            stripped = strip(child.prefetch_through, pf.prefetch_through)
+            if hasattr(child, "querysets"):
+                # A generic prefetch carries one queryset per content type.
+                children.append(
+                    type(child)(stripped, child.querysets, to_attr=child.to_attr)
                 )
+                continue
+            children.append(
+                Prefetch(stripped, queryset=child.queryset, to_attr=child.to_attr)
             )
         if children:
             pf.queryset = pf.queryset.prefetch_related(*children)
@@ -3720,6 +3724,149 @@ def _root_selection_set(field_nodes: Sequence[FieldNode]) -> SelectionSetNode | 
     )
 
 
+def _gfk_registry(info: GraphQLResolveInfo | None) -> Any:
+    """Return the request schema's model Registry.
+
+    Args:
+        info: Resolve info, or None outside GraphQL execution.
+
+    Returns:
+        The Registry bound to the executing schema, or None when unavailable.
+    """
+    extensions = getattr(getattr(info, "schema", None), "extensions", None) or {}
+    return getattr(extensions.get("gdx_registry"), "graphene", None)
+
+
+def _scoped_gfk_queryset(
+    model: type[Model], output_type: Any, info: GraphQLResolveInfo, alias: str | None
+) -> QuerySet:
+    """Apply a GenericForeignKey target type's row scope to its model.
+
+    Args:
+        model: Concrete target model.
+        output_type: Registered output type whose hook scopes the rows.
+        info: Current request's resolve information.
+        alias: Database alias to read the target from.
+
+    Returns:
+        The scoped target queryset.
+
+    Raises:
+        TypeError: If the hook returns a queryset for another model.
+    """
+    queryset = model._default_manager.db_manager(alias).all()
+    scoped = apply_object_type_get_queryset(queryset, output_type, info)
+    if scoped.model._meta.concrete_model is not model._meta.concrete_model:
+        raise TypeError(
+            f"{output_type.__name__}.get_queryset returned a queryset for "
+            f"{scoped.model.__name__}, expected {model.__name__}."
+        )
+    return scoped
+
+
+def gfk_target_is_visible(target: Any, info: GraphQLResolveInfo | None) -> bool:
+    """Report whether a GenericForeignKey target passes its type's row scope.
+
+    A target whose model has no registered output type, or whose type keeps the
+    default no-op hook, is visible without a database query.
+
+    Args:
+        target: The resolved target object.
+        info: Current request's resolve information.
+
+    Returns:
+        False only when the registered type's get_queryset excludes the row.
+    """
+    registry = _gfk_registry(info)
+    if registry is None or info is None or not isinstance(target, Model):
+        return True
+    model = type(target)
+    output_type = registry.get_type_for_model(model) or registry.get_type_for_model(
+        model._meta.concrete_model
+    )
+    if not has_object_type_queryset_override(output_type):
+        return True
+    scoped = _scoped_gfk_queryset(model, output_type, info, target._state.db)
+    return (
+        model._default_manager.db_manager(scoped.db)
+        .filter(pk=target.pk, pk__in=Subquery(scoped.values("pk")))
+        .exists()
+    )
+
+
+def read_gfk_target(root: Any, name: str) -> tuple[Any, bool]:
+    """Read a GenericForeignKey target from its owner.
+
+    Args:
+        root: Owner model or mapping.
+        name: GenericForeignKey accessor name.
+
+    Returns:
+        The target and whether it came from the row-scoped prefetch, which
+        already applied the target type's get_queryset.
+    """
+    if isinstance(root, dict):
+        return root.get(name), False
+    sentinel = object()
+    scoped = getattr(root, f"_gqx_scoped_{name}", sentinel)
+    if scoped is not sentinel:
+        return scoped, True
+    return getattr(root, name, None), False
+
+
+def _scoped_gfk_prefetch(
+    relation: Any,
+    path: str,
+    info: GraphQLResolveInfo,
+    alias: str,
+    members: set[type[Model]] | None,
+) -> Prefetch | None:
+    """Plan one batched, row-scoped read of a GenericForeignKey's targets.
+
+    Every registered output type that overrides get_queryset scopes its own
+    content type; other content types load unscoped through Django's default.
+
+    Args:
+        relation: The GenericForeignKey field.
+        path: ORM path of the field from the root model.
+        info: Current request's resolve information.
+        alias: Database alias of the parent queryset.
+        members: Models a typed union can return, or None for a flat field.
+
+    Returns:
+        A generic prefetch storing the visible target under a dedicated
+        attribute, or None when no type scopes (or the scopes cannot be batched).
+    """
+    from django.contrib.contenttypes.prefetch import GenericPrefetch
+
+    registry = _gfk_registry(info)
+    if registry is None:
+        return None
+    querysets: list[QuerySet] = []
+    seen: set[Any] = set()
+    for output_type in registry.output_types():
+        if not has_object_type_queryset_override(output_type):
+            continue
+        model = output_type._meta.model
+        if members is not None and model not in members:
+            continue
+        content_type = _content_type_or_none(
+            model, for_concrete_model=relation.for_concrete_model
+        )
+        if content_type is None:
+            continue
+        scoped = _scoped_gfk_queryset(model, output_type, info, alias)
+        # Django filters each queryset by key and forbids two per content type,
+        # so a sliced or duplicated scope resolves per row instead.
+        if content_type.pk in seen or scoped.query.is_sliced:
+            return None
+        seen.add(content_type.pk)
+        querysets.append(scoped)
+    if not querysets:
+        return None
+    return GenericPrefetch(path, querysets, to_attr=f"_gqx_scoped_{relation.name}")
+
+
 def _scoped_fk_prefetches(
     gql_type: GraphQLObjectType | None,
     model: type[Model],
@@ -3775,12 +3922,29 @@ def _scoped_fk_prefetches(
         field_def = gql_type.fields.get(node.name.value)
         if field_def is None or node.selection_set is None:
             continue
-        child = get_named_type(field_def.type)
-        if not isinstance(child, GraphQLObjectType):
-            continue
         relation = relations.get(node.name.value)
         if relation is None:
             relation = relations.get(to_snake_case(node.name.value))
+        if isinstance(relation, _generic_foreign_key_type()):
+            if getattr(field_def.resolve, "_gqx_automatic_gfk", False):
+                gfk_type = get_named_type(field_def.type)
+                members = (
+                    {
+                        _gdx_graphene_type(member)._meta.model
+                        for member in gfk_type.types
+                    }
+                    if isinstance(gfk_type, GraphQLUnionType)
+                    else None
+                )
+                gfk_prefetch = _scoped_gfk_prefetch(
+                    relation, prefix + relation.name, info, alias, members
+                )
+                if gfk_prefetch is not None:
+                    found.setdefault(prefix + relation.name, gfk_prefetch)
+            continue
+        child = get_named_type(field_def.type)
+        if not isinstance(child, GraphQLObjectType):
+            continue
         next_model = model
         next_prefix = prefix
         if relation is not None:
@@ -4161,6 +4325,14 @@ def _apply_optimizations(
                 path == scoped or path.startswith(scoped + LOOKUP_SEP)
                 for scoped in scoped_fks
             )
+        ]
+        # A scoped generic prefetch supersedes the optimizer's own lookup of
+        # the same GenericForeignKey, which would load the unscoped targets.
+        scoped_gfks = {
+            path for path, pf in scoped_fks.items() if hasattr(pf, "querysets")
+        }
+        prefetch_related = [
+            lk for lk in prefetch_related if _prefetch_through(lk) not in scoped_gfks
         ]
         filtered_prefetches.extend(scoped_fks.values())
     # A lookup whose selections disagree about their filter must not be cached

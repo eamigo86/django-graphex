@@ -14,6 +14,19 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Apply a member type's `get_queryset` to typed `GenericForeignKey` union
+  targets. A `Meta.unions` union returned the target of any member in full even
+  when that member type's hook hid the row. A hidden target now resolves to
+  `null`, like a missing one. Optimized and list reads scope the targets in one
+  batched `GenericPrefetch` per request, stored under a dedicated attribute so a
+  cached unscoped target is never trusted, so query counts do not grow with the
+  number of owners; only the union's own member models are scoped, and a member
+  with a hook loads full rows instead of the narrowed `.only()` columns. A
+  resolver without that prefetch issues one membership query per target of a
+  type that overrides the hook. A sliced hook, or two scoped members sharing a
+  content type, resolves per row instead. Types keeping the default hook are
+  unchanged.
+
 - Require a child update host to adopt an existing reverse `OneToOneField`
   orphan by ID. Naming the ID of a child whose nullable one-to-one key is null
   in a parent update re-parented and rewrote that child with no host check and
