@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: bound the total text that directives add to one response. Only a
+  per-field cap existed (`MAX_REPLACE_OUTPUT_LENGTH`), so many aliases and rows
+  each under the cap could still produce hundreds of megabytes. New setting
+  `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters per request,
+  `None` disables) charges every directive for the text it adds; once spent,
+  further directive uses become field errors. New opt-in setting
+  `COST_DIRECTIVE` (default `0`, so existing costs do not change) adds cost per
+  custom directive use so aliases x directives counts toward `MAX_QUERY_COST`.
+
 - Fix: cost analysis now reads the page-size argument by its wire name too.
   `COST_PAGINATION_ARGS` was compared literally, so the camelCase `pageSize`
   that the page paginator exposes was ignored and `items(pageSize: 5000)` was

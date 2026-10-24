@@ -36,6 +36,23 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     registered directive class. Both the schema `directives=` list **and** the
     middleware entry are required — either alone does nothing.
 
+## Limits on directive output and cost
+
+Directives can lengthen text (`@replace`, `@center`), and a client can repeat
+them across aliases and list rows. Three settings bound that:
+
+- `MAX_REPLACE_OUTPUT_LENGTH`: cap on each `@replace` result.
+- `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters): budget for the
+  text all directives add to one request. Past it, further directive uses
+  return a field error and produce no text. Applies to custom directives you
+  register as well, because the middleware charges any directive whose result
+  is longer than its input.
+- `COST_DIRECTIVE` (default `0`): cost added per directive use so they count
+  toward `MAX_QUERY_COST`.
+
+See [Settings](usage/settings.md#string-directive-output) and
+[Query limits](usage/query-limits.md#query-cost-analysis).
+
 ## Asynchronous resolvers
 
 When using graphql-core's native asynchronous execution, the middleware waits

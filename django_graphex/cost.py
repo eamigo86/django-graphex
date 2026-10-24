@@ -181,6 +181,7 @@ class _CostAnalyzer:
                     field_type = get_named_type(field_def.type)
                     has_children = selection.selection_set is not None
                     own = self._own_cost(field_type, has_children)
+                    own += self._directive_cost(selection)
                     if not has_children:
                         frame[2] += own
                         continue
@@ -264,6 +265,17 @@ class _CostAnalyzer:
                         # and must not be reused elsewhere.
                         self._spread_costs[key] = total
                 stack[-1][2] += total
+
+    @staticmethod
+    def _directive_cost(node: FieldNode) -> int:
+        """Return the configured cost of the custom directives used on a field."""
+        weight = max(int(_settings_value("COST_DIRECTIVE") or 0), 0)
+        if not weight:
+            return 0
+        used = sum(
+            1 for d in node.directives or () if d.name.value not in ("skip", "include")
+        )
+        return used * weight
 
     @staticmethod
     def _own_cost(field_type: GraphQLNamedType, has_children: bool) -> int:

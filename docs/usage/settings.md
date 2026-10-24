@@ -67,12 +67,14 @@ DJANGO_GRAPHEX = {
     "EXPOSE_QUERY_COST": False,
     "DEFAULT_LIST_MULTIPLIER": 10,
     "COST_PAGINATION_ARGS": ("limit", "page_size", "first", "last"),
+    "COST_DIRECTIVE": 0,                # cost per custom directive use (0 = free)
 
     # --- Filtering --------------------------------------------------------- #
     "COMMON_FILTER_LOOKUPS": ("exact", "in", "isnull"),
 
     # --- String directive output ------------------------------------------ #
     "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,  # Unicode characters per @replace result; None = uncapped
+    "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,  # characters directives may add per request; None = unlimited
 
     # --- File uploads (opt-in — Base64FileInput) --------------------------- #
     "MAX_UPLOAD_SIZE": None,        # Required when Base64FileInput is used
@@ -285,6 +287,7 @@ DJANGO_GRAPHEX = {
 | `EXPOSE_QUERY_COST` | `False` | Add `extensions.cost` (`requestedCost` / `maxCost`) to responses. Combine with `MAX_QUERY_COST=None` for a non-blocking observation mode. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Cost multiplier for a list field whose page size is unknown (no literal/variable value and no `MAX_PAGE_SIZE` cap). |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names treated as a real list field's page size when costing a field, compared in snake_case form (`page_size` matches `pageSize`). |
+| `COST_DIRECTIVE` | `0` | Cost added for every custom directive use (`@replace`, `@center`, ...) on a field, multiplied by the enclosing lists like any other field cost, so aliases x directives is visible to `MAX_QUERY_COST`. `0` keeps directives free (existing totals unchanged). `@skip` and `@include` are never charged. A value such as `1` or `2` is a reasonable starting point; try it with `EXPOSE_QUERY_COST` first. |
 
 See [Query Optimization](query-optimization.md) and [Security](security.md) for the depth/cost guides.
 
@@ -301,7 +304,8 @@ does **not** require `Base64FileInput` or any upload feature.
 
 | Setting | Default | Description |
 |---|---|---|
-| `MAX_REPLACE_OUTPUT_LENGTH` | `1_000_000` | Maximum **Unicode characters** in each `@replace` result, not encoded bytes or a query-wide quota. The exact Python replacement length (including empty-substring insertions and `count`) is checked **before** replacement allocation; results above the cap produce a GraphQL field error with normal null propagation. A result at the cap is allowed. Must be a positive integer; `None` restores the former uncapped behavior, which is unsafe without another output limit. Other directives are unaffected. |
+| `MAX_REPLACE_OUTPUT_LENGTH` | `1_000_000` | Maximum **Unicode characters** in each `@replace` result, not encoded bytes; the request-wide budget is `MAX_DIRECTIVE_OUTPUT_TOTAL`. The exact Python replacement length (including empty-substring insertions and `count`) is checked **before** replacement allocation; results above the cap produce a GraphQL field error with normal null propagation. A result at the cap is allowed. Must be a positive integer; `None` restores the former uncapped behavior, which is unsafe without another output limit. |
+| `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10_000_000` | Per-**request** budget, in Unicode characters, for text that directives **add**. Every custom directive is charged the amount by which its result is longer than its input, summed over all fields, aliases, rows and chained directives of the execution (a subscription event is its own execution). Once the budget is spent, each further directive use is a GraphQL field error naming this setting and produces no text; a single field can overshoot by at most its own per-field cap. Normal requests are unaffected; directives that do not lengthen the text (`@uppercase`, `@truncate`, ...) are free. Must be a positive integer; `None` removes the budget. It complements `MAX_REPLACE_OUTPUT_LENGTH`, which still bounds each `@replace` result. |
 
 ## File uploads
 

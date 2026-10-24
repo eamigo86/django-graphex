@@ -647,7 +647,7 @@ def _dynamic_limits_key() -> tuple:
     * "MAX_QUERY_DEPTH" — the depth budget.
     * "MAX_QUERY_COST" — the cost budget.
     * "MAX_PAGE_SIZE", "DEFAULT_PAGE_SIZE", "DEFAULT_LIST_MULTIPLIER",
-      "COST_PAGINATION_ARGS" — inputs to the cost estimate itself (variables are
+      "COST_PAGINATION_ARGS", "COST_DIRECTIVE" — inputs to the cost estimate itself (variables are
       unbound during validation, so page sizes come from these), which changes
       the "total" compared against "MAX_QUERY_COST".
 
@@ -663,6 +663,7 @@ def _dynamic_limits_key() -> tuple:
         graphql_api_settings.DEFAULT_PAGE_SIZE,
         graphql_api_settings.DEFAULT_LIST_MULTIPLIER,
         tuple(graphql_api_settings.COST_PAGINATION_ARGS or ()),
+        graphql_api_settings.COST_DIRECTIVE,
     )
 
 

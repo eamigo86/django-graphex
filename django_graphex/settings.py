@@ -123,6 +123,11 @@ DEFAULTS = {
     # Per-field @replace output cap in Unicode characters (not encoded bytes).
     # None restores the former uncapped behavior.
     "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,
+    # Per-request budget (Unicode characters) for text GROWN by directives, summed
+    # over every field, alias and row. None disables it.
+    "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,
+    # Cost added for each custom directive use on a field (0 = directives are free).
+    "COST_DIRECTIVE": 0,
     # Multiplier for a list field whose page size is unknown (no literal/variable
     # value and no MAX_PAGE_SIZE cap to fall back to).
     "DEFAULT_LIST_MULTIPLIER": 10,
@@ -229,6 +234,7 @@ LIMIT_MINIMUMS = {
     "MAX_QUERY_DEPTH": (1, "Use None to disable the global depth guard."),
     "MAX_QUERY_COST": (1, "Use None to disable the cost budget."),
     "MAX_REPLACE_OUTPUT_LENGTH": (1, "Use None to disable the output cap."),
+    "MAX_DIRECTIVE_OUTPUT_TOTAL": (1, "Use None to disable the output budget."),
     "OPTIMIZER_WORK_BUDGET": (1, "Use None to disable the optimizer work cap."),
     "PERMISSION_SCHEMA_CACHE_MAXSIZE": (
         0,
@@ -355,7 +361,7 @@ class _BaseAPISettings:
         if attr in LIMIT_MINIMUMS:
             _validate_limit(value, attr, self.setting_name)
         if (
-            attr == "MAX_REPLACE_OUTPUT_LENGTH"
+            attr in ("MAX_REPLACE_OUTPUT_LENGTH", "MAX_DIRECTIVE_OUTPUT_TOTAL")
             and value is not None
             and (isinstance(value, bool) or not isinstance(value, int))
         ):

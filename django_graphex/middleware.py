@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Generator
 
+from graphql import GraphQLError
 from graphql.execution.values import get_directive_values
 from graphql.pyutils import is_awaitable
 from graphql.type.directives import GraphQLIncludeDirective, GraphQLSkipDirective
 
 from .registry import get_global_registry
+from .settings import graphql_api_settings
 
 if TYPE_CHECKING:
     from graphql import GraphQLResolveInfo
@@ -32,6 +34,42 @@ class _DirectiveAwaitable:
             An iterator yielding the resolved and transformed field value.
         """
         return self._factory().__await__()
+
+
+#: Key in the execution's coerced variable values (one dict per execution) that
+#: holds the (root value, characters grown so far) pair of the output budget.
+_BUDGET_KEY = "__graphex_directive_output__"
+
+
+def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
+    """Charge text grown by a directive against the per-request output budget.
+
+    Subscription events share their variable values but each gets its own root
+    value, so the counter restarts per event instead of accumulating forever.
+
+    Args:
+        info: The GraphQL resolve info for the field.
+        grown: Characters the directive added to the value (0 only checks).
+        directive_name: Directive name, used in the error message.
+
+    Raises:
+        GraphQLError: When the request has produced more directive text than
+            "MAX_DIRECTIVE_OUTPUT_TOTAL" allows.
+    """
+    maximum = graphql_api_settings.MAX_DIRECTIVE_OUTPUT_TOTAL
+    if maximum is None:
+        return
+    # graphql-core 3.3 wraps the per-execution dict in "VariableValues.coerced".
+    store = getattr(info.variable_values, "coerced", info.variable_values)
+    state = store.get(_BUDGET_KEY)
+    if state is None or state[0] is not info.root_value:
+        state = store[_BUDGET_KEY] = [info.root_value, 0]
+    state[1] += grown
+    if state[1] > maximum:
+        raise GraphQLError(
+            f"@{directive_name} output exceeds the request budget "
+            f"MAX_DIRECTIVE_OUTPUT_TOTAL={maximum}."
+        )
 
 
 class GraphQLDirectiveMiddleware:
@@ -110,14 +148,19 @@ class GraphQLDirectiveMiddleware:
             if directive_class is None:
                 # Standard or third-party directive not handled here.
                 continue
+            # Refuse before producing more text once the budget is spent.
+            _charge(info, 0, name)
 
             # Coerce the directive arguments once (resolves variables, applies
             # coercion and default values) instead of parsing the AST by hand.
             args = (
                 get_directive_values(directive_class, field, info.variable_values) or {}
             )
+            before = len(new_value) if isinstance(new_value, str) else 0
             new_value = directive_class.resolve(
                 new_value, args, directive, root, info, **kwargs
             )
+            if isinstance(new_value, str) and len(new_value) > before:
+                _charge(info, len(new_value) - before, name)
 
         return new_value

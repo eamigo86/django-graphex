@@ -137,6 +137,7 @@ DJANGO_GRAPHEX = {
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
 | `DEFAULT_PAGE_SIZE` | `100` | Fallback multiplier when `MAX_PAGE_SIZE` is not set; also the library's inherited page size, not a hard cap. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
+| `COST_DIRECTIVE` | `0` | Cost added per custom directive use on a field. |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. Names are compared in snake_case form, so `page_size` also matches the wire name `pageSize`. A custom `page_size_query_param` such as `per_page` must be added here. |
 
 When a list field has no pagination argument, cost analysis uses
@@ -442,10 +443,13 @@ report = analyze_cost(schema.graphql_schema, parse(query), variable_values={"fla
 # flag=True → @skip(if:$flag) skips the subtree → lower cost
 ```
 
-!!! note "Output-formatting directives do not affect cost"
+!!! note "Directives and cost"
 
-    Custom application-level directives such as `@date` and `@number` are
-    *output-formatting* directives: they transform the value of an already-fetched
-    field. They have **no effect** on whether a field is fetched, and therefore do
-    **not** affect query cost, depth limits, or the query optimizer's
-    select/prefetch/only planning.
+    Custom directives such as `@date` and `@number` transform the value of an
+    already-fetched field, so they do not change depth or the optimizer's
+    select/prefetch planning. By default they do not add cost either. Set
+    `COST_DIRECTIVE` (default `0`) to charge each custom directive use that
+    amount, multiplied by the enclosing list sizes. `@skip` and `@include` are
+    never charged. Independently of cost, `MAX_DIRECTIVE_OUTPUT_TOTAL` caps the
+    text directives may add to a whole response (see
+    [Settings](settings.md#string-directive-output)).
