@@ -119,7 +119,7 @@ Adopting an **existing unowned nullable reverse-FK child by ID** additionally
 requires a registered child host that serves update. Its existing scope and
 permissions must admit the row; a read-only or create-only host cannot
 authorize adoption. New children and already-owned child updates retain their
-previous paths. See the [orphan-adoption migration guide](mutations.md#adopting-an-existing-reverse-fk-orphan-by-id).
+previous paths. See the [orphan-adoption migration guide](mutations.md#adopting-an-existing-reverse-fk-or-reverse-onetoone-orphan-by-id).
 
 !!! note "Checks with a closed signature never see it"
     Each extra is only passed to a check that can accept it, so an `authorize`

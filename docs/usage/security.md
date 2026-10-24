@@ -400,7 +400,7 @@ globally scoped by this ID-link check. See
 Adopting an existing nullable reverse-FK orphan by ID is a **child write**, not
 an FK/M2M ID link. It requires an update-serving child host and passes that
 host's existing scope and permission checks; see
-[reverse-FK orphan adoption](mutations.md#adopting-an-existing-reverse-fk-orphan-by-id).
+[reverse-FK orphan adoption](mutations.md#adopting-an-existing-reverse-fk-or-reverse-onetoone-orphan-by-id).
 
 With [`PERMISSION_SCOPED_SCHEMA`](settings.md#security) enabled,
 `AuthenticatedGraphQLView` serves **each authenticated request a schema pruned to

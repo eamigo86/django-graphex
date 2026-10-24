@@ -326,7 +326,7 @@ create that omits it fails cleanly.
 An existing unowned nullable reverse-FK child named by ID needs a registered
 update-serving child write host before its parent may adopt it. New children
 and already-owned child updates retain their prior behavior; see the
-[orphan-adoption contract](../usage/mutations.md#adopting-an-existing-reverse-fk-orphan-by-id).
+[orphan-adoption contract](../usage/mutations.md#adopting-an-existing-reverse-fk-or-reverse-onetoone-orphan-by-id).
 
 ### Methods
 
