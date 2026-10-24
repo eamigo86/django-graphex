@@ -204,7 +204,7 @@ def test_depth_limit_far_above_the_ceiling_is_capped_without_recursion() -> None
     errors = validate(_schema(), parse(_nested_chain(1500)), [DepthLimitValidationRule])
 
     assert [e.extensions["code"] for e in errors] == ["QUERY_TOO_DEEP"]
-    assert "maximum nesting depth of 200" in errors[0].message
+    assert "maximum nesting depth of 100" in errors[0].message
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 10**9})
@@ -317,11 +317,11 @@ def test_fragment_nested_document_hits_the_structural_ceiling(
 
 @override_settings(DJANGO_GRAPHEX={})
 def test_documents_under_the_structural_ceiling_are_untouched() -> None:
-    """A 100-level fragment chain still gets a normal response without limits.
+    """A 50-level fragment chain still gets a normal response without limits.
 
     Documents under the ceiling must behave exactly as before.
     """
-    status, body = _post(_nested_chain(100))
+    status, body = _post(_nested_chain(50))
 
     assert status == 200
     assert "errors" not in body

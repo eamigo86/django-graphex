@@ -38,12 +38,14 @@ if TYPE_CHECKING:
     from graphql.validation import ValidationContext
 
 #: Hard ceiling on nested object levels, applied even when MAX_QUERY_DEPTH is
-#: None or larger. graphql-core's parser refuses inline documents at about 232
-#: levels (measured under the default recursion limit), but fragments split a
-#: deep document into shallow pieces that parse fine and then exhaust the stack
-#: in the optimizer and the executor. Staying a little below the parser's limit
-#: gives fragment-nested documents the same refusal as inline ones.
-_MAX_STRUCTURAL_DEPTH = 200
+#: None or larger. Python's stack cannot execute deeper documents: graphql-core
+#: completes each level through several nested frames, and with real (cyclic)
+#: data a request under pytest's deeper stack fails with an internal error from
+#: about 130 levels (127 ran cleanly, 130 failed); its parser gives up on
+#: inline documents at about 232. Fragments hide depth from the parser, so the
+#: rule enforces this value for them too. 100 leaves a safety margin below the
+#: measured execution failure point.
+_MAX_STRUCTURAL_DEPTH = 100
 
 __all__ = ("DepthLimitValidationRule", "run_validation")
 

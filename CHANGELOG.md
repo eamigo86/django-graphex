@@ -10,10 +10,11 @@
   validator (about 250 nested selection sets, several hundred chained
   fragments) are answered as HTTP 400 `QUERY_TOO_DEEP` instead of 500, on the
   HTTP view and the subscription transports; resolver errors are unaffected.
-  `DepthLimitValidationRule` also enforces a hard ceiling of 200 nested object
-  levels even when `MAX_QUERY_DEPTH` is unset or larger, so documents nested
-  through shallow fragments get the same 400 instead of overflowing the stack
-  in the optimizer or executor (HTTP 200 with an internal error).
+  `DepthLimitValidationRule` also enforces a hard ceiling of 100 nested object
+  levels even when `MAX_QUERY_DEPTH` is unset or larger: Python's stack cannot
+  execute deeper documents (with data, requests fail with an internal error
+  from about 130 levels), and fragments hide depth from the parser. Deeper
+  documents get HTTP 400 `QUERY_TOO_DEEP` instead of an internal error.
 
 - Bound the queryset optimizer for fragments reached through distinct relation
   paths. Memoizing by selection context only helped a fragment repeated in the

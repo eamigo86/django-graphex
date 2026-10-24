@@ -302,13 +302,15 @@ costs `1 + 1×(51 + 0) = 52`.
 ### Very deep documents
 
 Independently of `MAX_QUERY_DEPTH`, `DepthLimitValidationRule` always enforces a
-hard ceiling of 200 nested object levels (a private constant, slightly below
-the roughly 232 levels at which graphql-core's parser gives up on inline
-documents). Fragments split a deep document into shallow pieces that parse fine
-but later exhaust the stack in the optimizer and executor, so they get the same
-HTTP 400 `QUERY_TOO_DEEP` as an equally deep inline document. The ceiling also
-applies to subscriptions, which share the rule, and a larger `MAX_QUERY_DEPTH`
-cannot raise it; a smaller one still wins.
+hard ceiling of 100 nested object levels (a private constant). Python's stack
+cannot execute deeper documents: graphql-core completes each level through
+several nested frames, and with real data a request fails with an internal
+error from roughly 130 levels, while its parser only refuses inline documents
+at about 232 levels. Fragments split a deep document into shallow pieces that
+parse fine, so they get the same HTTP 400 `QUERY_TOO_DEEP` as an equally deep
+inline document. The ceiling also applies to subscriptions, which share the
+rule, and a larger `MAX_QUERY_DEPTH` cannot raise it; a smaller one still
+wins.
 
 Both rules walk the document with an explicit stack, so a long chain of
 fragments or deep inline nesting cannot exhaust the Python stack inside them.
