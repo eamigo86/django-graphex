@@ -259,8 +259,8 @@ def _plain_decimal(value: decimal.Decimal) -> str:
     # "f" keeps the stored scale but never switches to scientific notation
     # ("0E-8", "5.0E-7"), which str() does for small exponents. Past the
     # padding bound the exact scientific form is kept instead.
-    if value.is_finite():
-        _sign, digits, exponent = value.as_tuple()
+    _sign, digits, exponent = value.as_tuple()
+    if isinstance(exponent, int):  # "n", "N" or "F" for non-finite values
         padding = exponent if exponent > 0 else -exponent - len(digits)
         if padding > _DECIMAL_MAX_PLAIN_PADDING:
             return str(value)
