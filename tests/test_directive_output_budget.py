@@ -8,7 +8,9 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 from graphql import (
+    GraphQLArgument,
     GraphQLField,
+    GraphQLInt,
     GraphQLList,
     GraphQLObjectType,
     GraphQLSchema,
@@ -245,10 +247,128 @@ def test_budget_restarts_per_subscription_event() -> None:
     from django_graphex.middleware import _charge
 
     shared: dict[str, Any] = {}
+    request = SimpleNamespace()
     for _ in range(3):
-        info = SimpleNamespace(variable_values=shared, root_value={})
+        info = SimpleNamespace(variable_values=shared, root_value={}, context=request)
         _charge(info, 8, "replace")  # type: ignore[arg-type]
-    info = SimpleNamespace(variable_values=shared, root_value={})
+    info = SimpleNamespace(variable_values=shared, root_value={}, context=request)
     _charge(info, 8, "replace")  # type: ignore[arg-type]
     with pytest.raises(GraphQLError):
         _charge(info, 8, "replace")  # type: ignore[arg-type]
+
+
+def _seen_variables(info: Any) -> str:
+    """Resolve to the names of the variables the resolver can see.
+
+    Args:
+        info: The GraphQL resolve info.
+
+    Returns:
+        The sorted variable names joined by commas.
+    """
+    values = getattr(info.variable_values, "coerced", info.variable_values)
+    return ",".join(sorted(values))
+
+
+_RESOLVED = GraphQLSchema(
+    query=GraphQLObjectType(
+        "Query",
+        {
+            "text": GraphQLField(
+                GraphQLString,
+                args={"v": GraphQLArgument(GraphQLList(GraphQLInt))},
+                resolve=lambda *_args, **_kw: "abc",
+            ),
+            "keys": GraphQLField(
+                GraphQLString,
+                args={"x": GraphQLArgument(GraphQLInt)},
+                resolve=lambda _root, info, x=None: _seen_variables(info),
+            ),
+        },
+    ),
+    directives=[*specified_directives, *all_directives],
+)
+
+
+def _run_resolved(query: str, variables: dict[str, Any] | None = None) -> Any:
+    """Execute against resolver-backed fields with no root value.
+
+    Args:
+        query: The GraphQL document.
+        variables: Request variables.
+
+    Returns:
+        The execution result.
+    """
+    return graphql_sync(
+        _RESOLVED,
+        query,
+        variable_values=variables,
+        middleware=[GraphQLDirectiveMiddleware()],
+    )
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 100})
+def test_client_variable_cannot_seed_the_counter() -> None:
+    """A client variable named like the old internal key must not shift the budget.
+
+    Each alias grows the text by 12 characters, so ten aliases exceed 100 even
+    when the client declares a variable carrying a hugely negative counter.
+    """
+    name = "__graphex_directive_output__"
+    body = " ".join(
+        f'a{i}: text(v: ${name}) @replace(old: "", new: "WXYZ")' for i in range(10)
+    )
+    result = _run_resolved(
+        "query($%s: [Int]) { %s }" % (name, body), {name: [None, -(10**9)]}
+    )
+    assert result.errors
+    assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in result.errors[0].message
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 1000})
+def test_resolvers_only_see_declared_variables() -> None:
+    """The budget leaves no extra entry in the variable values.
+
+    The resolver must see exactly the variables the request declared.
+    """
+    result = _run_resolved(
+        'query($x: Int) { a: text @replace(old: "", new: "WXYZ") keys(x: $x) }',
+        {"x": 1},
+    )
+    assert not result.errors
+    assert result.data["keys"] == "x"
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 100})
+def test_dict_context_budget_is_per_execution() -> None:
+    """A context that cannot take attributes still gets a fresh budget per run.
+
+    Repeated executions sharing one dict context do not accumulate.
+    """
+    body = " ".join(f'a{i}: text @replace(old: "", new: "WXYZ")' for i in range(5))
+    context: dict[str, Any] = {}
+    for _ in range(3):
+        result = graphql_sync(
+            _RESOLVED,
+            "{ %s }" % body,
+            context_value=context,
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+        assert not result.errors
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 1000})
+def test_fallback_table_stays_bounded() -> None:
+    """Executions without an attribute-capable context cannot grow memory.
+
+    The module table drops its oldest entries past a fixed size.
+    """
+    from types import SimpleNamespace
+
+    from django_graphex import middleware
+
+    for _ in range(middleware._BUDGET_TABLE_SIZE + 20):
+        info = SimpleNamespace(variable_values={}, root_value=None, context=None)
+        middleware._charge(info, 1, "replace")  # type: ignore[arg-type]
+    assert len(middleware._FALLBACK_TABLE) <= middleware._BUDGET_TABLE_SIZE

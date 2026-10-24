@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Generator
 
 from graphql import GraphQLError
@@ -36,16 +38,28 @@ class _DirectiveAwaitable:
         return self._factory().__await__()
 
 
-#: Key in the execution's coerced variable values (one dict per execution) that
-#: holds the (root value, characters grown so far) pair of the output budget.
-_BUDGET_KEY = "__graphex_directive_output__"
+#: Private attribute on the request context holding the per-execution counters.
+_BUDGET_ATTR = "_graphex_directive_output"
+
+#: Most executions tracked per table; the oldest entry is dropped beyond this.
+_BUDGET_TABLE_SIZE = 64
+
+#: Counters for contexts that cannot take attributes (a dict or None).
+_FALLBACK_TABLE: OrderedDict[tuple[int, int], list[Any]] = OrderedDict()
+
+_BUDGET_LOCK = threading.Lock()
 
 
 def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     """Charge text grown by a directive against the per-request output budget.
 
-    Subscription events share their variable values but each gets its own root
-    value, so the counter restarts per event instead of accumulating forever.
+    The counter never lives in anything the client controls. It is kept in a
+    small table on the request context (or, for a context that cannot take
+    attributes, a bounded module table) keyed by the identity of the
+    execution's variable values and root value. Entries hold both objects, so
+    an identity can only match while its execution is alive. Subscription
+    events share their variable values but each has its own root value, so the
+    counter restarts per event.
 
     Args:
         info: The GraphQL resolve info for the field.
@@ -59,13 +73,25 @@ def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     maximum = graphql_api_settings.MAX_DIRECTIVE_OUTPUT_TOTAL
     if maximum is None:
         return
-    # graphql-core 3.3 wraps the per-execution dict in "VariableValues.coerced".
-    store = getattr(info.variable_values, "coerced", info.variable_values)
-    state = store.get(_BUDGET_KEY)
-    if state is None or state[0] is not info.root_value:
-        state = store[_BUDGET_KEY] = [info.root_value, 0]
-    state[1] += grown
-    if state[1] > maximum:
+    variables, root = info.variable_values, info.root_value
+    key = (id(variables), id(root))
+    with _BUDGET_LOCK:
+        table = getattr(info.context, _BUDGET_ATTR, None)
+        if table is None:
+            table = OrderedDict()
+            try:
+                setattr(info.context, _BUDGET_ATTR, table)
+            except (AttributeError, TypeError):
+                table = _FALLBACK_TABLE
+        entry = table.get(key)
+        if entry is None or entry[0] is not variables or entry[1] is not root:
+            entry = table[key] = [variables, root, 0]
+            while len(table) > _BUDGET_TABLE_SIZE:
+                table.popitem(last=False)
+        table.move_to_end(key)
+        entry[2] += grown
+        used = entry[2]
+    if used > maximum:
         raise GraphQLError(
             f"@{directive_name} output exceeds the request budget "
             f"MAX_DIRECTIVE_OUTPUT_TOTAL={maximum}."
