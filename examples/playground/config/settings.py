@@ -180,10 +180,19 @@ DJANGO_GRAPHEX = {
     "MAX_QUERY_DEPTH": 6,
     # ---------------------------------------------------------------------------
     # Query cost analysis (CostLimitValidationRule — wired in GraphQLView).
+    # OFF by default: no budget is enforced until you set MAX_QUERY_COST.
     # Reject queries whose estimated cost exceeds the budget; report cost in
     # extensions.cost so clients can see the estimate. None = no budget.
+    #
+    # Pick the budget by measuring, not guessing. A list field with no explicit
+    # page size is charged at MAX_PAGE_SIZE (100) and costs multiply per nested
+    # list, so even { posts { results(limit: 1) { id } } } costs 201 and the
+    # README's richest example costs about 4,000,000. 10_000_000 lets every
+    # README example run and refuses three unbounded nested lists (about
+    # 100,000,000 and up); tests/test_cost_budget.py pins both. Lower it once you
+    # know what your own clients send (EXPOSE_QUERY_COST shows the number).
     # Uncomment these to see cost analysis in action:
-    #   "MAX_QUERY_COST": 200,
+    #   "MAX_QUERY_COST": 10_000_000,
     #   "EXPOSE_QUERY_COST": True,
     # ---------------------------------------------------------------------------
     # Queryset optimization (N+1 avoidance). All five default to the values shown

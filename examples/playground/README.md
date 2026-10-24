@@ -289,10 +289,10 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `SubscriptionClientView` | ✅ | `/graphql/client/` |
 | **Query depth / cost limiting** | | |
 | `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_depth = 4` activates per-type enforcement |
-| `CostLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.complexity = 2`; enable budget via `MAX_QUERY_COST` |
-| `analyze_cost` / `CostReport` | ✅ | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
+| `CostLimitValidationRule` | wired, **off by default** | Wired in `GraphQLView` but enforces nothing until `MAX_QUERY_COST` is set (commented in `config/settings.py`); `PostType.Meta.complexity = 2` weights `Post` fields |
+| `analyze_cost` / `CostReport` | wired, **off by default** | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
 | `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py` (the `DJANGO_GRAPHEX` block) — the playground rejects any query nested more than 6 levels |
-| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note | Commented in `config/settings.py` — uncomment to block expensive queries and expose cost |
+| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note (off by default) | Commented in `config/settings.py` with a measured `10_000_000` budget — uncomment to block expensive queries and expose cost; see [Query depth and cost limits](#query-depth-and-cost-limits) |
 | **Queryset optimization** | | |
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
 | `OPTIMIZE_ONLY_FIELDS` | ✅ | Enabled by default; `.only()` column narrowing (root span + inside each `Prefetch` child) |
@@ -893,17 +893,39 @@ Both rules are wired into `GraphQLView`.
 with `"MAX_QUERY_DEPTH": 6`, so any query nested more than 6 levels deep is
 rejected immediately with a `QUERY_TOO_DEEP` error.
 
-**`MAX_QUERY_COST`** is commented out (no budget enforced). Uncomment both lines
-in `config/settings.py` to try cost analysis:
+**`MAX_QUERY_COST`** is **off by default** (the playground comments it out, so no
+budget is enforced). Pick the number by measuring: the cost model charges a list
+with no explicit page size at `MAX_PAGE_SIZE` (100) and multiplies per nested
+list. Measured with `analyze_cost` on the seeded schema:
+
+| Query | Cost |
+|---|---|
+| `{ posts { results(limit: 1) { id } } }` | 201 |
+| `{ post(id: 1) { id title author { name } comments { results(first: 5) { text } } } }` | 104 |
+| README example 1 (three paginators, nested tags and comments) | 2,162,003 |
+| README example 2(b) (`authors → posts` with filter and `category`) | 4,010,101 |
+| `{ authors { results { posts { results { comments { results { text } } } } } } }` | 10,102,010,101 |
+
+So the commonly suggested `200` blocks every list query, and the richest README
+example needs about 4 million. This playground suggests **10 million**, which
+lets every README example run while refusing three unbounded nested lists.
+Uncomment both lines in `config/settings.py` to try it; `MAX_QUERY_DEPTH` is
+already active at 6:
 
 ```python
 DJANGO_GRAPHEX = {
     ...
     # MAX_QUERY_DEPTH is already active at 6 — change or remove to adjust.
-    "MAX_QUERY_COST": 200,         # reject queries with estimated cost > 200
+    "MAX_QUERY_COST": 10_000_000,  # reject queries with estimated cost > 10M
     "EXPOSE_QUERY_COST": True,     # add extensions.cost to every response
 }
 ```
+
+Then watch `extensions.cost` (`requestedCost` / `maxCost`) on any response and
+tune the budget to what your own clients send. A rejected query answers
+`Query cost … exceeds the maximum of 10000000.` with code `QUERY_TOO_COMPLEX`.
+`tests/test_cost_budget.py` runs every query this README shows under these
+settings.
 
 `PostType` already sets `max_depth = 4` and `complexity = 2` so per-type
 enforcement is active for free. A query that nests more than 4 levels under a
