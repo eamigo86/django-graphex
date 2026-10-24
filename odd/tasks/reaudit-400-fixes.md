@@ -41,7 +41,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T13 | R2 | Docstring gate TOTAL 0 (446 test docstrings rewritten); bandit exit 0 (justified `# nosec B110` per repo convention) | D | [x] | `3a39b00`, `4106c39`, `d2b3939`; parent re-ran both gates: TOTAL 0, bandit exit 0 |
 | T14 | R7 | Automatic sync fan-out isolates each group like the async path; drop log names the qualified exception cause chain (no payload/message); manual broadcast still raises | D | [x] | `83ebcd2`; RED 2 tests; full 6849 passed |
 | T15 | R6 | SSE lease renew errors tolerated while `renewed_at + TTL - 5 s` holds (retry every 5 s), stamped at acquire; one shared Redis client per URL | D | [x] | `3747d9b`, `962fc9d`; RED behavior + sharing + first-renewal; full 6853 passed, cov 97.75 %, gates clean |
-| T16 | R8, P17 | Nested to-many AND without per-level EXISTS explosion; NOT complement consistent | D | [ ] | |
+| T16 | R8, P17 | `_flat_and` splices nested `and` (flat sibling EXISTS, same results); approved rule: `not` inside a to-many relation object = NOT EXISTS of a matching related row (scoped rows respected) | D | [x] | `7afa80c`, `be4f85b`, `038c191`; RED 10/35 + matrix f/i/k/o; full 6899 passed, cov 97.65 %; parent re-ran t_fdeep (data) and t_ident (f x,xy; i; k x,xz; o all 8) |
 | T17 | R11 | Interfaces do not change unrelated `name=` handling | D | [ ] | |
 | T18 | R12 | `Literal` values that map to reserved `__` names rejected or renamed at build | D | [ ] | |
 | T19 | P8 | Aggregate output cap / directive cost | D | [ ] | |
@@ -88,6 +88,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 1. 2026-10-24: version **4.1.0**, with the wire changes declared as bug fixes under an explicit compatibility policy in the changelog/upgrade guide. P20 (range fields, subscription DurationField) stays out: documented limitation, no wire change.
 2. 2026-10-24: T06 option **B** (fail-closed): a nested child id that does not resolve to a visible child returns the same error as a hidden one.
 3. 2026-10-24: T09 close P6: generated update/delete honor the registered output type's `get_queryset`; hidden row = same error as missing.
+4. 2026-10-24: T16 P17 full rule: any `not` inside a to-many relation object = NOT EXISTS of a related row matching its operand (Django `~Q` semantics); changes cases f, k, i, o.
 
 - T07, T08 done.
 
@@ -101,6 +102,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T14, T15 done. Left: lease calls still use the loop default executor (larger change, not needed for correctness).
 
+- T16 done. Case k under the approved rule is `x, xz` (the question text said `x, xy`; the rule, not the example, was approved).
+
 ## Next step
 
-T16 (filtering), then T17 + T18 (schema names).
+T17 + T18 (schema names).
