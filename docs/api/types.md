@@ -413,7 +413,8 @@ change.
 The exact `dict[str, int]` and `typing.Dict[str, int]` annotations compile
 to the existing raw `JSON` input scalar, preserving the same scalar identity as a bare `dict`. Unlike
 bare `dict`, it accepts only objects with string keys and plain integer
-values, without Pydantic's numeric-string or boolean coercion. Its optional,
+values, without Pydantic's numeric-string or boolean coercion. Values follow Python `int` and JSON semantics
+(there is no 32-bit GraphQL `Int` bound). Its optional,
 list, nested and default wrappers keep their existing behavior.
 
 Exact `dict[str, str]` and `typing.Dict[str, str]` fields use that same
@@ -963,6 +964,16 @@ its own `Meta.model` included) raises `ImproperlyConfigured` before it can
 replace the nested relation target; set `skip_registry = True` on the extra type
 or use separate registries and schema pairs for intentionally different public views;
 see [one public output type per model and registry](../usage/types.md#one-public-output-type-per-model-and-registry).
+
+Types generated dynamically (for example inside a function or a loop) follow
+one lifecycle rule. Re-defining a class with the same module and qualified name
+replaces its previous compile entries, so repeating one declaration does not
+grow the process-wide output list (100 redefinitions leave one entry). Each
+**distinct** generated name keeps its entry for the life of the registry (100
+distinct names leave 100 entries), because the library cannot know that a
+differently named class is abandoned. Generate types once at import time, reuse
+one name per logical type, or build the types of a short-lived schema against a
+dedicated `Registry`.
 
 ### Custom Registry
 
