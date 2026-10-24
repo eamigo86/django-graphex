@@ -28,12 +28,12 @@ EXPECTED_IDS = tuple(
     f"{prefix}{number}" for prefix, count in GROUPS for number in range(1, count + 1)
 )
 EXPECTED_COUNTS = {
-    "bounded-fixed": 51,
-    "partial": 25,
-    "contract": 9,
+    "bounded-fixed": 56,
+    "partial": 19,
+    "contract": 11,
     "recommendation": 7,
     "negative-limited": 6,
-    "decision-deferred": 2,
+    "decision-deferred": 1,
 }
 
 
@@ -113,7 +113,7 @@ def test_primary_table_preserves_exact_original_order_and_status_totals() -> Non
     assert all(row[2] and row[3] and row[4] for row in rows)
     assert all("→" in row[3] and len(row[3]) >= 25 for row in rows)
     assert all((ROOT / row[4].strip("`")).is_file() for row in rows)
-    assert "51 does not mean 51 fully closed issues" in report
+    assert "56 does not mean 56 fully closed issues" in report
     assert "not a claim that all 100 issues were fixed" in report
 
 
