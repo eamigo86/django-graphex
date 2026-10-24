@@ -31,17 +31,43 @@ logger = logging.getLogger(__name__)
 _inflight_tasks: set[asyncio.Task] = set()  # type: ignore[type-arg]
 
 
+def _error_chain(error: BaseException) -> str:
+    """Name an exception and its causes without exposing their messages.
+
+    Args:
+        error: The exception to describe.
+
+    Returns:
+        Qualified class names from the error down its cause chain, joined by
+        an arrow; builtins carry no module prefix. Messages are never included
+        because backends may embed event values in them.
+    """
+    names: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen and len(names) < 5:
+        seen.add(id(current))
+        cls = type(current)
+        names.append(
+            cls.__qualname__
+            if cls.__module__ == "builtins"
+            else f"{cls.__module__}.{cls.__qualname__}"
+        )
+        current = current.__cause__ or current.__context__
+    return " <- ".join(names)
+
+
 def _log_automatic_drop(
     model_label: str, stream: str, action: str, stage: str, error: Exception
 ) -> None:
-    """Report a dropped automatic event without logging its values or exception.
+    """Report a dropped automatic event without logging its values or message.
 
     Args:
         model_label: The model label associated with the signal binding.
         stream: The subscription stream name.
         action: The captured model action.
         stage: The notification stage that failed.
-        error: The notification error; only its class name is logged.
+        error: The notification error; only its class chain is logged.
     """
     try:
         logger.error(
@@ -51,7 +77,7 @@ def _log_automatic_drop(
             stream,
             action,
             stage,
-            type(error).__name__,
+            _error_chain(error),
         )
     except Exception:  # nosec B110 — logging must never fail the caller
         # A logging backend must not make a successful model write fail.
@@ -131,9 +157,10 @@ def _safe_group_send(
             sends only. Manual sends retain their existing done callback.
 
     Raises:
-        Exception: If synchronous group delivery fails or task scheduling
-            fails. The automatic context changes only the asynchronous done
-            callback; it does not catch synchronous delivery errors here.
+        Exception: If a manual (no automatic context) synchronous delivery
+            fails or task scheduling fails. Automatic sends log a failed
+            synchronous delivery and return, so the remaining groups of the
+            same event are still attempted.
     """
     try:
         loop = asyncio.get_running_loop()
@@ -161,7 +188,15 @@ def _safe_group_send(
             )
     else:
         # WSGI / sync path: no running loop — async_to_sync is safe here.
-        async_to_sync(channel_layer.group_send)(group_name, message)
+        if automatic_context is None:
+            async_to_sync(channel_layer.group_send)(group_name, message)
+            return
+        # Automatic fan-out: one failing group must not starve the others, same
+        # as the per-task isolation of the asynchronous path.
+        try:
+            async_to_sync(channel_layer.group_send)(group_name, message)
+        except Exception as error:
+            _log_automatic_drop(*automatic_context, "delivery", error)
 
 
 class SubscriptionBinding:

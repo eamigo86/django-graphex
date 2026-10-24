@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Isolate each channel-layer group in automatic subscription fan-out on the
+  synchronous (WSGI, Celery, management command) path. A model write sends its
+  event to up to four groups; when the first `group_send` raised, the remaining
+  groups never received the event, while the ASGI path already isolated each
+  group. Each group now fails independently on both paths. The drop log also
+  names the qualified exception class and its causes (for example
+  `redis.exceptions.ConnectionError`) instead of only the bare class name; it
+  still never includes exception messages, group names or event data.
+
 - Serialize `Decimal` output in plain positional notation. Values loaded with
   `decimal_places >= 7` were emitted through `str()` as `0E-8` or `5.0E-7`; they
   now come out as `0.00000000` and `0.00000050`. Normal values are unchanged.

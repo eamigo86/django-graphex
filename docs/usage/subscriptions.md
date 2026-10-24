@@ -69,6 +69,17 @@ A cross-process channel layer (Redis) is required when the producer (the process
 running model writes) and the subscriber processes are separate; the in-memory
 layer is fine for development.
 
+### Delivery failures
+
+Automatic model notifications are best-effort per group: an event goes to up to
+four channel-layer groups and a failure to deliver to one group never prevents
+the others, in both ASGI and synchronous (WSGI, Celery) processes. Each failure
+logs one `Automatic notification dropped` error through the
+`django_graphex.subscriptions.bindings` logger with the model, stream, action,
+stage and the exception class chain (for example
+`redis.exceptions.ConnectionError`). Exception messages, group names and event
+data are not logged. A logging failure never fails the model write.
+
 ### Close diagnostics
 
 Closing a subscription is best-effort. If closing its delivery source raises a

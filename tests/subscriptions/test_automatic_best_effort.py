@@ -525,3 +525,94 @@ def test_send_failure_keeps_committed_write_and_later_callback(
     assert later == ["continued"]
     assert any("automatic_best_effort" in record.message for record in caplog.records)
     assert secret not in caplog.text
+
+
+class _FirstGroupFailsLayer:
+    """Record delivered groups and fail only the first send."""
+
+    def __init__(self, secret: str) -> None:
+        """Remember the failure text and start with no deliveries.
+
+        Args:
+            secret: Text placed in the raised exception message.
+        """
+        self.secret = secret
+        self.sent: list[str] = []
+        self.calls = 0
+
+    async def group_send(self, group: str, message: dict[str, Any]) -> None:
+        """Fail the first call and record the others.
+
+        Args:
+            group: Destination group.
+            message: Notification envelope.
+
+        Raises:
+            RuntimeError: On the first call only.
+        """
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError(self.secret)
+        self.sent.append(group)
+
+
+def test_sync_fanout_isolates_failing_group(
+    binding: SubscriptionBinding,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing first group must not stop delivery to the remaining groups.
+
+    Args:
+        binding: The registered automatic notification binding.
+        monkeypatch: Installs the failing channel layer.
+        caplog: Captures the diagnostic for the failed group.
+
+    Raises:
+        AssertionError: If later groups are skipped or the log lacks detail.
+    """
+    from django_graphex.subscriptions import bindings
+
+    layer = _FirstGroupFailsLayer("secret-redis-detail")
+    monkeypatch.setattr(bindings, "get_channel_layer", lambda: layer)
+    binding._broadcast_snapshot("create", 5, {"k": "v"}, {"id": 5, "text": "x"})
+
+    assert layer.calls == 4
+    assert len(layer.sent) == 3
+    assert caplog.text.count("Automatic notification dropped") == 1
+    assert "stage=delivery" in caplog.text
+    assert "exception=RuntimeError" in caplog.text
+    assert "secret-redis-detail" not in caplog.text
+
+
+def test_manual_sync_send_still_raises() -> None:
+    """A manual synchronous send keeps propagating its delivery error.
+
+    Raises:
+        AssertionError: If the manual error is swallowed.
+    """
+    with pytest.raises(RuntimeError, match="manual-boom"):
+        _safe_group_send(_FirstGroupFailsLayer("manual-boom"), "g", {"type": "t"})
+
+
+def test_drop_log_names_cause_chain(caplog: pytest.LogCaptureFixture) -> None:
+    """The drop log names the qualified error class and its cause.
+
+    Args:
+        caplog: Captures the drop diagnostic.
+
+    Raises:
+        AssertionError: If the chain is missing or the message leaks.
+    """
+    from django_graphex.subscriptions.bindings import _log_automatic_drop
+
+    try:
+        try:
+            raise ConnectionError("secret-low-level")
+        except ConnectionError as low:
+            raise LookupError("secret-high-level") from low
+    except LookupError as error:
+        _log_automatic_drop("tests.HookModel", "s", "create", "delivery", error)
+
+    assert "exception=LookupError <- ConnectionError" in caplog.text
+    assert "secret" not in caplog.text
