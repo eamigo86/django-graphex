@@ -45,16 +45,16 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T17 | R11 | Only fields declared by an interface use the explicit `name=`; other fields keep their no-interface naming | D | [x] | `1625f3b`; RED non-interface name changed |
 | T18 | R12 | `Literal["__x"]` rejected at build (`ImproperlyConfigured`); Django choice values with `__` prefix fall back to the label/`A_` cascade | D | [x] | `2508127`; RED 2 tests; full 6902 passed, cov 97.65 %, gates clean |
 | T19 | P8 | New `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 chars per execution) charged by the directive middleware for grown text, state kept on the request context (never in variables); opt-in `COST_DIRECTIVE` (default 0) | D | [x] | `352caac`, `bbafd7d`; RED settings/cost + variable-injection bypass; full 6929 passed, cov 97.66 % |
-| T20 | P10 | Mutation `only_fields`/`exclude_fields` validated like object types | D | [ ] | |
+| T20 | P10 | A3 selector validation on every write host (DjangoModelMutation, DjangoModelType, DjangoListObjectType, DjangoInputObjectType) | D | [x] | `6a4873f`; RED 13/25; parent re-ran test_a3b: typo/bare rejected |
 | T21 | P11 | Pagination args matched in snake_case (pageSize = page_size); custom names via `COST_PAGINATION_ARGS` documented | D | [x] | `ea2e4ca`; RED 101 > 5000 |
 | T22 | P12 | Strict cursor coercion once per request; in-memory and DB paths both answer "Invalid cursor" (non-finite values refused on both) | D | [x] | `89715ae`; RED 16/27; parent re-ran t_pg4: all Invalid cursor |
 | T23 | P13 | Body cap runs in `dispatch` before `@ensure_csrf_cookie` (moved to an inner method); auth-before-cap precedence kept | D | [x] | `2b5c99b`; RED parse calls 1 != 0 with cookie |
-| T24 | P14 | Remaining runtime `assert`s replaced by explicit errors | D | [ ] | |
+| T24 | P14 | All 18 runtime asserts replaced (ImproperlyConfigured / explicit errors); B101 skip removed from bandit; `-O` subprocess test | D | [x] | `39e343d`; RED 10/10; parent ran lc2 with -O: rejected; 0 asserts left |
 | T25 | P15 | `_SUGGESTION_RE` replaced by linear `_strip_suggestion`; old regex kept as test oracle (4000 random + 22 samples equal) | D | [x] | `97461e2`; RED 2.55 s |
 | T26 | P16 | Subscription snapshot int vs Float/Decimal filter values match | D | [ ] | |
-| T27 | P19 | `cached_property` and `__getattr__` AttributeError not turned into null | D | [ ] | |
+| T27 | P19 | AttributeError raised inside any class descriptor (cached_property x2, custom `__get__`) surfaces; `__getattr__` classes documented | D | [x] | `4c6b537`; RED 3/6 |
 | T28 | P20 | Not changed (user chose 4.1.0): document range fields and subscription DurationField mapping as a known limitation | D | [ ] | |
-| T29 | P21 | Mutable literal defaults not shared between requests | D | [ ] | |
+| T29 | P21 | Mutable input-field and argument defaults deep-copied per execution (immutables untouched) | D | [x] | `9fb321d`; RED 3 behavior tests; parent re-ran test_a7b: pristine per request; full 7093 passed, cov 97.60 % |
 | T30 | P22 | Base64 decoded-size estimate subtracts `=` padding; same byte limit as multipart | D | [x] | `3ebc835`; RED 12 > 10 at the limit; full 6938 passed, cov 97.67 %, gates clean |
 | T31 | P23 | Decimal scalar rejects NaN/sNaN/Infinity at coercion (Float/Int/BigInt/Date already did); mutation inputs now get a coercion error like BigInt (4.0.0 Float did the same) | D | [x] | `33862e8`; RED 16/68; full 7033 passed, cov 97.61 % |
 | T32 | Residual partials (A1, A2, A10, M-D6, M-D10, M-F3, SD6, Q8, others) | Fix compatible residuals; list incompatible ones for approval | D | [ ] | |
@@ -89,6 +89,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 2. 2026-10-24: T06 option **B** (fail-closed): a nested child id that does not resolve to a visible child returns the same error as a hidden one.
 3. 2026-10-24: T09 close P6: generated update/delete honor the registered output type's `get_queryset`; hidden row = same error as missing.
 4. 2026-10-24: T16 P17 full rule: any `not` inside a to-many relation object = NOT EXISTS of a related row matching its operand (Django `~Q` semantics); changes cases f, k, i, o.
+5. 2026-10-24: T32 A10 residual: generated create/update run each written field's validators (field.validators + blank/choices/max_length), like full_clean without Model.clean() or extra validate_unique; errors as ok:false per field.
 
 - T07, T08 done.
 
@@ -112,6 +113,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T22, T31 done.
 
+- T20, T24, T27, T29 done.
+
 ## Next step
 
-T20 + T24 + T27 + T29 (type/mutation build residuals).
+T26 + T28 (subscription filters, range-field limitation).
