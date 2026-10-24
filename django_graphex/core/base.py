@@ -643,6 +643,32 @@ class _GdxOutputEntry:
 
 _gdx_output_registry: list[_GdxOutputEntry] = []
 
+
+def append_output_entry(entry: _GdxOutputEntry) -> None:
+    """Append an output entry, dropping stale entries of the same declaration.
+
+    Re-executing a schema module (reload, re-import) redefines each type with
+    the same module and qualified name. The earlier entry is stale, so it is
+    removed instead of piling up and being recompiled forever.
+
+    Args:
+        entry: the registration record to add.
+    """
+
+    def _key(e: _GdxOutputEntry) -> tuple[Any, ...]:
+        return (
+            e.cls.__module__,
+            e.cls.__qualname__,
+            e.gql_name,
+            e.model,
+            getattr(e.cls._meta, "registry", None),
+        )
+
+    key = _key(entry)
+    _gdx_output_registry[:] = [e for e in _gdx_output_registry if _key(e) != key]
+    _gdx_output_registry.append(entry)
+
+
 # ---------------------------------------------------------------------------
 # Shared output registry singleton
 # ---------------------------------------------------------------------------
@@ -945,6 +971,13 @@ class InputType(ObjectType):
         identical to before S6a.
         """
         super().__init_subclass__(**kwargs)
+        # A re-executed module redefines the same declaration: drop the stale
+        # entry so compile_all_inputs() does not see a duplicate input name.
+        _gdx_input_registry[:] = [
+            c
+            for c in _gdx_input_registry
+            if (c.__module__, c.__qualname__) != (cls.__module__, cls.__qualname__)
+        ]
         _gdx_input_registry.append(cls)
 
         # Attach an empty _meta (graphql_input_type populated by compile_all_inputs)

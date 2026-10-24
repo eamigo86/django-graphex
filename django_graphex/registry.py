@@ -15,6 +15,32 @@ if TYPE_CHECKING:
     from django.db.models import Model
 
 
+def _supersedes(cls: Any, existing: Any) -> bool:
+    """Tell whether "cls" may silently take over the slot of "existing".
+
+    True when "existing" is a library-generated placeholder (the auto output
+    type a mutation or DjangoModelType registered before the user's own type
+    was declared), or when both are the same declaration executed again
+    (same module and qualified name: reload, re-import, notebook re-run).
+
+    Args:
+        cls: the incoming output type.
+        existing: the output type currently registered for the same model.
+
+    Returns:
+        True if "cls" replaces "existing" without error.
+    """
+    if (existing.__module__, existing.__qualname__) == (
+        "django_graphex.base_types",
+        "GenericType",
+    ):
+        return True
+    return (cls.__module__, cls.__qualname__) == (
+        existing.__module__,
+        existing.__qualname__,
+    )
+
+
 class Registry:
     """Custom registry for DjangoObjectType and DjangoInputObjectType.
 
@@ -208,18 +234,40 @@ class Registry:
             key = (cls._meta.model, for_input)
             if for_input is None and issubclass(cls, DjangoObjectType):
                 existing = self._types.get(key)
-                if existing is not None and existing is not cls:
+                if (
+                    existing is not None
+                    and existing is not cls
+                    and not _supersedes(cls, existing)
+                ):
                     raise ImproperlyConfigured(
                         "Model {model} already has public output type {existing} "
                         "in this Registry; cannot register distinct type "
-                        "{candidate}. Use a separate Registry for a distinct "
-                        "public schema.".format(
+                        "{candidate}. Set skip_registry = True on the extra "
+                        "type (it stays usable as an explicit field type) or "
+                        "use a separate Registry for a distinct public "
+                        "schema.".format(
                             model=cls._meta.model.__name__,
                             existing=existing.__name__,
                             candidate=cls.__name__,
                         )
                     )
+            if for_input is None and issubclass(cls, DjangoObjectType):
+                self._drop_stale_entry(self._types.get(key), cls)
             self._types[key] = cls
+
+    @staticmethod
+    def _drop_stale_entry(old: Any, new: Any) -> None:
+        """Forget the compile entry of a type that "new" has just replaced.
+
+        Args:
+            old: the previously registered output type, if any.
+            new: the output type taking over its slot.
+        """
+        if old is None or old is new:
+            return
+        from .core.base import _gdx_output_registry
+
+        _gdx_output_registry[:] = [e for e in _gdx_output_registry if e.cls is not old]
 
     def get_type_for_model(
         self, model: type[Model], for_input: str | None = None

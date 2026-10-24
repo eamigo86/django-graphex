@@ -641,8 +641,17 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         if not output_type:
             output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
 
+        # Resolved at schema-build time: when the output type above is a
+        # generated placeholder, a user type declared later for this model takes
+        # over its registry slot and the payload must follow it, not keep the
+        # placeholder (which would publish every column the user type hides).
+        def _payload_output_type(
+            _registry: Any = registry, _model: Any = model, _fallback: Any = output_type
+        ) -> Any:
+            return _registry.get_type_for_model(_model) or _fallback
+
         django_fields = OrderedDict(
-            {output_field_name: NativeMountedField(output_type)}
+            {output_field_name: NativeMountedField(_payload_output_type)}
         )
 
         global_arguments = {}

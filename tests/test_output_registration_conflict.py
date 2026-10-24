@@ -352,3 +352,123 @@ def test_public_and_admin_user_schemas_bind_post_user_independently() -> None:
         finally:
             with connection.schema_editor() as editor:
                 editor.delete_model(PostWithUser)
+
+
+def test_user_type_replaces_mutation_generated_placeholder() -> None:
+    """A user type declared after a mutation takes over the model slot.
+
+    The mutation auto-registers a placeholder output; the payload must then
+    resolve to the user type, so no hidden column leaks through the placeholder.
+    """
+    from django_graphex.mutation import DjangoModelMutation
+
+    local_registry = Registry()
+
+    class CreateAuthor(DjangoModelMutation):
+        class Meta:
+            model = Author
+            registry = local_registry
+            model_operations = ("create",)
+
+    placeholder = local_registry.get_type_for_model(Author)
+    assert placeholder is not None
+
+    class AuthorType(DjangoObjectType):
+        class Meta:
+            model = Author
+            registry = local_registry
+            only_fields = ("id", "name")
+
+    assert local_registry.get_type_for_model(Author) is AuthorType
+    assert all(e.cls is not placeholder for e in _gdx_output_registry)
+
+    class Query(ObjectType):
+        author = DjangoObjectField(AuthorType)
+
+    class Mutation(ObjectType):
+        create_author = CreateAuthor.CreateField()
+
+    schema = DjangoGraphQLSchema(
+        query=Query, mutation=Mutation, registries=isolated_pair(local_registry)
+    )
+    sdl = print_schema(schema.graphql_schema)
+    assert "author: AuthorType" in sdl
+    assert "AuthorGenericType" not in sdl
+    assert "bio" not in sdl.split("input AuthorCreateGenericType")[0]
+
+
+def test_redefining_the_same_declaration_replaces_the_stale_type() -> None:
+    """Re-executing a declaration (reload, re-import) is not a second type.
+
+    The stale class is replaced and its compile entry dropped, so entries do not
+    accumulate across reloads.
+    """
+    local_registry = Registry()
+
+    def declare() -> type:
+        class ReloadedAuthor(DjangoObjectType):
+            class Meta:
+                model = Author
+                registry = local_registry
+                only_fields = ("id", "name")
+
+        return ReloadedAuthor
+
+    first = declare()
+    count = len(_gdx_output_registry)
+    second = declare()
+    assert second is not first
+    assert local_registry.get_type_for_model(Author) is second
+    assert len(_gdx_output_registry) == count
+    assert all(e.cls is not first for e in _gdx_output_registry)
+
+
+def test_subclass_with_own_model_is_still_rejected_with_a_remedy() -> None:
+    """A subclass is a distinct public type, so it keeps being rejected.
+
+    The message names the supported escapes: skip_registry or a new Registry.
+
+    Raises:
+        ImproperlyConfigured: Asserted for the conflicting subclass.
+    """
+    local_registry = Registry()
+
+    class BaseAuthor(DjangoObjectType):
+        class Meta:
+            model = Author
+            registry = local_registry
+            only_fields = ("id", "name")
+
+    with pytest.raises(ImproperlyConfigured, match="skip_registry = True"):
+
+        class WiderAuthor(BaseAuthor):
+            class Meta:
+                model = Author
+                registry = local_registry
+
+    assert local_registry.get_type_for_model(Author) is BaseAuthor
+
+
+def test_redefining_a_model_free_input_keeps_one_registry_entry() -> None:
+    """A re-executed InputType declaration replaces its stale registry entry.
+
+    Otherwise the next input compile would report a duplicate GraphQL name.
+    """
+    from django_graphex.core import InputType
+    from django_graphex.core.base import _gdx_input_registry
+
+    before = list(_gdx_input_registry)
+
+    def declare() -> type:
+        class ReloadedSearch(InputType):
+            query: str
+
+        return ReloadedSearch
+
+    try:
+        first = declare()
+        second = declare()
+        assert first not in _gdx_input_registry
+        assert _gdx_input_registry.count(second) == 1
+    finally:
+        _gdx_input_registry[:] = before

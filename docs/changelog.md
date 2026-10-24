@@ -14,6 +14,16 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix import-time failures of the one-public-output-type guard. A user
+  `DjangoObjectType` declared after a mutation (or `DjangoModelType`, or list
+  type) for the same model now replaces the generated placeholder, and the
+  mutation payload resolves to the user type instead of exposing every column.
+  Re-executing the same declaration (reload, re-import, notebooks, the
+  benchmark harness) replaces the stale type instead of raising, and no longer
+  leaves stale compile entries or duplicate input names behind. Two distinct
+  user types for one model in one registry are still rejected; the error now
+  suggests `skip_registry = True` or a separate `Registry`.
+
 - Compile only direct `typing.Union[int, str]` and `int | str` input fields,
   in either member order, as a shared `IntOrString` scalar instead of `String`.
   Integer and string values retain their Python types without casts; integers

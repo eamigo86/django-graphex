@@ -1394,8 +1394,8 @@ class DjangoObjectType(NativeObjectType):
             from graphql import GraphQLObjectType
 
             from django_graphex.core.base import (
-                _gdx_output_registry,
                 _GdxOutputEntry,
+                append_output_entry,
                 is_forking,
             )
             from django_graphex.core.bridge import GdxPayload
@@ -1430,7 +1430,7 @@ class DjangoObjectType(NativeObjectType):
                 include_fields=list(include_fields) if include_fields else None,
             )
             if not _forking:
-                _gdx_output_registry.append(_entry)
+                append_output_entry(_entry)
 
             # OUTPUT registry: the source of truth for this type's relation
             # thunks. One registered public output per model is canonical
@@ -2779,8 +2779,8 @@ class DjangoListObjectType(NativeObjectType):
             from graphql import GraphQLObjectType
 
             from django_graphex.core.base import (
-                _gdx_output_registry,
                 _GdxOutputEntry,
+                append_output_entry,
                 is_forking,
             )
             from django_graphex.core.bridge import GdxPayload
@@ -2851,7 +2851,7 @@ class DjangoListObjectType(NativeObjectType):
                 complexity=complexity,
             )
             if not is_forking():
-                _gdx_output_registry.append(_list_entry)
+                append_output_entry(_list_entry)
 
             # S6b: ``_meta`` is now a MUTABLE ``NativeObjectTypeOptions`` (no
             # freeze), so this is a PLAIN assignment — matching the DjangoObjectType
