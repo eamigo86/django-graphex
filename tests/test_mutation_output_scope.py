@@ -17,7 +17,14 @@ from django_graphex.registry import get_global_registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoModelType, DjangoObjectType
 from tests._schema_isolation import isolated_default_pair, isolated_pair
-from tests.models import Author, Post
+from tests.models import Author, AuthorProfile, Post, Tag
+from tests.test_nested_sd4_orphan_scope import (  # noqa: F401
+    SD4Child,
+    SD4Parent,
+    SD4ParentType,
+    _execute,
+    child_hosts,
+)
 
 
 def _schema(
@@ -250,3 +257,175 @@ def test_default_output_type_hook_adds_no_query(host: str) -> None:
             assert _update(scoped, post.pk)["ok"] is True
 
     assert len(scoped_queries) == len(plain_queries)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("hidden_by_output", (True, False))
+def test_nested_reverse_child_update_honors_the_child_output_scope(
+    hidden_by_output: bool,
+    child_hosts: Any,  # noqa: F811
+) -> None:
+    """A child hidden by its output type cannot be rewritten through a parent.
+
+    Args:
+        hidden_by_output: Whether the child output type hides the child.
+        child_hosts: Fixture selecting the visible child hosts.
+    """
+    child_hosts()
+    parent = SD4Parent.objects.create(tenant="A", name="p")
+    own = SD4Child.objects.create(tenant="A", label="secret-own", parent=parent)
+    with isolated_default_pair():
+
+        class ScopedChild(DjangoObjectType):
+            """Publish the child unless its label starts with secret."""
+
+            class Meta:
+                """Bind the public child node."""
+
+                model = SD4Child
+
+            @classmethod
+            def get_queryset(cls, queryset: QuerySet, info: Any) -> QuerySet:
+                """Hide secret children when asked to.
+
+                Args:
+                    queryset: The unscoped child queryset.
+                    info: The request resolve info.
+
+                Returns:
+                    Children allowed for this request.
+                """
+                if hidden_by_output:
+                    return queryset.exclude(label__startswith="secret")
+                return queryset
+
+        result = _execute(
+            SD4ParentType,
+            {"id": str(parent.pk), "children": [{"id": str(own.pk), "label": "x"}]},
+        )
+
+    payload = result.data["updateParent"]
+    own.refresh_from_db()
+    if hidden_by_output:
+        assert payload["ok"] is False
+        assert payload["errors"] == [
+            {
+                "field": "children.id",
+                "messages": [f"SD4Child with id {own.pk} does not exist."],
+            }
+        ]
+        assert own.label == "secret-own"
+    else:
+        assert payload["ok"] is True, payload
+        assert own.label == "x"
+
+
+@pytest.mark.django_db
+def test_nested_m2m_linked_child_update_honors_the_child_output_scope() -> None:
+    """A linked tag hidden by its output type cannot be rewritten by data.
+
+    The tag keeps its label.
+    """
+    author = Author.objects.create(name="a")
+    post = Post.objects.create(title="p", body="", author=author)
+    tag = Tag.objects.create(label="hidden-tag")
+    post.tags.add(tag)
+    with isolated_default_pair():
+
+        class ScopedTag(DjangoObjectType):
+            """Hide tags whose label starts with hidden."""
+
+            class Meta:
+                """Bind the public tag node."""
+
+                model = Tag
+
+            @classmethod
+            def get_queryset(cls, queryset: QuerySet, info: Any) -> QuerySet:
+                """Hide hidden tags.
+
+                Args:
+                    queryset: The unscoped tag queryset.
+                    info: The request resolve info.
+
+                Returns:
+                    Visible tags.
+                """
+                return queryset.exclude(label__startswith="hidden")
+
+        class PostCRUD(DjangoModelMutation):
+            """Expose a post update with nested tags."""
+
+            class Meta:
+                """Bind the post and its tags."""
+
+                model = Post
+                nested_fields = {"tags": Tag}
+
+        _c, _d, update = PostCRUD.MutationFields()
+
+        class Query(ObjectType):
+            """Provide the required query root."""
+
+            ready = BooleanField()
+
+        class Mutation(ObjectType):
+            """Expose the update root."""
+
+            post_update = update
+
+        schema = DjangoGraphQLSchema(
+            query=Query,
+            mutation=Mutation,
+            registries=isolated_pair(get_global_registry()),
+        )
+        payload = _run(
+            schema,
+            f'mutation {{ postUpdate(newPost: {{id: "{post.pk}", '
+            f'tags: [{{id: "{tag.pk}", label: "pwned"}}]}}) '
+            "{ ok errors { field messages } } }",
+        )
+
+    assert payload["ok"] is False
+    assert payload["errors"] == [
+        {"field": "tags.id", "messages": [f"Tag with id {tag.pk} does not exist."]}
+    ]
+    tag.refresh_from_db()
+    assert tag.label == "hidden-tag"
+
+
+@pytest.mark.django_db
+def test_nested_forward_update_with_data_is_scoped_but_id_only_is_not() -> None:
+    """Writing fields of a hidden current target fails; an id-only re-send is a no-op.
+
+    The hidden author keeps its name.
+    """
+    from tests.test_destination_link_one_to_one import _profile_schema
+
+    author = Author.objects.create(name="hidden-current")
+    profile = AuthorProfile.objects.create(author=author, bio="original")
+    with isolated_default_pair():
+        schema = _profile_schema(nested=True)
+        with_data = _run(
+            schema,
+            f'mutation {{ profileUpdate(newAuthorprofile: {{id: "{profile.pk}", '
+            f'author: {{id: "{author.pk}", name: "pwned"}}}}) '
+            "{ ok errors { field messages } } }",
+        )
+        id_only = _run(
+            schema,
+            f'mutation {{ profileUpdate(newAuthorprofile: {{id: "{profile.pk}", '
+            f'bio: "edited", author: {{id: "{author.pk}"}}}}) '
+            "{ ok errors { field messages } } }",
+        )
+
+    assert with_data["ok"] is False
+    assert with_data["errors"] == [
+        {
+            "field": "author.id",
+            "messages": [f"Author with id {author.pk} does not exist."],
+        }
+    ]
+    assert id_only["ok"] is True, id_only
+    author.refresh_from_db()
+    assert author.name == "hidden-current"

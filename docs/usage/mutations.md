@@ -261,8 +261,13 @@ schema registers a `DjangoObjectType` for the model that overrides
 scope and the output type scope are intersected in a single query. A row the
 output type hides on reads can therefore no longer be edited or deleted by id;
 it answers exactly like a missing one. An output type that keeps the default
-hook, or a model with no registered output type, adds no query. Nested child
-updates by id keep their own host-scope rule and are not affected.
+hook, or a model with no registered output type, adds no query. The same rule
+applies to a nested child payload that writes fields of an existing child
+(reverse `ForeignKey`, reverse `OneToOneField`, many-to-many, or a forward
+relation carrying the current target's `id` plus field data): the child's
+output type scope is intersected with the child host scope, and a hidden child
+answers like a missing one. An `id`-only re-send of a forward relation's
+current target writes nothing and is not re-scoped.
 
 #### Permissions are `DjangoModelType`-only
 

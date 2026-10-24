@@ -48,6 +48,7 @@ from .utils import (
     apply_object_type_get_queryset,
     get_Object_or_None,
     not_found_error,
+    scope_to_output_type,
 )
 
 if TYPE_CHECKING:
@@ -573,8 +574,17 @@ class NestedFieldsMixin:
                         if item_pk is not None and str(item_pk) != str(current_pk):
                             data[field] = item_pk  # link only, no child write
                             continue
+                        # An id-only re-send of the current target writes
+                        # nothing, so the output scope applies only when the
+                        # payload carries field data.
+                        writes = set(item) - {child_model._meta.pk.name, "id"}
                         child = cls._persist_child(
-                            field, child_model, item, info, **route_kwargs
+                            field,
+                            child_model,
+                            item,
+                            info,
+                            output_scope=bool(writes),
+                            **route_kwargs,
                         )
                         data[field] = child.pk
                     else:
@@ -1039,6 +1049,7 @@ class NestedFieldsMixin:
         pk: Any,
         info: GraphQLResolveInfo,
         using: str | None = None,
+        output_scope: bool = True,
     ) -> None:
         """Refuse a nested pk the child's own write hosts cannot see.
 
@@ -1063,9 +1074,14 @@ class NestedFieldsMixin:
             pk: The primary key named by the nested payload.
             info: GraphQL resolve info for the current request.
             using: Selected alias for the native nested child scope lookup.
+            output_scope: Whether the child's registered output type must also
+                expose the row (intersected with the host scope). False only
+                for an id-only re-send of a forward relation's current target,
+                which writes nothing.
 
         Raises:
-            _NestedError: If any host serving "update" hides the row.
+            _NestedError: If any host serving "update", or the child's registered
+                output type when "output_scope" is set, hides the row.
         """
         for host in hosts_serving(cls._meta.registry, model, "update"):
             manager = (
@@ -1075,6 +1091,17 @@ class NestedFieldsMixin:
             )
             scoped = host.get_queryset(manager, info)
             if get_Object_or_None(scoped, pk=pk) is None:
+                raise _NestedError(
+                    cls._prefix_errors(field, not_found_error(model, pk))
+                )
+        if output_scope:
+            base = (
+                model._default_manager.db_manager(using).all()
+                if using
+                else model._default_manager.all()
+            )
+            scoped = scope_to_output_type(base, info)
+            if scoped is not base and get_Object_or_None(scoped, pk=pk) is None:
                 raise _NestedError(
                     cls._prefix_errors(field, not_found_error(model, pk))
                 )
@@ -1090,6 +1117,7 @@ class NestedFieldsMixin:
         instance: Model | None = _UNRESOLVED,
         scope_checked: bool = False,
         using: str | None = None,
+        output_scope: bool = True,
     ) -> Model:
         """Upsert a single nested child, raising on validation failure.
 
@@ -1126,6 +1154,8 @@ class NestedFieldsMixin:
                 WITHOUT checking its scope leaves this False and the check runs
                 here, which is why the many-to-many branch does exactly that.
             using: Selected alias for the native child lookup and save.
+            output_scope: Whether the child's output type scope applies to an
+                existing row; False for an id-only forward re-send.
 
         Returns:
             The saved child instance.
@@ -1162,6 +1192,7 @@ class NestedFieldsMixin:
                 model,
                 pk,
                 info,
+                output_scope=output_scope,
                 **({"using": using} if using is not None else {}),
             )
 
