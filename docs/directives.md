@@ -340,7 +340,7 @@ Format numeric values with precision and style:
 !!! warning "`@number` and `@currency` only format `String` fields"
 
     Both produce a formatted **string**, which a field typed `Int` or `Float`
-    cannot serialize. On those fields the raw value is returned unchanged and
+    cannot serialize. The `Decimal` and `BigInt` scalars reject it as well. On those fields the raw value is returned unchanged and
     the formatting is skipped, so the response stays valid instead of nulling
     the field with an opaque coercion error. Expose the value as a `String`
     field when you want the formatting to apply. The format-spec
@@ -629,6 +629,18 @@ Perform mathematical operations on numbers:
     applies to numeric strings such as `"nan"` and `"inf"`. Finite values,
     including negative zero, retain their existing rounding behavior. This
     rule applies only to `@floor`, not to the other math directives.
+
+!!! note "Decimal and BigInt fields"
+
+    On `DecimalField` (`Decimal` scalar) and `BigIntegerField` (`BigInt`
+    scalar) the math directives compute on the exact value, never on a `float`.
+    `@floor` and `@ceil` return a whole number, `@abs` keeps the scale, and
+    `@round` rounds half to even on the exact decimal digits (so `2.665` with
+    `precision: 2` is `2.66`). A precision beyond the stored scale leaves the
+    value unchanged. Results come back in the scalar's own string format.
+    `@number` and `@currency` cannot produce text these scalars accept, so, as
+    on `Int` and `Float` fields, they return the raw value unchanged; use a
+    `String` field to format.
 
 ## Combining Directives
 

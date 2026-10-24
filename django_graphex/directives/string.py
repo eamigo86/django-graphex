@@ -25,6 +25,7 @@ from graphql import (
 from django_graphex._strconv import to_camel_case, to_snake_case
 from django_graphex.settings import graphql_api_settings
 
+from ..core.scalars import GdxBigInt, GdxDecimal
 from ..utils import to_kebab_case
 from .base import BaseExtraGraphQLDirective
 
@@ -232,19 +233,22 @@ def _serializes_string(info: GraphQLResolveInfo) -> bool:
     For non-null values, "@number" and "@currency" produce formatted strings
     on fields that can serialize them. "Int" and "Float" fields cannot
     serialize those strings: graphql-core would reject the value and null the
-    field with an opaque coercion error. Detecting those field types lets the
+    field with an opaque coercion error. The "Decimal" and "BigInt" scalars
+    reject formatted text the same way. Detecting those field types lets the
     directives return the raw numeric value instead. Null values remain null.
 
     Args:
         info: The GraphQL resolve info for the field.
 
     Returns:
-        False when the field's unwrapped return type is "Int" or "Float", True
-        otherwise (including when the return type is unknown).
+        False when the field's unwrapped return type is "Int", "Float",
+        "Decimal" or "BigInt", True otherwise (including when the return type is unknown).
     """
     return get_named_type(getattr(info, "return_type", None)) not in (
         GraphQLInt,
         GraphQLFloat,
+        GdxDecimal,
+        GdxBigInt,
     )
 
 
@@ -373,7 +377,7 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
     hostile client-supplied specs.
 
     The result is a string, so the directive only applies on fields that can
-    serialize one. On an "Int" or "Float" field the raw value is returned
+    serialize one. On an "Int", "Float", "Decimal" or "BigInt" field the raw value is returned
     unchanged instead: handing those a formatted string nulls the field with an
     opaque graphql-core coercion error. A null value remains null after the
     format spec has been validated.
@@ -456,7 +460,7 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
     prefixed by the optional "symbol" argument (defaulting to "$").
 
     The result is a string, so the directive only applies on fields that can
-    serialize one. On an "Int" or "Float" field the raw value is returned
+    serialize one. On an "Int", "Float", "Decimal" or "BigInt" field the raw value is returned
     unchanged instead: handing those a formatted string nulls the field with an
     opaque graphql-core coercion error. A null value remains null.
     """

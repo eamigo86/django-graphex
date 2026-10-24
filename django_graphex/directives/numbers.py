@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import decimal
 import math
 from typing import TYPE_CHECKING, Any
 
@@ -26,22 +27,28 @@ __all__ = (
 )
 
 
-def _to_float(value: Any, directive_name: str) -> float:
-    """Coerce *value* to float, raising GraphQLError on failure.
+def _to_float(value: Any, directive_name: str) -> float | int | decimal.Decimal:
+    """Coerce *value* to a number, raising GraphQLError on failure.
 
     Shared guard used by all numeric directives to convert implementation
-    exceptions into GraphQL errors before they reach the client.
+    exceptions into GraphQL errors before they reach the client. Finite
+    Decimal and plain int values are returned unchanged so Decimal and BigInt
+    fields keep their exactness; everything else becomes a float.
 
     Args:
         value: The field value to coerce.
         directive_name: The directive name shown in the error message (e.g. '@floor').
 
     Returns:
-        The value coerced to float.
+        The exact Decimal or int, or the value coerced to float.
 
     Raises:
         GraphQLError: When the value cannot be interpreted as a number.
     """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, decimal.Decimal) and value.is_finite():
+        return value
     try:
         return float(value)
     except (ValueError, TypeError) as exc:
@@ -72,7 +79,36 @@ def _coerce(number: Any, info: GraphQLResolveInfo) -> Any:
     Returns:
         The number as a string when the field is a "String", else as-is.
     """
-    return str(number) if _wants_string(info) else number
+    if not _wants_string(info):
+        return number
+    # Plain notation, as the Decimal scalar emits, rather than "1E+3".
+    return format(number, "f") if isinstance(number, decimal.Decimal) else str(number)
+
+
+def _round(
+    number: float | int | decimal.Decimal, precision: int
+) -> float | int | decimal.Decimal:
+    """Round half-to-even to *precision* places, exactly for int and Decimal.
+
+    Args:
+        number: The value from _to_float.
+        precision: Decimal places; zero or below rounds to a whole number.
+
+    Returns:
+        An int when precision is zero or below, otherwise a value of the input type.
+    """
+    if isinstance(number, decimal.Decimal):
+        # Past the value's own magnitude the result is 0; past its scale, unchanged.
+        precision = max(precision, -(number.adjusted() + 2))
+        if precision >= -int(number.as_tuple().exponent):
+            rounded = number
+        else:
+            with decimal.localcontext() as ctx:
+                ctx.prec = len(number.as_tuple().digits) + 2
+                rounded = number.quantize(decimal.Decimal(1).scaleb(-precision))
+    else:
+        rounded = round(number, precision)
+    return int(rounded) if precision <= 0 else rounded
 
 
 class FloorGraphQLDirective(BaseExtraGraphQLDirective):
@@ -111,7 +147,7 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
         if value is None:
             return None
         number = _to_float(value, "@floor")
-        if not math.isfinite(number):
+        if isinstance(number, float) and not math.isfinite(number):
             raise GraphQLError("@floor cannot operate on a non-finite value.")
         return _coerce(math.floor(number), info)
 
@@ -197,11 +233,8 @@ class RoundGraphQLDirective(BaseExtraGraphQLDirective):
         """
         if value is None:
             return None
-        precision = args.get("precision") or 0
-        rounded = round(_to_float(value, "@round"), int(precision))
-        if precision <= 0:
-            rounded = int(rounded)
-        return _coerce(rounded, info)
+        precision = int(args.get("precision") or 0)
+        return _coerce(_round(_to_float(value, "@round"), precision), info)
 
 
 class AbsGraphQLDirective(BaseExtraGraphQLDirective):
@@ -236,4 +269,8 @@ class AbsGraphQLDirective(BaseExtraGraphQLDirective):
         """
         if value is None:
             return None
-        return _coerce(abs(_to_float(value, "@abs")), info)
+        number = _to_float(value, "@abs")
+        # copy_abs: abs(Decimal) would round to the 28-digit context precision.
+        if isinstance(number, decimal.Decimal):
+            return _coerce(number.copy_abs(), info)
+        return _coerce(abs(number), info)

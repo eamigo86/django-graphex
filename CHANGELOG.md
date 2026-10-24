@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Make the numeric directives work on `Decimal` and `BigInt` fields. `@round`,
+  `@floor`, `@ceil` and `@abs` converted the value to `float`, so `@round` on a
+  `Decimal` returned the binary expansion of the float
+  (`12.3499999999999996...`) and `@abs` on a `BigInt` returned null with a
+  coercion error. They now compute on the exact `Decimal` or `int` (`@round`
+  rounds half to even), and `@number`/`@currency` return the raw value on these
+  scalar types, as they already did on `Int` and `Float`.
+
 - Isolate batch items from each other and answer every item. With
   `ATOMIC_REQUESTS`, any error in one item of a batched request marked the whole
   request transaction for rollback: the first item answered 200 with `ok: true`
