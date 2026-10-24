@@ -693,11 +693,6 @@ class NestedFieldsMixin:
                     pairs = [(item, pk) for item, pk in pairs if str(pk) != current]
                 if is_m2m and pairs:
                     candidates = [pk for _, pk in pairs]
-                    existing = _present_values(
-                        target._default_manager.db_manager(alias),
-                        lookup_field,
-                        candidates,
-                    )
                     linked = (
                         _present_values(
                             getattr(instance, field).all(), lookup_field, candidates
@@ -705,15 +700,10 @@ class NestedFieldsMixin:
                         if instance is not None
                         else set()
                     )
-                    extra_keys = {lookup_field.name, "id"}
-                    pairs = [
-                        (item, pk)
-                        for item, pk in pairs
-                        # A missing row with child data is an actual creation,
-                        # and an already-linked row an actual child update.
-                        if not (pk not in existing and set(item) - extra_keys)
-                        and pk not in linked
-                    ]
+                    # An already-linked row is an actual child update; any other
+                    # id, missing included, must be visible (a missing id never
+                    # creates, so it answers like a hidden one).
+                    pairs = [(item, pk) for item, pk in pairs if pk not in linked]
                 ids = [pk for _, pk in pairs]
             elif is_fk and not hasattr(data[field], "keys"):
                 ids = [data[field]]
@@ -1158,6 +1148,13 @@ class NestedFieldsMixin:
                 if pk is not None
                 else None
             )
+
+        if instance is None and pk is not None:
+            # SECURITY: an id-bearing payload that resolves to no row is
+            # answered exactly like a row the child's hosts hide. Creating
+            # silently on a missing id would let a client tell hidden ids
+            # (error) from unused ones (created) -- an existence oracle.
+            raise _NestedError(cls._prefix_errors(field, not_found_error(model, pk)))
 
         if instance is not None and not scope_checked:
             cls._reject_hidden_row(

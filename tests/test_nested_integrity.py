@@ -529,11 +529,11 @@ class ReverseO2OOwnershipTest(TestCase):
         )
 
     def test_reverse_child_pk_that_does_not_exist_is_not_a_steal(self) -> None:
-        """A reverse payload naming a non-existent pk has no owner to conflict with.
+        """A reverse payload naming a non-existent pk is refused, not created.
 
-        There is no row to steal, so the guard stays out of the way and the
-        payload falls through to the create path. This test breaks if a missing
-        pk starts being treated as an ownership conflict (or the reverse).
+        There is no row to steal, but an id-bearing payload that resolves to
+        no visible child must answer like a hidden one so ids cannot be probed.
+        This test breaks if a missing pk starts creating a child again.
         """
         result = _update(
             AuthorWithPostsType,
@@ -542,8 +542,17 @@ class ReverseO2OOwnershipTest(TestCase):
                 "nested_integrity_posts": [{"id": 9999, "title": "Ghost"}],
             },
         )
-        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
-        self.assertEqual(self.author2.nested_integrity_posts.count(), 1)
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [(error.field, error.messages) for error in result.errors],
+            [
+                (
+                    "nested_integrity_posts.id",
+                    ["NestedIntegrityPost with id 9999 does not exist."],
+                )
+            ],
+        )
+        self.assertEqual(self.author2.nested_integrity_posts.count(), 0)
 
     def test_can_update_own_reverse_o2o_child(self) -> None:
         """Upserting a reverse-O2O child the parent already owns still succeeds.

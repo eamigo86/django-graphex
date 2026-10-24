@@ -466,7 +466,12 @@ def test_existing_owned_and_new_children_keep_prior_paths(
     )
     assert missing.errors is None
     assert missing.data["updateParent"]["ok"] is False
-    assert "Field required" in missing.data["updateParent"]["errors"][0]["messages"][0]
+    assert missing.data["updateParent"]["errors"] == [
+        {
+            "field": "children.id",
+            "messages": ["SD4Child with id 900001 does not exist."],
+        }
+    ]
     assert SD4Child.objects.count() == count
 
 

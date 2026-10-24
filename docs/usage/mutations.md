@@ -898,8 +898,13 @@ the child's existing permission error. No host is needed for creating a **new**
 child without an existing ID (including generated parent create), or updating a
 child already owned by this parent. The generated nested-create input does not
 accept an existing child ID.
-Adoption from a **different** parent remains forbidden, and a missing ID keeps
-the existing child-creation/validation behavior. The rule is the same for a
+Adoption from a **different** parent remains forbidden. A nested child payload
+that names an `id` which does not resolve to a visible child (hidden by its
+host or output scope, or nonexistent) is refused with the same
+`<Model> with id <pk> does not exist.` error and writes nothing, so the
+response cannot reveal which ids exist; only a payload **without** an `id`
+creates a new child. This applies to reverse `ForeignKey`, reverse
+`OneToOneField` and many-to-many nested payloads. The rule is the same for a
 reverse `OneToOneField` (for example `parent = OneToOneField(..., null=True,
 related_name="child")`) as for a reverse `ForeignKey`. Generic relations are
 outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),
@@ -950,8 +955,9 @@ filters have their own destination-hook rule.
 
     Generic relations and payloads
     that actually CREATE or UPDATE a child retain their separate existing
-    rules. For example, a missing M2M ID accompanied by required child data
-    can create a child rather than link an existing one. This does not
+    rules. A nested M2M payload that names an ID is never a creation: an ID
+    that is not visible (hidden or missing) gets the error above, and only a
+    payload without an ID creates a child. This does not
     change automatic relation expansion on reads or relation-filter joins;
     automatic FK/reverse-FK output reads and nested forward-FK filters have
     their own bounded destination-hook rules;

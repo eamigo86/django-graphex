@@ -547,17 +547,25 @@ class ManyToManyLinkTest(TestCase):
         self.assertIn("brand new", set(self.doc.tags.values_list("label", flat=True)))
 
     def test_malformed_child_pk_does_not_leak_an_orm_error(self) -> None:
-        """A garbage pk inside a nested child payload never raises.
+        """A garbage pk inside a nested child payload is a clean not-found error.
 
         The link rule queries the relation by that pk, so this test breaks if
         an uncoercible value reaches the ORM as a raw error instead of being
-        treated as a row that does not exist.
+        treated as a row that does not exist, or if it starts creating a child.
         """
         result = _update(
             ParityTagDocType,
             {"id": self.doc.id, "tags": [{"id": "not-a-number", "label": "x"}]},
         )
-        self.assertTrue(result.ok, msg=getattr(result, "errors", None))
+        self.assertFalse(result.ok)
+        self.assertEqual(
+            [(error.field, error.messages) for error in result.errors],
+            [("tags.id", ["ParityTag with id not-a-number does not exist."])],
+        )
+        self.assertFalse(
+            self.doc.tags.filter(label="x").exists()
+            or ParityTag.objects.filter(label="x").exists()
+        )
 
     def test_malformed_forward_child_pk_is_a_clean_error(self) -> None:
         """A garbage pk on a nested forward FK is reported through the envelope.

@@ -878,6 +878,19 @@ All notable changes to this library are documented here. The format is based on
   seed-identity readers, including errors. Disposable benchmark-test writers
   commit or roll back before close; historical results and timings are unchanged.
 
+### Behavior changes
+
+- Nested child payloads that carry an `id` no longer create a child when the
+  `id` does not resolve to a visible child. A hidden `id` (outside the child's
+  host or output scope) answered `<Model> with id N does not exist.` while a
+  nonexistent `id` silently created a new child, so a client could probe which
+  ids exist. Both now return the same error and write nothing, for reverse
+  `ForeignKey`, reverse `OneToOneField` and many-to-many nested payloads
+  (including models with a natural primary key). Payloads without an `id` still
+  create, and children the parent already owns still update. Clients that
+  relied on sending an unknown `id` together with child data to create a row
+  must omit the `id`.
+
 ## 4.0.0 — 2026-10-05
 
 Release validation now checks the exact pure-branch coverage percentage in

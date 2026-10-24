@@ -281,8 +281,10 @@ def test_nested_link_is_scoped_before_parent_save(
             ]
 
         if relation == "tags" and payload_kind == "ignored_attributes":
-            # A missing row with real child data is a CREATE, not an ID link.
-            created = NestedPost.create(
+            # A missing id with child data is refused exactly like a hidden id:
+            # an id-bearing payload never creates, so ids cannot be probed.
+            missing = identifier + 1000000
+            refused = NestedPost.create(
                 None,
                 info,
                 **{
@@ -290,17 +292,17 @@ def test_nested_link_is_scoped_before_parent_save(
                         "title": "child-create",
                         "body": "",
                         "author": {"name": "new-author"},
-                        "tags": [{"id": identifier + 1000000, "label": "created"}],
+                        "tags": [{"id": missing, "label": "created"}],
                     }
                 },
             )
-            assert created.ok is True
+            assert refused.ok is False
+            assert [(error.field, error.messages) for error in refused.errors] == [
+                ("tags", [f'Invalid pk "{missing}" - object does not exist.'])
+            ]
 
-    if relation == "tags" and payload_kind == "ignored_attributes":
-        assert list(Post.objects.values_list("title", flat=True)) == ["child-create"]
-        assert Tag.objects.filter(label="created").exists()
-    else:
-        assert not Post.objects.exists()
+    assert not Post.objects.exists()
+    assert not Tag.objects.filter(label="created").exists()
     assert Author.objects.filter(pk=author.pk).count() == 1
     author.refresh_from_db()
     tag.refresh_from_db()
