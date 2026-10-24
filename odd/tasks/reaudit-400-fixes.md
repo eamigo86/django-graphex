@@ -61,7 +61,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T32b | A1 other aliases, A2 cache bytes, M-D6 raw JSON non-finite output | Rollback on every ATOMIC_REQUESTS alias in an atomic block (+ per-alias ATOMIC_MUTATIONS); `DOCUMENT_CACHE_MAX_QUERY_LENGTH` (65536) per-entry bound; JSON scalar output rejects NaN/Infinity at any depth | D | [x] | `323482e`, `a8e1e99`, `32aac70`; RED 3 + settings + 14; full 7163 passed, cov 97.61 % |
 | T32c | M-F3, M-D10, L-M1, SD6, Q8, Q10, M-D2, L-E4, M-U6, M-D1, L-E3 | Contracts documented and pinned (empty Boolean no-op test; dict[str,int] Python int; L-M1 churn); dispositions in docs/audit-4.0.0.md | D | [x] | `76c45a1`, `491541c`, `0864fe7` |
 | T33 | D2, D3, D5, D6 | Anchors fixed (docs build 0 warnings); M-S2 corrected; mutations guide present tense; per-database ATOMIC_MUTATIONS documented; Graphene wording removed; remediation reports EN/ES aligned (D2 done in T35) | D | [x] | `a509434`, `0864fe7`, `c4e411f`, `5d326d2`, `0215376`, `0f7e43c`; full 7179 passed |
-| T34 | G1-G7 | Playground README/docs, `subscription_scope`, password validation, commands | D | [ ] | |
+| T34 | G1-G7 | README/docs page corrected; `PostSubscription.subscription_scope` (anon: published only); update/delete behind `PrivateMutation`; password validators + generic duplicate error; working test commands; realistic cost suggestion pinned by test; G7 fixes (media in DEBUG, lock tracked, generic upload errors, BigInt/Decimal demo) | D | [x] | `746671d`..`82a0810` (11 commits); Playground 82/82 with and without migrations; parent re-ran on a copy: 82 passed |
 | T35 | D1, D2 | Version 4.1.0 (pyproject, both uv.lock, docs); CHANGELOG `## 4.1.0 — Unreleased` with compatibility policy + 27 behavior changes; UPGRADE-4.0.md restored to v4.0.0 content; new UPGRADE-4.1.md; release readiness 4.1.0 test | D | [x] | `f11d7e4`, `4b252a0`, `0589d05`; full 7166 passed, cov 97.61 %; docs build OK (3 pre-existing anchor warnings -> T33) |
 | T36 | Audit | Fresh independent audit of HEAD; fix confirmed new findings | D | [ ] | |
 | T37 | Benchmark, D4, D7 | Rerun core33 benchmark; update why.md, README, benchmarks README | D | [ ] | |
@@ -128,6 +128,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 - T32c, T33 done.
 - Parent found a regression of this round's R10 fix: plain-notation Decimal output let a 14-byte literal `1E+999999999` echoed by a resolver expand into ~1 GB. Fixed inline with TDD in `01a5f7a` + `da0a8c6` (scientific form past 1000 padded zeros); full 7184 passed, cov 97.61 %, gates clean.
 
+- T34 done. Existing Playground checkouts need `make reset` (new `Post.view_count`; migrations are gitignored there).
+
 ## Next step
 
-T34 (Playground G1-G7; also its test pinning blank-title acceptance, broken by A10 as approved).
+T36: fresh independent audit (7 read-only auditors), then fixes, then T37 benchmark on a quiet machine.
