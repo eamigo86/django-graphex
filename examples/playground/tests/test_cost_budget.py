@@ -92,7 +92,11 @@ def budgeted(client: Client, django_user_model: type[AbstractBaseUser]) -> Clien
 
 
 def test_the_readme_suggests_exactly_the_measured_settings() -> None:
-    """Assert the README and the settings file quote the budget this test uses."""
+    """Assert the README and the settings file quote the budget this test uses.
+
+    The two files are the documentation a reader copies from, so a number that
+    drifts from the measured one fails here.
+    """
     settings_text = (_README.parent / "config" / "settings.py").read_text()
     for text in (_README.read_text(), settings_text):
         assert f'"MAX_QUERY_COST": {BUDGET:_}' in text
