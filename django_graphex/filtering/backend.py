@@ -406,6 +406,33 @@ def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
     return False
 
 
+def _flat_and(children: Any) -> list[Any]:
+    """Flatten nested pure-AND nodes into one conjunct list.
+
+    AND is associative, so an operand that is only an "and" list contributes
+    its own operands directly. This keeps the compiled SQL depth bounded by
+    real relation nesting rather than by "and" nesting, and avoids the
+    quadratic re-translation of every enclosing level.
+
+    Args:
+        children: The operands of an "and" list.
+
+    Returns:
+        The operands with pure "and" wrappers expanded, in order.
+    """
+    flat: list[Any] = []
+    pending = list(reversed(list(children)))
+    while pending:
+        child = pending.pop()
+        if child is not None and child is not Undefined:
+            keys = [k for k, v in child.items() if v is not None and v is not Undefined]
+            if keys == ["and"]:
+                pending.extend(reversed(list(child["and"])))
+                continue
+        flat.append(child)
+    return flat
+
+
 def _independent_many_q(
     node: Any,
     queryset: QuerySet,
@@ -438,7 +465,7 @@ def _independent_many_q(
         if value is None or value is Undefined:
             continue
         if key == "and":
-            for child in value:
+            for child in _flat_and(value):
                 child_q = _independent_many_q(child, queryset, "and", scope)
                 if not child_q:
                     continue

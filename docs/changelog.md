@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Compile nested `and` filters over to-many relations without nested EXISTS.
+  Each level of a nested `and` re-correlated on the root table, so a chain of
+  about 25 levels failed on SQLite ("Expression tree is too large") and
+  surfaced as `DATA_ACCESS_ERROR`, and wide `and` lists produced several times
+  more SQL than before. Operands that are only an `and` list are now flattened
+  (AND is associative) and every to-many conjunct is one sibling EXISTS, so SQL
+  nesting depends on relation nesting only. Results are unchanged; the
+  structural query-depth ceiling still bounds literal nesting.
+
 - Keep SSE streams open through transient lease-renewal errors. With the
   Redis-backed per-account stream cap, a single failed renewal (for example a
   two-second Redis timeout) closed the stream although the 45-second lease

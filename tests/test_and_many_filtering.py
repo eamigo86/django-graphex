@@ -595,3 +595,199 @@ def test_public_paginated_count_and_variables() -> None:
     posts = payload["data"]["posts"]
     assert posts["totalCount"] == 2
     assert posts["results"] == [{"title": "same"}]
+
+
+def _tag(label: str) -> dict:
+    """Return one to-many tag predicate for a label.
+
+    Args:
+        label: Tag label to match.
+
+    Returns:
+        A filter node for one explicit AND branch.
+    """
+    return {"tags": {"label": {"exact": label}}}
+
+
+def _left_chain(labels: list[str]) -> dict:
+    """Nest AND branches to the left: and[and[and[a, b], c], d].
+
+    Args:
+        labels: Tag labels, one branch each, in order.
+
+    Returns:
+        A filter node whose nesting depth equals len(labels) - 1.
+    """
+    node = _tag(labels[0])
+    for label in labels[1:]:
+        node = {"and": [node, _tag(label)]}
+    return node
+
+
+def _right_chain(labels: list[str]) -> dict:
+    """Nest AND branches to the right: and[a, and[b, and[c, d]]].
+
+    Args:
+        labels: Tag labels, one branch each, in order.
+
+    Returns:
+        A filter node whose nesting depth equals len(labels) - 1.
+    """
+    node = _tag(labels[-1])
+    for label in reversed(labels[:-1]):
+        node = {"and": [_tag(label), node]}
+    return node
+
+
+def _flat(labels: list[str]) -> dict:
+    """Return one AND list holding every branch.
+
+    Args:
+        labels: Tag labels, one branch each, in order.
+
+    Returns:
+        A filter node with no AND nesting.
+    """
+    return {"and": [_tag(label) for label in labels]}
+
+
+def _titles(node: dict) -> list[str]:
+    """Apply a filter node through the native backend.
+
+    Args:
+        node: Filter node over the test post model.
+
+    Returns:
+        Sorted titles of the matching posts.
+    """
+    rows = NativeFilterBackend().apply(AndManyPost.objects.all(), node)
+    return sorted(rows.values_list("title", flat=True))
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("shape", [_left_chain, _right_chain, _flat])
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (["x"] * 200, ["only-x", "same", "split"]),
+        (["x", "y"] * 100, ["split"]),
+        (["x"] * 199 + ["y"], ["split"]),
+        (["x"] * 199 + ["nope"], []),
+    ],
+)
+def test_deep_and_chain_matches_flat_result(
+    shape: object, labels: list[str], expected: list[str]
+) -> None:
+    """A 200-branch AND answers the same however it is nested.
+
+    Nested EXISTS used to exceed SQLite's expression depth near 25 levels.
+
+    Args:
+        shape: Builder that nests the branches.
+        labels: Tag labels, one branch each.
+        expected: Sorted post titles for the conjunction.
+    """
+    _seed()
+    assert _titles(shape(labels)) == expected
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_deep_and_chain_returns_data_not_access_error() -> None:
+    """A 40-level chain over HTTP no longer fails with DATA_ACCESS_ERROR.
+
+    The structural query-depth ceiling still bounds literal nesting.
+    """
+    _seed()
+    value = _left_chain(["x"] * 40)
+    text = json.dumps(value).replace('"', "")  # GraphQL object literal keys
+    text = text.replace("exact: x", 'exact: "x"')
+    query = "{ posts(filter: " + text + ") { results { title } } }"
+    assert _post(query) == ["only-x", "same", "split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_and_chain_sql_depth_is_flat_and_size_linear() -> None:
+    """Chain depth adds one sibling EXISTS per branch, never nesting.
+
+    Both nesting styles compile to the same SQL as the flat list, and the
+    statement grows linearly with the branch count.
+    """
+    _seed()
+
+    def sql_for(node: dict) -> str:
+        """Return the SQL of the filtered post query.
+
+        Args:
+            node: Filter node.
+
+        Returns:
+            The SELECT statement text.
+        """
+        rows = NativeFilterBackend().apply(AndManyPost.objects.all(), node)
+        return str(rows.query)
+
+    labels = ["x", "y"] * 20
+    flat = sql_for(_flat(labels))
+    assert sql_for(_left_chain(labels)) == flat
+    assert sql_for(_right_chain(labels)) == flat
+    assert flat.count("EXISTS") == len(labels)
+    depth = deepest = 0
+    for token in flat.replace("(", " ( ").replace(")", " ) ").split():
+        depth += token == "("
+        depth -= token == ")"
+        deepest = max(deepest, depth)
+    assert deepest <= 8
+    small = len(sql_for(_left_chain(["x"] * 50)))
+    large = len(sql_for(_left_chain(["x"] * 100)))
+    assert large < small * 2.2
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "nested",
+    [
+        {"and": [{"and": [_tag("x"), _tag("y")]}]},
+        {"and": [_tag("x"), {"and": [_tag("y")]}]},
+        {"and": [{"and": [_tag("x")]}, {"and": [_tag("y")]}]},
+        {"and": [{"and": []}, _tag("x"), _tag("y")]},
+        {"and": [{"and": [_tag("x"), _tag("y")]}, {"title": {"exact": "split"}}]},
+        {"and": [{"and": [None, _tag("x")]}, _tag("y")]},
+    ],
+)
+def test_nested_and_equals_flat_and(nested: dict) -> None:
+    """Associativity: nesting pure AND wrappers never changes the answer.
+
+    Args:
+        nested: A nested spelling of tags x AND tags y.
+    """
+    _seed()
+    assert _titles(nested) == _titles(_flat(["x", "y"])) == ["split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_nested_and_keeps_siblings_or_and_not_wrappers() -> None:
+    """Only a pure AND wrapper is spliced.
+
+    Siblings, OR and NOT wrappers keep their own meaning.
+    """
+    _seed()
+    sibling = {
+        "and": [
+            {
+                "and": [_tag("x"), {"title": {"exact": "same"}}],
+                "title": {"exact": "split"},
+            }
+        ]
+    }
+    assert _titles(sibling) == []
+    either = {
+        "and": [
+            {"or": [_tag("y"), {"title": {"exact": "same"}}]},
+            {"and": [_tag("x")]},
+        ]
+    }
+    assert _titles(either) == ["same", "split"]
+    negated = {"and": [{"not": _tag("y")}, {"and": [_tag("x")]}]}
+    assert _titles(negated) == ["only-x", "same"]
+    inner = {"comments": {"and": [{"and": [_tag("x"), _tag("y")]}]}}
+    assert _titles({"and": [inner]}) == _titles({"and": [inner, inner]})
