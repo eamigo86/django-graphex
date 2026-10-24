@@ -518,6 +518,26 @@ lookups, the generated input schema, and subscription filters are unchanged.
 Clients that depended on separate `and` branches matching one related row
 should group those criteria inside one relation object.
 
+#### Operators inside one to-many relation object
+
+Within one relation object (`tags: { ... }` over a many-to-many or reverse
+foreign key) the operators below currently behave as follows. The table
+describes shipped behavior; the cases marked "ORM" follow the ORM's own
+handling of negated multi-valued lookups.
+
+| Inside `tags: { ... }` | Meaning |
+|---|---|
+| `label: x, color: c` (siblings), `and: [x, y]` | One related row satisfies all criteria, so `and: [x, y]` over two different labels matches nothing. |
+| `or: [x, y]` | A related row satisfies x or y. |
+| `not: x` alone (also `or: [{ not: x }]`, `and: [{ not: x }]`) | The parent has **no** related row matching x. |
+| `not: x` beside a positive criterion (`label: x, not: y`, `and: [x, { not: z }]`) | The same related row must match the positive criterion and not match the negated one; other rows of the parent are not considered. |
+| `not: { and: [x, y] }` (ORM) | Each negated criterion is tested independently: the parent lacks a row with x or lacks a row with y. This is **not** the complement of `and: [x, y]` (which is same-row); it equals the complement of the top-level `and: [{ tags: x }, { tags: y }]`. |
+| `not: { or: [x, y] }` | The parent has no row matching x and no row matching y. |
+
+A `not` that **encloses** a whole relation object (`not: { tags: x }`) is the
+complement of the parent set matched by that object, as described for the
+witness rules above.
+
 Empty Boolean operands retain the existing no-op behavior: `or: []` and
 `not: {}` add no predicate, while `or: [{}, X]` contributes only `X`. The
 `exact: null` change does not assign classical Boolean identities to them.
