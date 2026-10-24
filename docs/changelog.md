@@ -1139,6 +1139,15 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Docs and tests
 
+- Playground example: describe the closed draft and `internalNote` leaks as
+  closed; scope `postSubscription` for anonymous subscribers with
+  `subscription_scope`; require login for `postUpdate`, `postDelete` and
+  `documentUpdate` through a `private_mutation` root; run Django password
+  validators in `registerUser` and answer a duplicate username generically;
+  suggest a measured `MAX_QUERY_COST` (10,000,000, not 200); serve media in
+  development, log upload failures instead of echoing them, and add a `BigInt`
+  field. The Playground tests and README commands now work as written.
+
 - Add a local, evidence-bounded disposition of the 100 original audit claims
   in [the 4.0.0 audit report](audit-4.0.0.md). It separates scoped fixes,
   current contracts, recommendations, limited negative checks, and pending
