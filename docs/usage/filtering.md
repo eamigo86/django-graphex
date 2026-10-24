@@ -11,6 +11,8 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 - **Per-field lookups** (`exact`, `icontains`, `in`, `range`, `isnull`, …).
 - BigInteger lookups use `BigInt` decimal-string values (see
   [64-bit integers](types.md#bigint-64-bit-integers)); the ORM receives integers.
+- Decimal lookups reject `NaN` and the infinities (`"NaN"`, `"Infinity"`) as
+  invalid input, like any other value a scalar cannot represent.
 - **Relation descent** (`author: { name: { … } }`), to-many auto-`distinct()`.
 - **Logical operators**: `and`, `or`, `not` (arbitrarily nested).
 - `choices` fields filter through their generated **Enum**.

@@ -262,9 +262,14 @@ def _decimal_serialize(value: Any) -> str:
 
 def _decimal_parse_value(value: Any) -> decimal.Decimal:
     try:
-        return decimal.Decimal(str(value))
+        parsed = decimal.Decimal(str(value))
     except (decimal.InvalidOperation, ValueError, TypeError) as exc:
         raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
+    # NaN and the infinities parse as Decimals but no column can hold them, and
+    # reaching the ORM they surface as Django's unformatted validation message.
+    if not parsed.is_finite():
+        raise GraphQLError(f"Decimal cannot be a nonfinite Decimal: {value!r}")
+    return parsed
 
 
 def _decimal_parse_literal(ast: Any, variable_values: Any = None) -> decimal.Decimal:

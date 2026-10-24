@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: a `Decimal` value of `NaN`, `sNaN` or an infinity is rejected as invalid
+  input. In a filter (`{amt: {exact: "Infinity"}}`) it reached the ORM and came
+  back as Django's raw `“%(value)s” value must be a decimal number.` with the
+  whole list nulled. The `Decimal` scalar now fails with `Decimal cannot be a
+  nonfinite Decimal: 'Infinity'` before execution, for every lookup (`exact`,
+  `in`, `gt`, `range`) and for mutation inputs too. Float, Int, BigInt and Date
+  filters already rejected their invalid values and are unchanged.
+
 - Fix: a tampered cursor on an in-memory (prefetched or nested) list answers
   `Invalid cursor`, like the database path. A `NaN` Decimal, a non-numeric pk,
   a bad date or a naive/aware datetime mismatch raised `InvalidOperation` or
