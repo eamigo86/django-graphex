@@ -635,9 +635,9 @@ Attempt the same **without being logged in** — the permission gate returns:
 }
 ```
 
-A failing validation returns `ok: false` and the `errors` list. Validation is
-**Pydantic**, derived from the column — so it is `max_length`, type and
-nullability that fail, not Django's form-level `blank`. A title over
+A failing validation returns `ok: false` and the `errors` list. Generated
+writes check the column's type, nullability and `max_length` (Pydantic) **and**
+run its Django validators, including `blank=False`. A title over
 `Note.title`'s `max_length=200`:
 
 ```graphql
@@ -649,9 +649,16 @@ mutation { noteCreate(newNote: { title: "xxx… 250 chars …xxx" }) { ok errors
   "errors": [{ "field": "title", "messages": ["String should have at most 200 characters"] }] } } }
 ```
 
-`title: ""` is **not** one of these: `blank=True/False` is a form concern
-Django never enforces on `save()`, so a blank title is accepted and returns
-`ok: true`. Use an inline `validate_<field>` hook if you want it refused — see
+An empty `title: ""` is refused too, with Django's own message
+(`"This field cannot be blank."`), because `Note.title` is `blank=False`:
+
+```json
+{ "data": { "noteCreate": { "ok": false,
+  "errors": [{ "field": "title", "messages": ["This field cannot be blank."] }] } } }
+```
+
+Model-level `Model.clean()` is not run; for rules that live outside the column
+use an inline `validate_<field>` hook — see
 [Custom validation](https://eamigo86.github.io/django-graphex/usage/backends/#custom-validation-inline-validate_field).
 
 ### 5. Nested write — create a Post with inline Comments
