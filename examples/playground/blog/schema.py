@@ -15,7 +15,9 @@
 from typing import Any
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Model, QuerySet
 from django.utils import timezone
 from graphql import GraphQLError, GraphQLInt, GraphQLResolveInfo, GraphQLString
@@ -77,6 +79,10 @@ from .models import (
 )
 
 User = get_user_model()
+
+# Generic refusal for a registration that cannot proceed for a reason the caller
+# must not learn (a taken username).
+REGISTRATION_FAILED = "Registration failed. Try different details."
 
 
 # --------------------------------------------------------------------------- #
@@ -1245,6 +1251,14 @@ class RegisterUser(Mutation):
     Registration is deliberately hand-written: "create_user()" hashes the
     password and Django supplies safe "False" defaults for both privilege
     flags. The only accepted inputs are a username and password.
+
+    Two checks a generated write would not give you. The password goes through
+    Django's "AUTH_PASSWORD_VALIDATORS" (configured in "config/settings.py")
+    BEFORE the account exists, and a taken username answers with the same
+    generic refusal as any other failure instead of the raw database error.
+    A public sign-up still reveals a taken name to someone who tries a strong
+    password (the call succeeds for a free one); real deployments add rate
+    limiting or e-mail verification on top.
     """
 
     class Arguments:
@@ -1258,6 +1272,7 @@ class RegisterUser(Mutation):
 
     ok = BooleanField()
     user = Field(UserType)
+    error = CharField()
 
     @classmethod
     def mutate(
@@ -1266,7 +1281,7 @@ class RegisterUser(Mutation):
         info: GraphQLResolveInfo,
         **kwargs: Any,
     ) -> "RegisterUser":
-        """Hash the supplied password and return the safe user projection.
+        """Validate the password, hash it and return the safe user projection.
 
         Args:
             root: The parent resolver value, unused for this root mutation.
@@ -1274,13 +1289,29 @@ class RegisterUser(Mutation):
             **kwargs: The validated username and password arguments.
 
         Returns:
-            registration: A successful payload containing the created user.
+            registration: A successful payload containing the created user, or
+                "ok=False" with the password-policy messages, or with a
+                generic message when the username is already taken.
         """
-        user = get_user_model().objects.create_user(
-            username=kwargs["username"],
-            password=kwargs["password"],
-        )
-        return cls(ok=True, user=user)
+        model = get_user_model()
+        username = kwargs["username"]
+        try:
+            # The candidate instance lets UserAttributeSimilarityValidator
+            # compare the password with the requested username.
+            validate_password(kwargs["password"], user=model(username=username))
+        except ValidationError as exc:
+            return cls(ok=False, user=None, error=" ".join(exc.messages))
+        try:
+            # A savepoint keeps the failed INSERT from poisoning an outer
+            # transaction (ATOMIC_REQUESTS, tests).
+            with transaction.atomic():
+                user = model.objects.create_user(
+                    username=username, password=kwargs["password"]
+                )
+        except IntegrityError:
+            # Never echo the database text or say the name exists.
+            return cls(ok=False, user=None, error=REGISTRATION_FAILED)
+        return cls(ok=True, user=user, error=None)
 
 
 # --------------------------------------------------------------------------- #

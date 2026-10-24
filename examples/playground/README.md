@@ -441,10 +441,20 @@ groups, or permissions:
 mutation {
   registerUser(username: "reader", password: "correct-horse-battery-staple") {
     ok
+    error
     user { id username firstName lastName }
   }
 }
 ```
+
+The password goes through Django's `AUTH_PASSWORD_VALIDATORS` (set in
+`config/settings.py`) before the account exists, so `password: "x"` answers
+`ok: false` with the validator messages ("This password is too short…") and
+creates nothing. A **taken username** answers `ok: false` with the generic
+`Registration failed. Try different details.`, never the raw database error. That
+removes the table name and the verbatim "already exists" text, but a public
+sign-up still lets someone who tries a strong password tell a free name from a
+taken one, so add rate limiting or e-mail verification before exposing it.
 
 There is deliberately no generated `userCreate`, `userUpdate`, or
 `userDelete`. Read the current user through `/graphql/secure/`, after logging in
