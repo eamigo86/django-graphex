@@ -62,7 +62,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T32c | M-F3, M-D10, L-M1, SD6, Q8, Q10, M-D2, L-E4, M-U6, M-D1, L-E3 | Document contracts/dispositions (M-F3: every empty boolean construct is a no-op, verified 2026-10-24) | D | [ ] | |
 | T33 | D2, D3, D5, D6 | Upgrade guide split by version, audit disposition fixes, docs cleanup | D | [ ] | |
 | T34 | G1-G7 | Playground README/docs, `subscription_scope`, password validation, commands | D | [ ] | |
-| T35 | D1 | Set version 4.1.0 (pyproject, docs, README); changelog section and compatibility note | D | [ ] | |
+| T35 | D1, D2 | Version 4.1.0 (pyproject, both uv.lock, docs); CHANGELOG `## 4.1.0 — Unreleased` with compatibility policy + 27 behavior changes; UPGRADE-4.0.md restored to v4.0.0 content; new UPGRADE-4.1.md; release readiness 4.1.0 test | D | [x] | `f11d7e4`, `4b252a0`, `0589d05`; full 7166 passed, cov 97.61 %; docs build OK (3 pre-existing anchor warnings -> T33) |
 | T36 | Audit | Fresh independent audit of HEAD; fix confirmed new findings | D | [ ] | |
 | T37 | Benchmark, D4, D7 | Rerun core33 benchmark; update why.md, README, benchmarks README | D | [ ] | |
 
@@ -123,6 +123,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T32b done. `docs/audit-4.0.0.md` rows for A1, A2, M-D6 still say partial: update in T33.
 
+- T35 done.
+
 ## Next step
 
-Docs: T35 + D2 (version 4.1.0, upgrade guide split), then T32c + T33.
+T32c + T33 (dispositions, audit table, docs cleanup, anchors).
