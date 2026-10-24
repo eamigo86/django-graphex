@@ -384,8 +384,10 @@ Since v1.2.2 (#65), unknown or mistyped `Meta` options raise
 `ImproperlyConfigured` at server startup instead of being silently ignored.
 For example, a typo like `filter_Filed` (capital F) is caught immediately.
 
-`DjangoObjectType.Meta.only_fields` and `exclude_fields` also reject unknown
-field names and bare strings at class definition, before registering the type.
+`Meta.only_fields` and `exclude_fields` of `DjangoObjectType`,
+`DjangoModelType`, `DjangoListObjectType`, `DjangoInputObjectType` and
+`DjangoModelMutation` also reject unknown field names and bare strings at class
+definition, before registering the type.
 For example, `exclude_fields = ("passwrod",)` raises
 `ImproperlyConfigured` instead of silently publishing `password`; use
 `exclude_fields = ("password",)`. A single name needs a trailing comma.

@@ -36,6 +36,7 @@ from .types import (
     DjangoObjectType,
     _check_nested_field_keys,
     _check_unknown_options,
+    _validate_output_selectors,
 )
 from .uploads import merge_uploaded_files
 from .utils import get_Object_or_None, not_found_error, scope_to_output_type
@@ -569,6 +570,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
         _check_nested_field_keys(cls.__name__, model, nested_fields)
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields, write_host=True
+        )
 
         description = description or f"DjangoModelMutation for {model.__name__} model"
 

@@ -263,6 +263,7 @@ def _validate_output_selectors(
     model: type[Model],
     only_fields: Any,
     exclude_fields: Any,
+    write_host: bool = False,
 ) -> tuple[Any, Any]:
     """Validate public output projections before compilation or registration.
 
@@ -271,6 +272,8 @@ def _validate_output_selectors(
         model: The Django model projected by the class.
         only_fields: Names selected for output, or an empty value.
         exclude_fields: Names omitted from output, or an empty value.
+        write_host: True for a mutation or input host, where the wire identity
+            "id" is a valid selector even on a model keyed on another column.
 
     Returns:
         The validated selectors, with one-shot iterators materialized for reuse.
@@ -296,6 +299,8 @@ def _validate_output_selectors(
                     and not accessor.endswith("+")
                 ):
                     allowed.add(accessor)
+    if write_host:
+        allowed.add("id")
     for base in cls.__mro__:
         for name, descriptor in base.__dict__.items():
             if isinstance(descriptor, (NativeMountedField, NativeField)):
@@ -2378,6 +2383,10 @@ class DjangoInputObjectType(NativeInputType):
 
         input_for = input_for.lower()
 
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields, write_host=True
+        )
+
         # ----------------------------------------------------------------
         # NATIVE PATH (S6c: UNCONDITIONAL). DjangoInputObjectType is parented on
         # ``native.base.InputType``. Resolvers receive a VALIDATED Pydantic model (built from
@@ -2616,6 +2625,10 @@ class DjangoListObjectType(NativeObjectType):
 
         if not registry:
             registry = get_global_registry()
+
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields
+        )
 
         assert isinstance(queryset, QuerySet) or queryset is None, (
             "The attribute queryset in {} needs to be an instance of "
@@ -3099,6 +3112,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
         _check_nested_field_keys(cls.__name__, model, nested_fields)
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields, write_host=True
+        )
 
         description = description or f"DjangoModelType for {model.__name__} model"
 

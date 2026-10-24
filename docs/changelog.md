@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: `Meta.only_fields` and `Meta.exclude_fields` are validated on the write
+  hosts too. `DjangoModelMutation`, `DjangoModelType`, `DjangoListObjectType`
+  and `DjangoInputObjectType` accepted a typo (`exclude_fields = ("nmae",)`) or
+  a bare string (`exclude_fields = "name"`) in silence, so the column the
+  developer meant to hide stayed writable. They now raise
+  `ImproperlyConfigured` at class creation with the same message
+  `DjangoObjectType` gives.
+
 - Fix: a `Decimal` value of `NaN`, `sNaN` or an infinity is rejected as invalid
   input. In a filter (`{amt: {exact: "Infinity"}}`) it reached the ORM and came
   back as Django's raw `“%(value)s” value must be a decimal number.` with the
