@@ -41,6 +41,10 @@ _SCHEMA = DjangoGraphQLSchema(query=_Query, registries=isolated_pair(_REGISTRY))
 
 @pytest.mark.django_db
 def test_malformed_integer_id_has_safe_public_error() -> None:
+    """Reject a malformed integer ID with a safe public error.
+
+    The error carries the INVALID_ID code and never echoes the raw value.
+    """
     result = graphql_sync(
         _SCHEMA.graphql_schema, '{ article(id: "not-an-id") { title } }'
     )
@@ -55,6 +59,10 @@ def test_malformed_integer_id_has_safe_public_error() -> None:
 
 @pytest.mark.django_db
 def test_malformed_uuid_id_has_safe_public_error() -> None:
+    """Reject a malformed UUID with a safe public error.
+
+    The error carries the INVALID_ID code and never echoes the raw value.
+    """
     result = graphql_sync(
         _SCHEMA.graphql_schema, '{ thing(id: "not-a-uuid") { name } }'
     )
@@ -69,6 +77,10 @@ def test_malformed_uuid_id_has_safe_public_error() -> None:
 
 @pytest.mark.django_db
 def test_get_node_rejects_malformed_integer_id() -> None:
+    """Reject a malformed integer ID passed directly to the node getter.
+
+    The raised error carries the INVALID_ID code.
+    """
     with pytest.raises(GraphQLError) as caught:
         _ArticleType.get_node(None, "not-an-id")
     assert caught.value.message == "Invalid ID: expected an integer."
@@ -76,7 +88,11 @@ def test_get_node_rejects_malformed_integer_id() -> None:
 
 
 def test_malformed_id_in_generated_retrieve_field(db: None) -> None:
-    """Generated retrieve fields use the same safe error contract."""
+    """Generated retrieve fields use the same safe error contract.
+
+    Args:
+        db: Pytest fixture granting database access.
+    """
     from django_graphex.types import DjangoModelType
 
     from ._schema_isolation import isolated_default_pair
@@ -105,7 +121,10 @@ def test_malformed_id_in_generated_retrieve_field(db: None) -> None:
 
 @pytest.mark.django_db
 def test_valid_missing_and_char_primary_keys_keep_orm_meaning() -> None:
-    """Missing rows stay null and text primary keys are not treated as malformed."""
+    """Missing rows stay null and text primary keys are not treated as malformed.
+
+    Scenario: valid missing and char primary keys keep orm meaning.
+    """
     from .models import CustomPKProduct
 
     assert _ArticleType.get_node(None, 999999) is None
@@ -129,7 +148,11 @@ def test_valid_missing_and_char_primary_keys_keep_orm_meaning() -> None:
 
 @pytest.mark.django_db
 def test_hidden_row_still_looks_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The queryset scope remains before PK lookup and hides a valid ID."""
+    """The queryset scope remains before PK lookup and hides a valid ID.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+    """
     row = ScopedArticle.objects.create(title="private", is_public=False)
     seen: list[str] = []
 
@@ -151,7 +174,14 @@ def test_hidden_row_still_looks_missing(monkeypatch: pytest.MonkeyPatch) -> None
 def test_unrelated_queryset_errors_are_not_relabelled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Even another malformed value for the same PK is unrelated to this ID."""
+    """Even another malformed value for the same PK is unrelated to this ID.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+
+    Raises:
+        ValueError: Raised by the patched queryset hook as an unrelated failure.
+    """
     import django_graphex.types as types_module
 
     class OtherLookup:
@@ -183,7 +213,11 @@ def test_unrelated_queryset_errors_are_not_relabelled(
 
 @pytest.mark.django_db
 def test_custom_primary_key_prepared_once_with_generic_error() -> None:
-    """A custom field's conversion runs once and never leaks its message."""
+    """A custom field's conversion runs once and never leaks its message.
+
+    Raises:
+        ValidationError: Raised by the custom primary key conversion with private detail.
+    """
     from django.core.exceptions import ValidationError
     from django.db import models
 
@@ -220,7 +254,11 @@ def test_custom_primary_key_prepared_once_with_generic_error() -> None:
 
 @pytest.mark.django_db
 def test_custom_primary_key_renamed_argument_keeps_safe_public_error() -> None:
-    """A custom preparation parameter name does not affect error attribution."""
+    """A custom preparation parameter name does not affect error attribution.
+
+    Raises:
+        ValidationError: Raised by the custom primary key conversion with the private raw value.
+    """
     import json
 
     from django.core.exceptions import ValidationError
@@ -289,7 +327,10 @@ def test_custom_primary_key_renamed_argument_keeps_safe_public_error() -> None:
 
 @pytest.mark.django_db
 def test_http_production_wire_keeps_deliberate_error() -> None:
-    """Production HTTP formatting retains the approved public error and code."""
+    """Production HTTP formatting retains the approved public error and code.
+
+    Scenario: http production wire keeps deliberate error.
+    """
     import json
 
     from django.test import RequestFactory, override_settings
@@ -312,7 +353,10 @@ def test_http_production_wire_keeps_deliberate_error() -> None:
 
 @pytest.mark.django_db
 def test_existing_numeric_and_null_coercion_remain_orm_owned() -> None:
-    """Accepted Python lookup forms retain Django's existing behavior."""
+    """Accepted Python lookup forms retain Django's existing behavior.
+
+    Scenario: existing numeric and null coercion remain orm owned.
+    """
     row = ScopedArticle.objects.create(title="first", is_public=True)
     assert row.pk == 1
     assert _ArticleType.get_node(None, float(row.pk)) == row
@@ -322,7 +366,10 @@ def test_existing_numeric_and_null_coercion_remain_orm_owned() -> None:
 
 @pytest.mark.django_db
 def test_non_null_field_bubbles_the_deliberate_error() -> None:
-    """GraphQL non-null propagation keeps the safe error and field path."""
+    """GraphQL non-null propagation keeps the safe error and field path.
+
+    Scenario: non null field bubbles the deliberate error.
+    """
     from graphql import GraphQLNonNull, GraphQLString
 
     from django_graphex.core import field
@@ -344,7 +391,10 @@ def test_non_null_field_bubbles_the_deliberate_error() -> None:
 
 @pytest.mark.django_db
 def test_uuid_missing_and_valid_ids_keep_lookup_behavior() -> None:
-    """A valid UUID resolves normally and a different valid UUID is missing."""
+    """A valid UUID resolves normally and a different valid UUID is missing.
+
+    Scenario: uuid missing and valid ids keep lookup behavior.
+    """
     from uuid import UUID
 
     row = UUIDThing.objects.create(name="found")
@@ -363,7 +413,11 @@ def test_uuid_missing_and_valid_ids_keep_lookup_behavior() -> None:
 
 @pytest.mark.django_db
 def test_retrieve_authorization_error_precedes_id_conversion() -> None:
-    """A permission-hook failure is never recast as an ID-format error."""
+    """A permission-hook failure is never recast as an ID-format error.
+
+    Raises:
+        ValueError: Raised by the permission hook to simulate an authorization failure.
+    """
     from django_graphex.types import DjangoModelType
 
     from ._schema_isolation import isolated_default_pair
@@ -390,7 +444,14 @@ def test_retrieve_authorization_error_precedes_id_conversion() -> None:
 def test_existing_missing_exception_boundary_in_hooks_is_preserved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A model missing exception raised by a lookup hook still means no row."""
+    """A model missing exception raised by a lookup hook still means no row.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+
+    Raises:
+        DoesNotExist: Raised by the hook to simulate a missing row.
+    """
     import django_graphex.fields as fields_module
     import django_graphex.types as types_module
     from django_graphex.types import DjangoModelType

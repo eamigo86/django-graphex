@@ -225,6 +225,9 @@ def test_logger_failure_cannot_change_safe_http_response(
 
     Args:
         monkeypatch: Scoped patch for the internal logger.
+
+    Raises:
+        RuntimeError: Raised by the patched logger to simulate an unavailable logging backend.
     """
 
     def fail_log(*args: Any, **kwargs: Any) -> None:

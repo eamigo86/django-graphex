@@ -288,7 +288,10 @@ def test_number_cap_still_rejects_null_on_every_field_type(field_name: str) -> N
 
 
 def test_number_invalid_spec_still_rejected_for_null_formatted_field() -> None:
-    """A null value does not bypass applicable format validation."""
+    """A null value does not bypass applicable format validation.
+
+    Scenario: number invalid spec still rejected for null formatted field.
+    """
     result = _execute('{ nullableValue @number(as: ".2q") }')
     assert result.data == {"nullableValue": None}
     assert result.errors is not None and len(result.errors) == 1
@@ -314,7 +317,10 @@ def test_required_null_still_validates_number_spec(spec: str, message: str) -> N
 
 
 def test_currency_custom_symbol_does_not_replace_null() -> None:
-    """A valid explicit currency symbol cannot turn null into zero."""
+    """A valid explicit currency symbol cannot turn null into zero.
+
+    Scenario: currency custom symbol does not replace null.
+    """
     result = _execute('{ nullableValue @currency(symbol: "€") }')
     assert result.errors is None
     assert result.data == {"nullableValue": None}
@@ -349,7 +355,10 @@ def test_non_null_bad_value_still_reports_coercion_error(directive: str) -> None
 
 
 def test_other_directive_and_default_chain_keep_their_contract() -> None:
-    """Numeric null does not change unrelated or explicit default behavior."""
+    """Numeric null does not change unrelated or explicit default behavior.
+
+    Scenario: other directive and default chain keep their contract.
+    """
     result = _execute(
         "{ plain: nullableValue @uppercase "
         'defaulted: nullableValue @default(to: "7") @number(as: ".2f") '

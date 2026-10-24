@@ -92,7 +92,10 @@ def _execute_wire(
 
 
 def test_omitted_variable_keeps_null_slot_on_json_wire() -> None:
-    """An absent variable in an inline JSON list retains a null wire slot."""
+    """An absent variable in an inline JSON list retains a null wire slot.
+
+    Scenario: omitted variable keeps null slot on json wire.
+    """
     assert _SCHEMA.graphql_schema.query_type.fields["echo"].type is GdxJSON
     assert _execute_wire(
         "query($value: JSON) { echo(payload: [1, $value, 3]) }",
@@ -101,7 +104,10 @@ def test_omitted_variable_keeps_null_slot_on_json_wire() -> None:
 
 
 def test_nested_lists_preserve_slots_while_object_keys_stay_omitted() -> None:
-    """Missing variables become list nulls but never materialize object keys."""
+    """Missing variables become list nulls but never materialize object keys.
+
+    Scenario: nested lists preserve slots while object keys stay omitted.
+    """
     assert _execute_wire(
         "query($value: JSON) { echo(payload: "
         "{items: [0, [$value, 2], {hidden: $value, kept: false}], "
@@ -119,7 +125,11 @@ def test_nested_lists_preserve_slots_while_object_keys_stay_omitted() -> None:
 
 @pytest.mark.parametrize("value", [0, False, "", [], {}, [4], {"x": 1}])
 def test_supplied_json_variable_values_keep_their_shape(value: Any) -> None:
-    """Defined falsy and structured values remain defined, not missing."""
+    """Defined falsy and structured values remain defined, not missing.
+
+    Args:
+        value: Value supplied by the parametrized case.
+    """
     assert _execute_wire(
         "query($value: JSON) { echo(payload: [1, $value, 3]) }",
         {"value": value},
@@ -127,7 +137,10 @@ def test_supplied_json_variable_values_keep_their_shape(value: Any) -> None:
 
 
 def test_defaulted_and_explicit_null_variables_remain_distinct() -> None:
-    """A default is used, while explicit null retains a null slot."""
+    """A default is used, while explicit null retains a null slot.
+
+    Scenario: defaulted and explicit null variables remain distinct.
+    """
     query = "query($value: JSON = 7) { echo(payload: [1, $value, 3]) }"
     assert _execute_wire(query, {}) == {"data": {"echo": [1, 7, 3]}}
     assert _execute_wire(query, {"value": None}) == {"data": {"echo": [1, None, 3]}}
@@ -137,7 +150,10 @@ def test_defaulted_and_explicit_null_variables_remain_distinct() -> None:
 
 
 def test_ordinary_typed_list_and_direct_missing_argument_stay_unchanged() -> None:
-    """Typed-list null slots and absent top-level arguments retain their behavior."""
+    """Typed-list null slots and absent top-level arguments retain their behavior.
+
+    Scenario: ordinary typed list and direct missing argument stay unchanged.
+    """
     assert _execute_wire(
         "query($value: Int) { typed(payload: [1, $value, 3]) }",
         {},
@@ -153,7 +169,10 @@ def test_ordinary_typed_list_and_direct_missing_argument_stay_unchanged() -> Non
 
 
 def test_http_view_emits_json_null_without_undefined_sentinel() -> None:
-    """The public HTTP view encodes the missing list member as strict JSON."""
+    """The public HTTP view encodes the missing list member as strict JSON.
+
+    Scenario: http view emits json null without undefined sentinel.
+    """
     query = "query($value: JSON) { echo(payload: [1, $value, 3]) }"
     request = RequestFactory().post(
         "/graphql/",
@@ -166,6 +185,9 @@ def test_http_view_emits_json_null_without_undefined_sentinel() -> None:
 
 
 def test_json_string_scalar_is_not_reinterpreted() -> None:
-    """The separate JSONString scalar keeps its prior string-decoding contract."""
+    """The separate JSONString scalar keeps its prior string-decoding contract.
+
+    Scenario: json string scalar is not reinterpreted.
+    """
     assert GdxJSONString.parse_value('"plain"') == "plain"
     assert GdxJSONString.parse_value('{"x": 1}') == {"x": 1}

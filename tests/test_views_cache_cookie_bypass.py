@@ -136,7 +136,10 @@ class CookieCacheBypassTest(TestCase):
         }
     )
     def test_issued_csrf_cookie_bypasses_next_server_cache_lookup(self) -> None:
-        """Characterize a real miss, returned cookie, and cookie-free hit."""
+        """Characterize a real miss, returned cookie, and cookie-free hit.
+
+        Scenario: issued csrf cookie bypasses next server cache lookup.
+        """
         view = GraphQLView.as_view(schema=_csrf_schema)
         _CSRFQuery.calls = 0
 

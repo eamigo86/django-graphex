@@ -73,7 +73,10 @@ _SCHEMA = DjangoGraphQLSchema(query=_Query)
 
 
 def test_literal_overflow_rejected_before_resolver() -> None:
-    """A finite-looking exponent must not become an accepted infinity."""
+    """A finite-looking exponent must not become an accepted infinity.
+
+    Scenario: literal overflow rejected before resolver.
+    """
     _CALLS.clear()
     result = graphql_sync(_SCHEMA.graphql_schema, "{ echo(payload: 1e999) }")
     assert result.errors is not None
@@ -82,7 +85,10 @@ def test_literal_overflow_rejected_before_resolver() -> None:
 
 
 def test_nested_variable_infinity_rejected_before_resolver() -> None:
-    """Nested non-finite variable values must fail input coercion."""
+    """Nested non-finite variable values must fail input coercion.
+
+    Scenario: nested variable infinity rejected before resolver.
+    """
     _CALLS.clear()
     result = graphql_sync(
         _SCHEMA.graphql_schema,
@@ -137,7 +143,10 @@ def test_overflow_literal_shapes_fail_before_resolver(literal: str) -> None:
 
 
 def test_nonfinite_default_literal_rejected() -> None:
-    """An overflowing variable default is rejected during input validation."""
+    """An overflowing variable default is rejected during input validation.
+
+    Scenario: nonfinite default literal rejected.
+    """
     _CALLS.clear()
     result = graphql_sync(
         _SCHEMA.graphql_schema,
@@ -150,14 +159,20 @@ def test_nonfinite_default_literal_rejected() -> None:
 
 
 def test_available_variable_literal_path_rejects_nonfinite() -> None:
-    """Direct literal coercion cannot bypass the raw input check."""
+    """Direct literal coercion cannot bypass the raw input check.
+
+    Scenario: available variable literal path rejects nonfinite.
+    """
     node = VariableNode(name=NameNode(value="value"))
     with pytest.raises(GraphQLError, match="JSON cannot represent non-finite numbers"):
         GdxJSON.parse_literal(node, {"value": {"nested": [float("nan")]}})
 
 
 def test_finite_and_string_values_keep_identity_and_wire_shape() -> None:
-    """Finite numbers, falsy values, and numeric strings remain unchanged."""
+    """Finite numbers, falsy values, and numeric strings remain unchanged.
+
+    Scenario: finite and string values keep identity and wire shape.
+    """
     payload = {
         "items": [0, False, None, "", 1e308, "NaN", "Infinity"],
         "empty": [],
@@ -178,7 +193,10 @@ def test_finite_and_string_values_keep_identity_and_wire_shape() -> None:
 
 
 def test_huge_finite_int_and_native_container_aliases_are_not_rewritten() -> None:
-    """Input inspection neither converts integers nor copies native containers."""
+    """Input inspection neither converts integers nor copies native containers.
+
+    Scenario: huge finite int and native container aliases are not rewritten.
+    """
     huge_int = 10**400
     shared = [huge_int, 1.25]
     payload = {"first": shared, "second": shared}
@@ -191,7 +209,10 @@ def test_huge_finite_int_and_native_container_aliases_are_not_rewritten() -> Non
 
 
 def test_defaults_missing_members_and_explicit_null_keep_their_contract() -> None:
-    """Finite defaults, omitted object keys and list null slots persist."""
+    """Finite defaults, omitted object keys and list null slots persist.
+
+    Scenario: defaults missing members and explicit null keep their contract.
+    """
     _CALLS.clear()
     result = graphql_sync(
         _SCHEMA.graphql_schema,
@@ -221,7 +242,10 @@ def test_defaults_missing_members_and_explicit_null_keep_their_contract() -> Non
 
 
 def test_http_input_error_uses_graphql_error_wire() -> None:
-    """The public HTTP view rejects non-finite input without invoking a resolver."""
+    """The public HTTP view rejects non-finite input without invoking a resolver.
+
+    Scenario: http input error uses graphql error wire.
+    """
     _CALLS.clear()
     request = RequestFactory().post(
         "/graphql/",
@@ -241,7 +265,10 @@ def test_http_input_error_uses_graphql_error_wire() -> None:
 
 
 def test_raw_output_and_json_string_scalar_remain_separate() -> None:
-    """Input-only rejection does not alter output or JSONString coercion."""
+    """Input-only rejection does not alter output or JSONString coercion.
+
+    Scenario: raw output and json string scalar remain separate.
+    """
     value = float("inf")
     assert GdxJSON.serialize(value) is value
     assert isinf(GdxJSONString.parse_value("1e999"))

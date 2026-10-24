@@ -226,6 +226,9 @@ async def test_hook_denial_has_no_session_fallback_or_secret_output(
     Args:
         result: The callback result or exception to raise.
         caplog: The captured server logs checked for secret disclosure.
+
+    Raises:
+        Exception: The configured credential error, when the hook is set up to deny.
     """
     previous = await sync_to_async(get_user_model().objects.create_user)(
         username=f"denied-{type(result).__name__}"
@@ -329,6 +332,9 @@ async def test_pending_hook_retains_protocol_errors(next_frame: str, code: int) 
     Args:
         next_frame: The second protocol message type.
         code: The native close code expected for that message.
+
+    Raises:
+        asyncio.CancelledError: Propagates the cancellation of the pending hook after recording it.
     """
     entered = asyncio.Event()
     cancelled = asyncio.Event()
@@ -377,6 +383,9 @@ async def test_pending_hook_times_out_and_cancels_without_late_ack() -> None:
     """Keep the watchdog active while authentication is pending.
 
     The deadline must cancel the owned callback before any acknowledgement.
+
+    Raises:
+        asyncio.CancelledError: Propagates the cancellation of the pending hook after recording it.
     """
     entered = asyncio.Event()
     cancelled = asyncio.Event()
@@ -422,6 +431,9 @@ async def test_disconnect_cancels_pending_hook() -> None:
     """Own the callback task and cancel it on transport disconnect.
 
     A disconnected socket must not leave credential work running.
+
+    Raises:
+        asyncio.CancelledError: Propagates the cancellation of the pending hook after recording it.
     """
     entered = asyncio.Event()
     cancelled = asyncio.Event()

@@ -174,7 +174,13 @@ def _execute(query: str) -> dict[str, str | None]:
 def test_absolute_formats_localize_only_explicit_instants(
     monkeypatch: pytest.MonkeyPatch, format_name: str, expected: str
 ) -> None:
-    """Aware Python and offset/Z text show the active zone's calendar date."""
+    """Aware Python and offset/Z text show the active zone's calendar date.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+        format_name: Name of the date format under test.
+        expected: Result the parametrized case expects.
+    """
     monkeypatch.setattr(date_directive.timezone, "now", lambda: _CLOCK)
     with django_timezone.override(ZoneInfo("America/New_York")):
         result = _execute(
@@ -198,7 +204,12 @@ def test_absolute_formats_localize_only_explicit_instants(
 def test_clock_adjacent_zero_offsets_match_z_absolute_zone(
     format_name: str, expected: str
 ) -> None:
-    """Accepted numeric zero offsets localize like the equivalent Z text."""
+    """Accepted numeric zero offsets localize like the equivalent Z text.
+
+    Args:
+        format_name: Name of the date format under test.
+        expected: Result the parametrized case expects.
+    """
     with django_timezone.override(ZoneInfo("America/New_York")):
         result = _execute(
             '{ zeroColonText @date(format: "' + format_name + '") '
@@ -217,7 +228,11 @@ def test_clock_adjacent_zero_offsets_match_z_absolute_zone(
     ("+00:00", "+0000", "+00", "+0", "-00:00", "-0000", "-00", "-0"),
 )
 def test_parser_accepted_adjacent_zero_spellings_are_explicit(suffix: str) -> None:
-    """Recognize only zero-offset spellings already accepted by the parser."""
+    """Recognize only zero-offset spellings already accepted by the parser.
+
+    Args:
+        suffix: Offset suffix appended to the date text.
+    """
     value = "2026-01-10T00:30:00" + suffix
     parsed = date_directive._parse(value)
     assert parsed is not None
@@ -228,7 +243,12 @@ def test_parser_accepted_adjacent_zero_spellings_are_explicit(suffix: str) -> No
 def test_adjacent_zero_offset_relative_formats_keep_instant(
     monkeypatch: pytest.MonkeyPatch, format_name: str
 ) -> None:
-    """Relative output keeps the established explicit-offset instant path."""
+    """Relative output keeps the established explicit-offset instant path.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+        format_name: Name of the date format under test.
+    """
     clock = datetime(2026, 1, 10, 1, 30, tzinfo=timezone.utc)
     monkeypatch.setattr(date_directive.timezone, "now", lambda: clock)
     with django_timezone.override(ZoneInfo("America/New_York")):
@@ -242,7 +262,11 @@ def test_adjacent_zero_offset_relative_formats_keep_instant(
 def test_naive_text_and_typed_inputs_keep_existing_wall_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An inherited UTC tzinfo is not evidence of explicit text offset."""
+    """An inherited UTC tzinfo is not evidence of explicit text offset.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+    """
     monkeypatch.setattr(date_directive.timezone, "now", lambda: _CLOCK)
     with django_timezone.override(ZoneInfo("America/New_York")):
         result = _execute(
@@ -263,7 +287,12 @@ def test_naive_text_and_typed_inputs_keep_existing_wall_clock(
 def test_relative_formats_keep_current_path(
     monkeypatch: pytest.MonkeyPatch, format_name: str
 ) -> None:
-    """Relative rendering still consumes the parser result unchanged."""
+    """Relative rendering still consumes the parser result unchanged.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+        format_name: Name of the date format under test.
+    """
     monkeypatch.setattr(date_directive.timezone, "now", lambda: _CLOCK)
     value = "2026-01-01T03:30:00+02:00"
     with django_timezone.override(ZoneInfo("America/New_York")):
@@ -275,7 +304,11 @@ def test_relative_formats_keep_current_path(
 def test_active_zone_applies_to_aware_instants_with_use_tz_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An active override converts aware inputs even when USE_TZ is false."""
+    """An active override converts aware inputs even when USE_TZ is false.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+    """
     monkeypatch.setattr(date_directive.timezone, "now", lambda: datetime(2026, 4, 2, 8))
     with override_settings(USE_TZ=False, TIME_ZONE="UTC"):
         with django_timezone.override(ZoneInfo("Asia/Tokyo")):
@@ -291,7 +324,10 @@ def test_active_zone_applies_to_aware_instants_with_use_tz_false(
 
 
 def test_dst_conversion_uses_each_instants_active_offset() -> None:
-    """Absolute custom output follows the active zone through a DST jump."""
+    """Absolute custom output follows the active zone through a DST jump.
+
+    Scenario: dst conversion uses each instants active offset.
+    """
     with django_timezone.override(ZoneInfo("America/New_York")):
         result = _execute(
             '{ beforeDst @date(format: "YYYY-MM-DD HH:mm ZZ") '
@@ -304,7 +340,10 @@ def test_dst_conversion_uses_each_instants_active_offset() -> None:
 
 
 def test_explicit_offset_before_accepted_abbreviation_is_localized() -> None:
-    """Trailing abbreviations do not hide an accepted numeric offset."""
+    """Trailing abbreviations do not hide an accepted numeric offset.
+
+    Scenario: explicit offset before accepted abbreviation is localized.
+    """
     with django_timezone.override(ZoneInfo("America/New_York")):
         result = _execute(
             '{ offsetWithAbbreviation @date(format: "iso") '
@@ -323,7 +362,10 @@ def test_explicit_offset_before_accepted_abbreviation_is_localized() -> None:
 
 
 def test_explicit_offset_before_trailing_year_is_localized() -> None:
-    """Parser-recognized offsets count even when the year follows them."""
+    """Parser-recognized offsets count even when the year follows them.
+
+    Scenario: explicit offset before trailing year is localized.
+    """
     with django_timezone.override(ZoneInfo("America/New_York")):
         result = _execute(
             '{ trailingYearOffsetText @date(format: "iso") '
@@ -348,7 +390,11 @@ def test_explicit_offset_before_trailing_year_is_localized() -> None:
 def test_public_helpers_and_other_input_kinds_are_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The parser, formatter and non-eligible kinds keep their old contracts."""
+    """The parser, formatter and non-eligible kinds keep their old contracts.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+    """
     monkeypatch.setattr(date_directive.timezone, "now", lambda: _CLOCK)
     with django_timezone.override(ZoneInfo("America/New_York")):
         parsed = date_directive._parse("2026-01-01T03:30:00+02:00")
@@ -370,7 +416,10 @@ def test_public_helpers_and_other_input_kinds_are_unchanged(
 
 
 def test_invalid_offset_text_keeps_string_fallback() -> None:
-    """A failed original parse never enters offset-provenance detection."""
+    """A failed original parse never enters offset-provenance detection.
+
+    Scenario: invalid offset text keeps string fallback.
+    """
     assert _execute('{ invalidText @date(format: "iso") }') == {
         "invalidText": "not a date +02:00"
     }

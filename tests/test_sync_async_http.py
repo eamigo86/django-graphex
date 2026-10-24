@@ -506,6 +506,9 @@ def test_async_middleware_is_rejected_without_running_its_body(
 
     Args:
         view_class: The synchronous built-in HTTP view under test.
+
+    Raises:
+        GraphQLError: Raised by the control resolver to prove normal execution still works.
     """
     body_started: list[str] = []
 
@@ -671,6 +674,9 @@ def test_executor_exception_after_async_value_closes_owned_coroutine() -> None:
     """Close request-owned async work even if an executor then fails.
 
     This checks the exception path before a top-level awaitable can be returned.
+
+    Raises:
+        RuntimeError: Raised by the patched executor after an async value was produced.
     """
     body_started: list[str] = []
     created: list[Any] = []

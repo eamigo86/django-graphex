@@ -257,5 +257,8 @@ def test_multifield_priority_and_relation_name_remain_intact(kind: str) -> None:
 
 
 def test_malformed_prefix_is_not_normalized_into_a_valid_column() -> None:
-    """Leave an invalid server ordering spelling for Django to reject."""
+    """Leave an invalid server ordering spelling for Django to reject.
+
+    Scenario: malformed prefix is not normalized into a valid column.
+    """
     assert _automatic_null_ordering(Post, ["--category_id"]) == ["--category_id"]

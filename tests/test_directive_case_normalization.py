@@ -80,7 +80,10 @@ def test_approved_source_forms_normalize_consistently(source: str) -> None:
 
 
 def test_acronym_block_is_one_word() -> None:
-    """An acronym preceding a title word must retain the word boundary."""
+    """An acronym preceding a title word must retain the word boundary.
+
+    Scenario: acronym block is one word.
+    """
     assert _run_case("HTTPServer") == {
         "camel": "httpServer",
         "snake": "http_server",
@@ -127,7 +130,10 @@ def test_each_directive_output_is_idempotent(source: str) -> None:
 
 
 def test_none_passes_through_and_numeric_value_is_stringified() -> None:
-    """The existing null and Python-string-coercion mechanism remains active."""
+    """The existing null and Python-string-coercion mechanism remains active.
+
+    Scenario: none passes through and numeric value is stringified.
+    """
     empty = _run_case(None)
     assert (empty["camel"], empty["snake"], empty["kebab"]) == (
         None,

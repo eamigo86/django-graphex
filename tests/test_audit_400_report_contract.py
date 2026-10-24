@@ -47,7 +47,10 @@ def _report() -> str:
 
 
 def test_report_bounds_direct_int_or_string_union_disposition() -> None:
-    """Record the accepted direct form and original-scope audit resolution."""
+    """Record the accepted direct form and original-scope audit resolution.
+
+    Scenario: report bounds direct int or string union disposition.
+    """
     report = _report()
     assert "M-D10 | bounded-fixed" in report
     assert "shared strict IntOrString" in report

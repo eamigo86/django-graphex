@@ -33,7 +33,10 @@ _value: object = None
 
 
 class Query(ObjectType):
-    """Expose a resolver value through the public schema compiler."""
+    """Expose a resolver value through the public schema compiler.
+
+    The value and required fields resolve through methods that return the value selected by the test.
+    """
 
     value = field(GraphQLString)
     required = field(GraphQLNonNull(GraphQLString))
@@ -134,7 +137,10 @@ def test_floor_keeps_finite_and_boolean_values(value: object, expected: str) -> 
 
 
 def test_floor_preserves_none_and_malformed_value_policy() -> None:
-    """Keep null passthrough and the existing malformed-number error."""
+    """Keep null passthrough and the existing malformed-number error.
+
+    Scenario: floor preserves none and malformed value policy.
+    """
     info = SimpleNamespace(return_type=GraphQLString)
     assert FloorGraphQLDirective.resolve(None, {}, None, None, info) is None
     with pytest.raises(GraphQLError) as error:
@@ -145,7 +151,10 @@ def test_floor_preserves_none_and_malformed_value_policy() -> None:
 
 
 def test_floor_nonnull_error_uses_standard_bubbling() -> None:
-    """Let GraphQL bubble the directive error from a non-null field."""
+    """Let GraphQL bubble the directive error from a non-null field.
+
+    Scenario: floor nonnull error uses standard bubbling.
+    """
     global _value
     _value = math.inf
     result = graphql_sync(
@@ -159,7 +168,10 @@ def test_floor_nonnull_error_uses_standard_bubbling() -> None:
 
 
 def test_other_directives_and_floor_schema_metadata_remain_unchanged() -> None:
-    """Leave neighboring directive behavior and SDL-facing metadata alone."""
+    """Leave neighboring directive behavior and SDL-facing metadata alone.
+
+    Scenario: other directives and floor schema metadata remain unchanged.
+    """
     info = SimpleNamespace(return_type=GraphQLString)
     assert CeilGraphQLDirective.resolve(1.2, {}, None, None, info) == "2"
     assert (

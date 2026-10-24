@@ -78,7 +78,11 @@ def _post(
 
 
 def test_nonnull_root_execution_error_has_null_data_in_both_views() -> None:
-    """A failed non-null root executes before returning its null data envelope."""
+    """A failed non-null root executes before returning its null data envelope.
+
+    Raises:
+        GraphQLError: Raised by the root resolver to fail the non-null root field.
+    """
     calls: list[str] = []
 
     def fail(root: Any, info: Any) -> str:
@@ -156,7 +160,10 @@ def test_request_errors_stay_http_400_without_data(body: dict[str, Any]) -> None
 
 
 def test_nullable_error_and_success_keep_existing_data_and_cost() -> None:
-    """Keep HTTP 200 partial data and successful responses unchanged."""
+    """Keep HTTP 200 partial data and successful responses unchanged.
+
+    Scenario: nullable error and success keep existing data and cost.
+    """
     calls: list[str] = []
     schema = _schema(calls)
     with override_settings(DJANGO_GRAPHEX={"EXPOSE_QUERY_COST": True}):
@@ -173,7 +180,10 @@ def test_nullable_error_and_success_keep_existing_data_and_cost() -> None:
 
 
 def test_null_execution_errors_are_not_cached_or_replayed() -> None:
-    """Execute each HTTP 200 error request without storing a response entry."""
+    """Execute each HTTP 200 error request without storing a response entry.
+
+    Scenario: null execution errors are not cached or replayed.
+    """
     calls: list[str] = []
     cache_config = {
         "default": {
@@ -202,7 +212,10 @@ def test_null_execution_errors_are_not_cached_or_replayed() -> None:
 
 
 def test_batch_execution_error_continues_and_validation_error_remains_scoped() -> None:
-    """Return one null execution entry and keep ordinary validation entries."""
+    """Return one null execution entry and keep ordinary validation entries.
+
+    Scenario: batch execution error continues and validation error remains scoped.
+    """
     calls: list[str] = []
     status, payload = _post(
         _schema(calls),
@@ -226,7 +239,10 @@ def test_batch_execution_error_continues_and_validation_error_remains_scoped() -
 
 
 def test_multipart_form_uses_same_execution_envelope() -> None:
-    """Keep ordinary multipart form handling on the common response path."""
+    """Keep ordinary multipart form handling on the common response path.
+
+    Scenario: multipart form uses same execution envelope.
+    """
     calls: list[str] = []
     status, payload = _post(
         _schema(calls), {"query": "{ required }"}, content_type="multipart/form-data"

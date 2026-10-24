@@ -48,7 +48,10 @@ def test_docs_say_forbidden_permission_classes_fail_loudly() -> None:
 
 
 def test_guide_documents_string_literal_enum_client_migration() -> None:
-    """Keep the new wire enum contract distinct from unsupported fallbacks."""
+    """Keep the new wire enum contract distinct from unsupported fallbacks.
+
+    Scenario: guide documents string literal enum client migration.
+    """
     usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
     upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     for text in (usage, upgrade):
@@ -62,7 +65,10 @@ def test_guide_documents_string_literal_enum_client_migration() -> None:
 
 
 def test_guide_documents_direct_int_or_string_union_migration() -> None:
-    """Keep the exact scalar boundary and client variable migration visible."""
+    """Keep the exact scalar boundary and client variable migration visible.
+
+    Scenario: guide documents direct int or string union migration.
+    """
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -83,7 +89,10 @@ def test_guide_documents_direct_int_or_string_union_migration() -> None:
 
 
 def test_guide_documents_typed_integer_map_json_migration() -> None:
-    """Keep the strict typed-map wire change distinct from bare JSON."""
+    """Keep the strict typed-map wire change distinct from bare JSON.
+
+    Scenario: guide documents typed integer map json migration.
+    """
     usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
     upgrade = (ROOT / "docs/UPGRADE-4.0.md").read_text(encoding="utf-8")
     for text in (usage, upgrade):
@@ -96,7 +105,10 @@ def test_guide_documents_typed_integer_map_json_migration() -> None:
 
 
 def test_guide_documents_exact_boolean_map_json_migration() -> None:
-    """Keep direct Boolean-map migration and default limits visible."""
+    """Keep direct Boolean-map migration and default limits visible.
+
+    Scenario: guide documents exact boolean map json migration.
+    """
     paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
@@ -107,7 +119,10 @@ def test_guide_documents_exact_boolean_map_json_migration() -> None:
 
 
 def test_guide_documents_typed_string_map_json_migration() -> None:
-    """Keep exact string-valued maps distinct from unsupported forms."""
+    """Keep exact string-valued maps distinct from unsupported forms.
+
+    Scenario: guide documents typed string map json migration.
+    """
     paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.0.md")
     for relative in paths:
         text = (ROOT / relative).read_text(encoding="utf-8")
@@ -134,7 +149,10 @@ def test_guide_documents_typed_string_map_json_migration() -> None:
 
 
 def test_guide_documents_recursive_supported_input_lists() -> None:
-    """Keep recursive list migration distinct from unsupported leaves."""
+    """Keep recursive list migration distinct from unsupported leaves.
+
+    Scenario: guide documents recursive supported input lists.
+    """
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -148,7 +166,10 @@ def test_guide_documents_recursive_supported_input_lists() -> None:
 
 
 def test_guide_documents_exact_integer_set_migration() -> None:
-    """Distinguish the two approved integer-set forms from other sets."""
+    """Distinguish the two approved integer-set forms from other sets.
+
+    Scenario: guide documents exact integer set migration.
+    """
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -169,7 +190,10 @@ def test_guide_documents_exact_integer_set_migration() -> None:
 
 
 def test_guide_documents_exact_string_set_migration() -> None:
-    """Document both string-set spellings and whole-string singleton input."""
+    """Document both string-set spellings and whole-string singleton input.
+
+    Scenario: guide documents exact string set migration.
+    """
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -188,7 +212,10 @@ def test_guide_documents_exact_string_set_migration() -> None:
 
 
 def test_guide_documents_exact_float_set_migration() -> None:
-    """Document both spellings and field-local overflow rejection."""
+    """Document both spellings and field-local overflow rejection.
+
+    Scenario: guide documents exact float set migration.
+    """
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -213,7 +240,10 @@ def test_guide_documents_exact_float_set_migration() -> None:
 
 
 def test_guide_documents_exact_uuid_set_migration() -> None:
-    """Document both UUID-set spellings and native validation."""
+    """Document both UUID-set spellings and native validation.
+
+    Scenario: guide documents exact uuid set migration.
+    """
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -233,7 +263,10 @@ def test_guide_documents_exact_uuid_set_migration() -> None:
 
 
 def test_guide_documents_exact_finite_decimal_set_migration() -> None:
-    """Document Decimal list parity without claiming global scalar tightening."""
+    """Document Decimal list parity without claiming global scalar tightening.
+
+    Scenario: guide documents exact finite decimal set migration.
+    """
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -254,7 +287,10 @@ def test_guide_documents_exact_finite_decimal_set_migration() -> None:
 
 
 def test_guide_documents_exact_boolean_set_migration() -> None:
-    """Document both boolean-set spellings and native validation."""
+    """Document both boolean-set spellings and native validation.
+
+    Scenario: guide documents exact boolean set migration.
+    """
     for relative in (
         "docs/usage/mutations.md",
         "docs/api/types.md",
@@ -274,7 +310,10 @@ def test_guide_documents_exact_boolean_set_migration() -> None:
 
 
 def test_docs_qualify_fixed_json_object_default_metadata() -> None:
-    """Distinguish printable JSON defaults from ineligible object keys."""
+    """Distinguish printable JSON defaults from ineligible object keys.
+
+    Scenario: docs qualify fixed json object default metadata.
+    """
     paths = (
         "docs/usage/mutations.md",
         "docs/api/types.md",

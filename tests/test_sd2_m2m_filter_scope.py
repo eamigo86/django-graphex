@@ -976,6 +976,9 @@ def test_m2m_hook_exception_fails_closed(
     Args:
         rows: Database witness rows.
         monkeypatch: Pytest's temporary patch fixture.
+
+    Raises:
+        RuntimeError: Raised by the scope hook to simulate a failing tag scope.
     """
 
     def broken(cls: type, queryset: Any, info: Any) -> Any:

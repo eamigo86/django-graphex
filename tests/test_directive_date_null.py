@@ -140,7 +140,10 @@ def test_nullable_date_field_stays_null(query: str) -> None:
 
 
 def test_required_root_date_uses_normal_non_null_error() -> None:
-    """A required root field bubbles to data null with a normal error path."""
+    """A required root field bubbles to data null with a normal error path.
+
+    Scenario: required root date uses normal non null error.
+    """
     result = _execute('{ requiredDate @date(format: "YYYY-MM-DD") }')
     assert result.data is None
     assert result.errors is not None and len(result.errors) == 1
@@ -149,7 +152,10 @@ def test_required_root_date_uses_normal_non_null_error() -> None:
 
 
 def test_required_nested_date_bubbles_only_to_nullable_parent() -> None:
-    """Nested NonNull bubbling keeps an unrelated root sibling intact."""
+    """Nested NonNull bubbling keeps an unrelated root sibling intact.
+
+    Scenario: required nested date bubbles only to nullable parent.
+    """
     result = _execute("{ child { requiredDate @date } sibling }")
     assert result.data == {"child": None, "sibling": "kept"}
     assert result.errors is not None and len(result.errors) == 1
@@ -157,27 +163,39 @@ def test_required_nested_date_bubbles_only_to_nullable_parent() -> None:
 
 
 def test_valid_datetime_still_formats() -> None:
-    """A non-null aware datetime retains the existing formatting path."""
+    """A non-null aware datetime retains the existing formatting path.
+
+    Scenario: valid datetime still formats.
+    """
     result = _execute('{ validDate @date(format: "YYYY-MM-DD") }')
     assert result.errors is None
     assert result.data == {"validDate": "2026-01-10"}
 
 
 def test_invalid_non_null_value_keeps_fallback() -> None:
-    """An invalid non-null value still uses the pre-existing fallback."""
+    """An invalid non-null value still uses the pre-existing fallback.
+
+    Scenario: invalid non null value keeps fallback.
+    """
     info = SimpleNamespace(return_type=GraphQLString)
     result = DateGraphQLDirective.resolve(object(), {}, None, None, info)
     assert result.date_str == "INVALID FORMAT STRING"
 
 
 def test_date_resolver_none_is_not_a_format_wrapper() -> None:
-    """The direct resolver must return None, not a serializable sentinel."""
+    """The direct resolver must return None, not a serializable sentinel.
+
+    Scenario: date resolver none is not a format wrapper.
+    """
     info = SimpleNamespace(return_type=GraphQLString)
     assert DateGraphQLDirective.resolve(None, {}, None, None, info) is None
 
 
 def test_date_only_value_still_uses_existing_formatting() -> None:
-    """Non-null date-only values retain their prior formatting policy."""
+    """Non-null date-only values retain their prior formatting policy.
+
+    Scenario: date only value still uses existing formatting.
+    """
     info = SimpleNamespace(return_type=GdxDate)
     result = DateGraphQLDirective.resolve(
         date(2026, 1, 10), {"format": "YYYY-MM-DD"}, None, None, info

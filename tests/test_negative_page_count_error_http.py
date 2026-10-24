@@ -42,6 +42,9 @@ def test_failed_negative_page_count_is_generic_and_does_not_fetch_rows(
         page_rows: Five ordered posts in the disposable test database.
         page: Negative page number requiring a count.
         variable: Whether to send the page as a GraphQL variable.
+
+    Raises:
+        DatabaseError: Raised by the patched count with private table detail.
     """
     original_count = QuerySet.count
     original_fetch_all = QuerySet._fetch_all
@@ -98,6 +101,9 @@ def test_failed_count_does_not_use_length_or_iteration() -> None:
     """Keep the failed-count path independent of collection evaluation.
 
     Neither length nor iteration may recover a database count failure.
+
+    Raises:
+        OperationalError: Raised by the patched count with private backend detail.
     """
 
     class BrokenCount:
@@ -144,6 +150,9 @@ def test_list_fallback_and_unrelated_count_errors_are_unchanged() -> None:
     """Keep list compatibility without swallowing arbitrary count failures.
 
     Only database errors receive the new GraphQL failure policy.
+
+    Raises:
+        ValueError: Raised by the patched count as an unrelated failure.
     """
     assert _get_count([1, 2, 3]) == 3
 

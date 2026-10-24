@@ -31,6 +31,9 @@ async def test_client_complete_logs_suppressed_delivery_runtimeerror(
     Args:
         monkeypatch: Isolates the channel layer used by the subscription.
         caplog: Captures the delivery logger's server-side diagnostic.
+
+    Raises:
+        RuntimeError: The injected group discard failure.
     """
     failure = RuntimeError("injected group_discard failure")
     attempts: list[tuple[str, str]] = []
@@ -106,6 +109,10 @@ async def test_delivery_close_runtimeerror_warns_once_and_stays_idempotent(
 
     Args:
         caplog: Captures the warning and its original exception information.
+
+    Raises:
+        StopAsyncIteration: The test source never emits events.
+        RuntimeError: The injected close race raised by the source.
     """
     failure = RuntimeError("async generator is already running")
 
@@ -170,6 +177,9 @@ async def test_client_complete_valueerror_keeps_existing_error_frame(
     Args:
         monkeypatch: Isolates the channel layer used by the subscription.
         caplog: Captures existing transport errors and new delivery warnings.
+
+    Raises:
+        ValueError: The injected group discard failure.
     """
     failure = ValueError("injected group_discard failure")
 

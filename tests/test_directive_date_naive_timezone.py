@@ -99,7 +99,13 @@ _SCHEMA = DjangoGraphQLSchema(query=_Query, directives=list(all_directives))
 def test_timezone_less_text_uses_active_zone_for_absolute_and_relative_formats(
     monkeypatch: pytest.MonkeyPatch, use_tz: bool, clock: datetime
 ) -> None:
-    """Attach the active zone without converting the written wall clock."""
+    """Attach the active zone without converting the written wall clock.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+        use_tz: Value of the time zone support setting for the case.
+        clock: Fixed current time returned by the patched clock.
+    """
     monkeypatch.setattr(date_directive.timezone, "now", lambda: clock)
     query = """{
       custom: naiveText @date(format: "YYYY-MM-DD HH:mm ZZ")
@@ -142,7 +148,12 @@ def test_timezone_less_text_uses_active_zone_for_absolute_and_relative_formats(
 def test_timezone_less_summer_text_uses_each_active_zone(
     active_zone: str, expected_offset: str
 ) -> None:
-    """The original summer hour stays fixed as the active zone changes."""
+    """The original summer hour stays fixed as the active zone changes.
+
+    Args:
+        active_zone: Name of the active time zone for the case.
+        expected_offset: UTC offset the case expects.
+    """
     with override_settings(USE_TZ=True, TIME_ZONE="America/New_York"):
         with django_timezone.override(ZoneInfo(active_zone)):
             result = graphql_sync(
@@ -157,7 +168,11 @@ def test_timezone_less_summer_text_uses_each_active_zone(
 def test_missing_components_keep_the_parser_default_across_midnight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An active-zone date rollover must not change omitted DATE filling."""
+    """An active-zone date rollover must not change omitted DATE filling.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+    """
     clock = datetime(2026, 1, 10, 23, 30, tzinfo=timezone.utc)
     monkeypatch.setattr(date_directive.timezone, "now", lambda: clock)
     query = """{
@@ -192,7 +207,11 @@ def test_missing_components_keep_the_parser_default_across_midnight(
 def test_named_unknown_and_numeric_offset_text_keep_previous_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only genuinely timezone-less text enters the new attachment path."""
+    """Only genuinely timezone-less text enters the new attachment path.
+
+    Args:
+        monkeypatch: Pytest fixture used to patch attributes for this test only.
+    """
     monkeypatch.setattr(
         date_directive.timezone,
         "now",
@@ -230,7 +249,10 @@ def test_named_unknown_and_numeric_offset_text_keep_previous_paths(
 
 
 def test_original_explicit_offset_helper_retains_its_boolean_contract() -> None:
-    """The existing private offset check remains callable and selective."""
+    """The existing private offset check remains callable and selective.
+
+    Scenario: original explicit offset helper retains its boolean contract.
+    """
     for value, expected in (
         ("2026-01-10 14:30+0200", True),
         ("2026-01-10 14:30Z", True),

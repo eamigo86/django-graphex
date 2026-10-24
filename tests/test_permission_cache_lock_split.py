@@ -50,6 +50,9 @@ def test_warm_hit_completes_before_unrelated_cold_prune_is_released() -> None:
     """Let a warm cache hit complete during an unrelated cold prune.
 
     The blocked build for one signature must not hold up another cached key.
+
+    Raises:
+        TimeoutError: The cold prune was not released within the allotted time.
     """
     cache = _SignatureSchemaCache()
     full = _schema()
@@ -116,6 +119,9 @@ def test_cold_builds_remain_serial_and_same_key_is_shared() -> None:
     """Serialize cold prunes and share a build for the same key.
 
     Distinct signatures cannot enter their pruning callbacks together.
+
+    Raises:
+        TimeoutError: The first cold prune was not released within the allotted time.
     """
     cache = _SignatureSchemaCache()
     full = _schema()
@@ -182,6 +188,9 @@ def test_clear_waits_for_build_then_removes_entry() -> None:
     """Make cache clearing wait for an active build.
 
     No completed entry should survive the ordered clear operation.
+
+    Raises:
+        TimeoutError: The build was not released within the allotted time.
     """
     cache = _SignatureSchemaCache()
     full = _schema()
@@ -232,6 +241,9 @@ def test_reentrant_clear_and_failed_prune_leave_cache_recoverable() -> None:
     """Keep the cache usable after reentrant clear and failed pruning.
 
     A failed build must not publish an entry before a later successful retry.
+
+    Raises:
+        ValueError: Raised by the patched prune to simulate a failed build.
     """
     cache = _SignatureSchemaCache()
     full = _schema()

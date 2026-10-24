@@ -26,7 +26,10 @@ _resolver_calls: list[str] = []
 
 
 class Query(ObjectType):
-    """Expose a fixed field to distinguish validation from execution."""
+    """Expose a fixed field to distinguish validation from execution.
+
+    The text field resolves through a method that records its calls.
+    """
 
     text = field(GraphQLString)
 
@@ -95,7 +98,10 @@ def test_field_transform_inside_fragment_still_executes(document: str) -> None:
 
 
 def test_spec_builtins_still_control_fragment_and_field_selection() -> None:
-    """Leave selection directives to the GraphQL executor."""
+    """Leave selection directives to the GraphQL executor.
+
+    Scenario: spec builtins still control fragment and field selection.
+    """
     _resolver_calls.clear()
     excluded = graphql_sync(
         _schema.graphql_schema,
@@ -118,7 +124,10 @@ def test_spec_builtins_still_control_fragment_and_field_selection() -> None:
 
 
 def test_library_locations_and_builtin_metadata_are_distinct() -> None:
-    """Expose field-only library transforms without modifying spec directives."""
+    """Expose field-only library transforms without modifying spec directives.
+
+    Scenario: library locations and builtin metadata are distinct.
+    """
     library = list(all_directives[:25])
     builtins = list(all_directives[25:])
     assert len(library) == 25
@@ -179,7 +188,10 @@ def test_raw_third_party_directive_keeps_explicit_fragment_locations(
 
 
 def test_field_transform_order_is_unchanged() -> None:
-    """Apply distinct field transforms in their written order."""
+    """Apply distinct field transforms in their written order.
+
+    Scenario: field transform order is unchanged.
+    """
     _resolver_calls.clear()
     result = graphql_sync(
         _schema.graphql_schema,
@@ -192,7 +204,10 @@ def test_field_transform_order_is_unchanged() -> None:
 
 
 def test_invalid_fragment_transform_has_http_error_wire() -> None:
-    """Expose the standard validation error over the public HTTP view."""
+    """Expose the standard validation error over the public HTTP view.
+
+    Scenario: invalid fragment transform has http error wire.
+    """
     _resolver_calls.clear()
     request = RequestFactory().post(
         "/graphql/",
@@ -212,7 +227,10 @@ def test_invalid_fragment_transform_has_http_error_wire() -> None:
 
 
 def test_guide_states_field_only_contract_with_fragment_migration() -> None:
-    """Keep the field-only rule and migration example together in the guide."""
+    """Keep the field-only rule and migration example together in the guide.
+
+    Scenario: guide states field only contract with fragment migration.
+    """
     guide = (Path(__file__).resolve().parents[1] / "docs/directives.md").read_text(
         encoding="utf-8"
     )

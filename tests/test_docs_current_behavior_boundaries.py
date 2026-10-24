@@ -84,7 +84,10 @@ def test_cache_guide_explains_csrf_cookie_round_trip_and_privacy() -> None:
 
 
 def test_cache_guide_limits_csrf_cookie_claim_to_decorated_misses() -> None:
-    """Name the decorated base view without promising a cookie on every response."""
+    """Name the decorated base view without promising a cookie on every response.
+
+    Scenario: cache guide limits csrf cookie claim to decorated misses.
+    """
     body = section("docs/usage/caching.md", "## CSRF cookies and cached responses")
     introduction = body.split("### Browser cookie round trip", 1)[0]
     assert "BaseGraphQLView.dispatch" in introduction
@@ -113,7 +116,10 @@ def test_mutation_guide_distinguishes_input_semantics_from_sql_updates() -> None
 
 
 def test_pagination_guide_states_automatic_nullable_order_boundary() -> None:
-    """Document offset/page parity without promising arbitrary ORM rewrites."""
+    """Document offset/page parity without promising arbitrary ORM rewrites.
+
+    Scenario: pagination guide states automatic nullable order boundary.
+    """
     body = section(
         "docs/usage/pagination.md", "### Null ordering across paginator types"
     )

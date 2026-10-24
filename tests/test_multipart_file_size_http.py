@@ -166,7 +166,10 @@ def test_every_repeated_file_is_checked(oversize_first: bool) -> None:
 
 
 def test_multiple_files_are_not_summed() -> None:
-    """Allow separate files whose aggregate exceeds the per-file cap."""
+    """Allow separate files whose aggregate exceeds the per-file cap.
+
+    Scenario: multiple files are not summed.
+    """
     status, body, calls = _post_multipart(
         GraphQLView,
         {"first": _file("a.bin", b"xx"), "second": _file("b.bin", b"xx")},
@@ -214,7 +217,10 @@ def test_graphiql_success_path_still_checks_files(view_class: type) -> None:
 
 
 def test_cache_active_multipart_cannot_bypass_file_cap() -> None:
-    """Reject the upload on the enhanced view's uncached multipart path."""
+    """Reject the upload on the enhanced view's uncached multipart path.
+
+    Scenario: cache active multipart cannot bypass file cap.
+    """
     status, body, calls = _post_multipart(
         GraphQLView,
         {"unused": _file("large.bin", b"xxxx")},
@@ -226,7 +232,10 @@ def test_cache_active_multipart_cannot_bypass_file_cap() -> None:
 
 
 def test_independent_total_body_cap_still_rejects_first() -> None:
-    """Retain the earlier total-body guard when the file itself fits."""
+    """Retain the earlier total-body guard when the file itself fits.
+
+    Scenario: independent total body cap still rejects first.
+    """
     status, body, calls = _post_multipart(
         GraphQLView,
         {"unused": _file("small.bin", b"xx")},
@@ -240,7 +249,10 @@ def test_independent_total_body_cap_still_rejects_first() -> None:
 
 
 def test_temporary_uploaded_file_is_rejected_and_closed() -> None:
-    """Check a disk-spooled Django upload without leaving its temp file open."""
+    """Check a disk-spooled Django upload without leaving its temp file open.
+
+    Scenario: temporary uploaded file is rejected and closed.
+    """
     from django.core.files.uploadedfile import TemporaryUploadedFile
 
     calls: list[str] = []
@@ -275,7 +287,10 @@ def test_temporary_uploaded_file_is_rejected_and_closed() -> None:
 
 
 def test_csrf_header_refusal_precedes_file_cap() -> None:
-    """Retain the existing cross-site POST refusal before parsing files."""
+    """Retain the existing cross-site POST refusal before parsing files.
+
+    Scenario: csrf header refusal precedes file cap.
+    """
 
     class Query(ObjectType):
         hello = field(GraphQLString)
@@ -294,7 +309,10 @@ def test_csrf_header_refusal_precedes_file_cap() -> None:
 
 
 def test_oversized_file_prevents_mutation_resolver() -> None:
-    """Reject the multipart request before a mutation's write-like action."""
+    """Reject the multipart request before a mutation's write-like action.
+
+    Scenario: oversized file prevents mutation resolver.
+    """
     from graphql import GraphQLBoolean
 
     from django_graphex.core import Mutation

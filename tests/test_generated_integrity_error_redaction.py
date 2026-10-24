@@ -522,6 +522,9 @@ def test_generated_delete_integrity_failure_is_redacted(
     Args:
         schema: One generated frontend.
         monkeypatch: Scoped replacement of model deletion.
+
+    Raises:
+        IntegrityError: Injected by the patched delete to simulate a constraint failure with private detail.
     """
     created = _ensure_tables()
     try:
@@ -564,6 +567,9 @@ def test_generated_success_and_nonintegrity_error_use_http_diagnostics(
     Args:
         schema: One generated frontend.
         monkeypatch: Scoped model-save replacement.
+
+    Raises:
+        DatabaseError: Injected by the patched save to simulate a failure that is not an integrity error.
     """
     created = _ensure_tables()
     try:

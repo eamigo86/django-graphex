@@ -185,7 +185,10 @@ async def test_real_float_field_exact_event(
 
 
 def test_float_pair_only_changes_finite_exact_equality() -> None:
-    """Preserve all legacy and typed boundaries outside finite float pairs."""
+    """Preserve all legacy and typed boundaries outside finite float pairs.
+
+    Scenario: float pair only changes finite exact equality.
+    """
     controls: list[tuple[Any, Any, bool]] = [
         (-0.0, 0.0, True),
         (0.0, -0.0, True),
