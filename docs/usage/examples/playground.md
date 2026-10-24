@@ -29,7 +29,7 @@ You need [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 git clone https://github.com/eamigo86/django-graphex.git
 cd django-graphex/examples/playground
 
-make install     # uv sync — installs the local library (editable) + daphne
+make install     # uv sync --group test — local library (editable) + daphne + test tools
 make migrate     # generate + apply migrations (SQLite)
 make seed        # load demo data (see below)
 make run         # daphne ASGI server (HTTP + WebSocket) on 127.0.0.1:8000
@@ -42,7 +42,7 @@ All the `Makefile` targets:
 
 | Target | What it does |
 |--------|--------------|
-| `make install` | `uv sync` — creates the venv, installs `django-graphex[subscriptions]` from the parent checkout (editable) plus `daphne` |
+| `make install` | `uv sync --group test` — creates the venv, installs `django-graphex[subscriptions]` from the parent checkout (editable), `daphne` and the pytest tools |
 | `make migrate` | `makemigrations blog` + `migrate` (SQLite) |
 | `make seed` | Loads the demo data via `python manage.py seed` |
 | `make run` | Starts `daphne` (ASGI: HTTP **and** WebSocket) at `http://127.0.0.1:8000/` |

@@ -163,7 +163,7 @@ Try these in GraphiQL to see the guard in action.
 ```bash
 cd examples/playground
 
-make install     # uv sync — installs the local library + daphne
+make install     # uv sync --group test — local library + daphne + test tools
 make migrate     # create + apply migrations (SQLite)
 make seed        # demo data: 15 authors × 12 posts × 3 comments, 12 notes,
                  #            2 accounts + 2 invoices + 4 attachments (GFK union).
@@ -326,7 +326,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 ## How to run
 
 ```text
-make install        uv sync (local library + daphne)
+make install        uv sync --group test (local library + daphne + test tools)
 make migrate        makemigrations + migrate
 make seed           load demo data
 make run            daphne ASGI server (HTTP + WebSocket)
@@ -384,9 +384,19 @@ view (`config/urls.py`):
   other. `Comment.internal_note` is pinned on the write inputs too, standalone
   and nested.
 - **Relation-scope hatch** (`test_relation_scope_hatch.py`) — both arms scope
-  their relation for an anonymous caller, the auto-expanded shape beside them
-  still does not, and the ordering and filter axes the declaration costs are
-  pinned closed with a non-masked relation as the control.
+  their relation for an anonymous caller, the auto-expanded reverse-FK and
+  reverse-M2M shapes beside them hide drafts too, and the ordering and filter
+  axes the declaration costs are pinned closed with a non-masked relation as the
+  control.
+- **Open and gated writes** (`test_write_access.py`) — the writes the README
+  lists as open accept an anonymous caller; `postUpdate`, `postDelete` and
+  `documentUpdate` are refused until login and change nothing.
+- **Registration** (`test_registration.py`) — weak and username-similar
+  passwords are refused, a duplicate username gets the generic message, and a
+  valid password still registers.
+- **Public subscription scope** (`test_subscription_transports_e2e.py`) — an
+  anonymous `postSubscription` never receives a draft over WebSocket or SSE,
+  while a logged-in subscriber does.
 - **Multipart uploads** (`test_multipart_upload.py`) — `documentCreate` saves a
   part under either spelling, ignores an unmatched part while still answering
   `ok: true`, and is refused HTTP 403 without `X-Requested-With`. Uploads are
@@ -403,21 +413,33 @@ view (`config/urls.py`):
   tells you to press Run on. (A full headless-browser round-trip is
   intentionally deferred — no Playwright/Selenium dependency is added.)
 
-Run them with **make** (uses `uv`, installs the `test` dependency group):
+Run them with **make** (uses `uv`; `make install` already installs the `test`
+dependency group, and `make test` requests it again so it also works on an
+environment created with a plain `uv sync`):
 
 ```bash
 cd examples/playground
+make install
 make test
+```
+
+Without `make`, the same thing with `uv`:
+
+```bash
+cd examples/playground
+uv sync --group test
+uv run --group test pytest -q --no-migrations
 ```
 
 Or directly, with any environment that already has `pytest`, `pytest-django`,
 `pytest-asyncio`, `channels`, and `daphne` available (e.g. the repo's own dev
 venv) — `--no-migrations` builds the test DB straight from the models, since
-the playground ships no migration files:
+the playground ships no migration files. The playground has no coverage
+plugin configured, so there is no `--no-cov` flag to pass:
 
 ```bash
 cd examples/playground
-DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations --no-cov
+DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
 ```
 
 The shipped `ALLOWED_HOSTS` contains only `127.0.0.1`, `localhost`, and

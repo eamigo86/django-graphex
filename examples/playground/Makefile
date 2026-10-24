@@ -4,8 +4,8 @@
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Create the venv and install deps (uv) — uses the local library
-	uv sync
+install: ## Create the venv and install deps + test tools (uv) — uses the local library
+	uv sync --group test
 
 migrate: ## Make + apply migrations (SQLite)
 	uv run python manage.py makemigrations blog
