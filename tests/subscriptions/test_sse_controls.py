@@ -405,6 +405,63 @@ async def test_transient_renewal_failure_keeps_stream_open(
 
 @pytest.mark.asyncio
 @override_settings(DJANGO_GRAPHEX=_RENEWAL_SETTINGS)
+async def test_first_stream_renewal_error_is_tolerated_after_acquire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acquisition confirms the TTL, so a failing first renewal is retried.
+
+    Args:
+        monkeypatch: Shortens timing and fails one in-stream renewal.
+
+    Raises:
+        AssertionError: If the stream closes or stops renewing.
+    """
+    monkeypatch.setattr(
+        "channels.layers.get_channel_layer", lambda: InMemoryChannelLayer()
+    )
+    _fast_renewal(monkeypatch)
+    redis = _install_fake_redis(monkeypatch)
+    real_eval = redis.eval
+    renews = []
+
+    def flaky(script: str, key_count: int, key: str, *args: Any) -> int:
+        """Fail only the second renewal, the first one made by the stream.
+
+        Args:
+            script: Atomic Lua operation.
+            key_count: Number of keys.
+            key: Principal key.
+            *args: Operation arguments.
+
+        Returns:
+            The fake backend's result.
+
+        Raises:
+            OSError: On the stream's first renewal.
+        """
+        if "sse-renew" in script:
+            renews.append(1)
+            if len(renews) == 2:
+                raise OSError("secret backend address")
+        return real_eval(script, key_count, key, *args)
+
+    redis.eval = flaky  # type: ignore[method-assign]
+    response = await subscription_sse_view(schema=build_native_schema())(_request())
+    stream = response.streaming_content.__aiter__()
+    assert await stream.__anext__() == b":\n\n"
+    waiting = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0.08)
+    assert len(renews) > 2
+    assert not waiting.done()
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await sync_to_async(response.close)()
+    assert not redis.slots
+
+
+@pytest.mark.asyncio
+@override_settings(DJANGO_GRAPHEX=_RENEWAL_SETTINGS)
 async def test_renewal_failures_until_expiry_finish_stream_without_backend_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

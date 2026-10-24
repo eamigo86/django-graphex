@@ -565,6 +565,8 @@ def subscription_sse_view(
                     and user is not None
                     and user.is_authenticated
                 ):
+                    # Stamp before the send: the grant's TTL started no earlier.
+                    acquire_sent = asyncio.get_running_loop().time()
                     try:
                         lease = await _acquire(
                             user,
@@ -578,6 +580,7 @@ def subscription_sse_view(
                         )
                     if lease is None:
                         return HttpResponse("SSE connection limit reached.", status=429)
+                    lease.renewed_at = acquire_sent
                 # Run the subscription field's native subscribe entry. This runs
                 # the KEPT hooks BEFORE any group_add (authorize-deny
                 # short-circuits before the source), returning the started
