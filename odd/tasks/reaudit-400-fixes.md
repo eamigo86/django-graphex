@@ -39,8 +39,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T11 | R4, P18 | Each batch item in its own savepoint per ATOMIC_REQUESTS alias; per-item MUTATION_ERRORS_FLAG; every item answered in order (no early stop); status = highest entry status | D | [x] | `76f01bf`; RED 22/32; full 6818 passed, cov 97.76 %; parent re-ran t_a1 poison: persisted 1. Note: replaces the unreleased M-H1 stop-on-400 rule (4.0.0 release failed the whole batch) |
 | T12 | R5, R10 | Numeric directives compute on exact Decimal/int (`@round` half-even); `@number`/`@currency` return the raw value on Decimal/BigInt like on Int/Float; Decimal serialized with `format(v, 'f')` | D | [x] | `6273127`, `a7ded4e`; RED 11/18 + 4/10; full 6846 passed, cov 97.77 %; parent re-ran test_dir/test_dec_sci |
 | T13 | R2 | Docstring gate TOTAL 0 (446 test docstrings rewritten); bandit exit 0 (justified `# nosec B110` per repo convention) | D | [x] | `3a39b00`, `4106c39`, `d2b3939`; parent re-ran both gates: TOTAL 0, bandit exit 0 |
-| T14 | R7 | Sync fan-out isolates each group; useful failure log | D | [ ] | |
-| T15 | R6 | SSE lease tolerates transient renew errors within the TTL | D | [ ] | |
+| T14 | R7 | Automatic sync fan-out isolates each group like the async path; drop log names the qualified exception cause chain (no payload/message); manual broadcast still raises | D | [x] | `83ebcd2`; RED 2 tests; full 6849 passed |
+| T15 | R6 | SSE lease renew errors tolerated while `renewed_at + TTL - 5 s` holds (retry every 5 s), stamped at acquire; one shared Redis client per URL | D | [x] | `3747d9b`, `962fc9d`; RED behavior + sharing + first-renewal; full 6853 passed, cov 97.75 %, gates clean |
 | T16 | R8, P17 | Nested to-many AND without per-level EXISTS explosion; NOT complement consistent | D | [ ] | |
 | T17 | R11 | Interfaces do not change unrelated `name=` handling | D | [ ] | |
 | T18 | R12 | `Literal` values that map to reserved `__` names rejected or renamed at build | D | [ ] | |
@@ -99,6 +99,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T13 done. From here on every task must keep all gates clean.
 
+- T14, T15 done. Left: lease calls still use the loop default executor (larger change, not needed for correctness).
+
 ## Next step
 
-T14 + T15 (subscriptions).
+T16 (filtering), then T17 + T18 (schema names).
