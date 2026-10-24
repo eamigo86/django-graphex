@@ -806,9 +806,9 @@ related objects alongside the parent. The same engine backs both
   compare against. Those two relations are protected by the **link rule**
   above instead — the row is attached, never rewritten.
 
-#### Adopting an existing reverse-FK orphan by ID
+#### Adopting an existing reverse-FK or reverse-OneToOne orphan by ID
 
-An existing child whose **nullable reverse foreign key is null** is different
+An existing child whose **nullable reverse foreign key or one-to-one key is null** is different
 from a new child. Naming that row's `id` in a generated parent update
 adopts and writes the child. The operation now requires at least one registered
 child `DjangoModelType` or `DjangoModelMutation` that serves **update**. Each
@@ -899,8 +899,10 @@ child without an existing ID (including generated parent create), or updating a
 child already owned by this parent. The generated nested-create input does not
 accept an existing child ID.
 Adoption from a **different** parent remains forbidden, and a missing ID keeps
-the existing child-creation/validation behavior. Reverse one-to-one and generic
-relations are outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),
+the existing child-creation/validation behavior. The rule is the same for a
+reverse `OneToOneField` (for example `parent = OneToOneField(..., null=True,
+related_name="child")`) as for a reverse `ForeignKey`. Generic relations are
+outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),
 this is a **child write** and its host checks apply; automatic relation reads
 and relation-filter joins retain separate boundaries; nested forward-FK
 filters have their own destination-hook rule.
@@ -946,7 +948,7 @@ filters have their own destination-hook rule.
     Omitted relations stay untouched;
     nullable `null` and empty nested inputs keep their existing meanings.
 
-    Reverse adoption, generic relations, and payloads
+    Generic relations and payloads
     that actually CREATE or UPDATE a child retain their separate existing
     rules. For example, a missing M2M ID accompanied by required child data
     can create a child rather than link an existing one. This does not

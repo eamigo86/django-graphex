@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Require a child update host to adopt an existing reverse `OneToOneField`
+  orphan by ID. Naming the ID of a child whose nullable one-to-one key is null
+  in a parent update re-parented and rewrote that child with no host check and
+  no scope, because the adoption guard only covered reverse `ForeignKey`. It
+  now follows the same rule: a registered child `DjangoModelType` or
+  `DjangoModelMutation` serving update must exist, and its scope and
+  permissions apply. Children the parent already owns and new children are
+  unchanged.
+
 - Scope forward `OneToOneField` links like `ForeignKey` links. A generated
   create or update could point a one-to-one field (scalar ID or nested id-only
   payload) at a row hidden by the destination output type's `get_queryset`, and

@@ -951,14 +951,13 @@ class NestedFieldsMixin:
                             ]
                         )
 
-                    # Adopting an existing nullable reverse-FK orphan is a
+                    # Adopting an existing nullable reverse-FK/O2O orphan is a
                     # CHILD update, even when the parent names it by ID. The
                     # scope check above keeps its usual privacy precedence;
                     # without an update-serving child host there is no policy
                     # capable of authorizing this otherwise unscoped write.
                     if (
-                        kind == "reverse_many"
-                        and relation.field.null
+                        relation.field.null
                         and current_owner_id is None
                         and not hosts_serving(cls._meta.registry, child_model, "update")
                     ):
