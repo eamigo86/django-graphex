@@ -397,6 +397,15 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
     model = getattr(meta, "model", None)
     model_names = _model_field_names(model) if model is not None else set()
 
+    # Only a field that implements an interface field must match the
+    # interface's explicit wire name; every other field keeps the naming it has
+    # without interfaces, so adding an interface never renames unrelated fields.
+    interface_field_names: set[str] = set()
+    for iface in getattr(meta, "interfaces", ()) or ():
+        interface_field_names.update(
+            getattr(getattr(iface, "_meta", None), "fields", None) or ()
+        )
+
     out: dict[str, Any] = {}
     for field_name, field in meta_fields.items():
         # Skip declared LIST fields — owned by _compile_declared_list_fields.
@@ -432,7 +441,7 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
             continue
         wire_name = (
             _rendered_field_name(field, field_name)
-            if getattr(meta, "interfaces", ())
+            if field_name in interface_field_names
             else to_camel_case(field_name)
         )
         out[wire_name] = _mark_masked_column(

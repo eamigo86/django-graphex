@@ -14,6 +14,13 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: adding an interface no longer changes the wire name of fields that are
+  not part of it. An object type that implements an interface used the explicit
+  `name=` of every declared field verbatim, while the same type without
+  interfaces ignored it, so `Meta.interfaces` silently renamed unrelated
+  fields. Now only a field that the interface also declares uses the explicit
+  wire name; every other field keeps the naming it has without interfaces.
+
 - Behavior change: define `not` inside a to-many relation object as "no
   related row matches the operand". A `not` used to be evaluated on the same
   related row when it sat beside a positive criterion, and its `and` operand

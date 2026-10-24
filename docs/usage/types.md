@@ -1562,7 +1562,9 @@ each implementor; the Python attribute remains the resolver lookup name. For
 example, `internal_name = field(GraphQLString, name="name")` exposes `name`,
 not `internalName`. An implementor declaring the same custom field must use
 the same wire name and compatible GraphQL type. Without `name=`, attribute
-names continue to be camel-cased.
+names continue to be camel-cased. Fields that the interface does not
+declare are not affected by `Meta.interfaces`: they are named exactly as they
+would be on a type without interfaces.
 
 **Migration:** Earlier versions accidentally exposed `internalName` for that
 interface declaration. After upgrading, clients must query `name`; no
