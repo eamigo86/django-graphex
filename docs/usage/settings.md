@@ -99,13 +99,33 @@ part of `DJANGO_GRAPHEX` like everything else.
 | `MAX_VALIDATION_ERRORS` | `None` | Cap the number of GraphQL validation errors returned in a single response (also honored by the WS/SSE subscription transports). `None` = no cap. |
 | `SUBSCRIPTION_CONNECTION_INIT_TIMEOUT` | `3.0` | Seconds the `graphql-transport-ws` server waits for the first `connection_init` after the socket opens before closing with code **4408** (`connectionInitWaitTimeout`). The transport factory may override it. |
 
-When Django enables `ATOMIC_REQUESTS` on the default database, GraphQL
-execution errors and the mutation error flag mark the entire request
-transaction for rollback. Without either transaction setting, a write made
-before a later GraphQL execution error may already be durable. Rolled-back
-atomic writes do not advance the GraphQL response-cache version; durable
-non-atomic writes still invalidate cached responses. This guarantee covers
-the default database connection, not arbitrary additional database aliases.
+When Django enables `ATOMIC_REQUESTS` on a database alias, GraphQL
+execution errors and the mutation error flag mark that alias's request
+transaction for rollback, for every alias that has the option. Without either
+transaction setting, a write made before a later GraphQL execution error may
+already be durable. Rolled-back atomic writes do not advance the GraphQL
+response-cache version; durable non-atomic writes still invalidate cached
+responses.
+
+### Per-database atomic mutations
+
+`ATOMIC_MUTATIONS = True` wraps each mutation in `transaction.atomic()` on the
+default database. Another alias opts in with its own key in `DATABASES`:
+
+```python
+DATABASES = {
+    "default": {...},
+    "analytics": {..., "ATOMIC_MUTATIONS": True},
+}
+```
+
+`DATABASES["default"]["ATOMIC_MUTATIONS"] = True` has the same effect as the
+global setting for the default alias. Each opted-in alias gets its own atomic
+block, so a GraphQL execution error rolls back the writes on every one of
+them. Django has no two-phase commit: the blocks commit independently, so a
+failure while committing one alias cannot undo another that already committed.
+Models routed by a database router to an alias without this option are not
+wrapped.
 
 ## Pagination
 

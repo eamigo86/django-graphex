@@ -414,10 +414,9 @@ The full set of recognised options for `DjangoObjectType.Meta` is:
 | `name` | Type name in the schema; defaults to the class name |
 | `description` | Type description exposed in the schema |
 
-Graphene's own base options ride along on top of that list and are accepted
-too: `possible_types`, `default_resolver` and `container`. Every other public
-key is rejected at startup. Review your `DjangoObjectType` and
-`DjangoListObjectType` subclasses for typos before upgrading from pre-1.2.2.
+The base options of the underlying object type are accepted on top of that
+list: `possible_types`, `default_resolver` and `container`. Every other public
+key is rejected at startup, so a misspelled option fails fast.
 
 ### The projection is a security boundary { #projection-security-boundary }
 

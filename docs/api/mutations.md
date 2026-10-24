@@ -52,7 +52,7 @@ class CustomerMutation(DjangoModelMutation):
     for the same reason, before the mutation registers a model output type — see
     [Mutations](../usage/mutations.md#permissions-are-djangomodeltype-only).
 
-    The one exception is the handful of keys the graphene `ObjectType` base
+    The one exception is the handful of keys the `ObjectType` base class
     consumes before django-graphex sees them — `name`, `_meta`, `interfaces`,
     `possible_types`, `default_resolver` and `container`. They are accepted, and
     only `name` and `description` do anything useful on a mutation.
