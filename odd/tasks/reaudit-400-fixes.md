@@ -37,8 +37,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T09 | P6 | Generated update/delete (DjangoModelMutation, DjangoModelType) and nested child writes scoped by the registered output type's `get_queryset`; hidden = missing byte-for-byte | D | [x] | `0583f62`, `47cfed9`; RED hidden rows rewritten; parent full run 6770 passed / 6 skipped, cov 97.78 %; t_sd3 update/delete refused |
 | T10 | R3 | Parse/validation/variable-coercion errors classified by phase as client errors; raw exception text scrubbed unless DEBUG; no log; execution errors still masked + ERROR | D | [x] | `e8d9bb3`; RED 12/16; parent re-ran test_p8: validation messages, 0 ERROR records |
 | T11 | R4, P18 | Each batch item in its own savepoint per ATOMIC_REQUESTS alias; per-item MUTATION_ERRORS_FLAG; every item answered in order (no early stop); status = highest entry status | D | [x] | `76f01bf`; RED 22/32; full 6818 passed, cov 97.76 %; parent re-ran t_a1 poison: persisted 1. Note: replaces the unreleased M-H1 stop-on-400 rule (4.0.0 release failed the whole batch) |
-| T12 | R5, R10 | Numeric directives correct on Decimal/BigInt; Decimal output without scientific notation | D | [ ] | |
-| T13 | R2 | `check_docstrings` and bandit gates clean | D | [ ] | |
+| T12 | R5, R10 | Numeric directives compute on exact Decimal/int (`@round` half-even); `@number`/`@currency` return the raw value on Decimal/BigInt like on Int/Float; Decimal serialized with `format(v, 'f')` | D | [x] | `6273127`, `a7ded4e`; RED 11/18 + 4/10; full 6846 passed, cov 97.77 %; parent re-ran test_dir/test_dec_sci |
+| T13 | R2 | Docstring gate TOTAL 0 (446 test docstrings rewritten); bandit exit 0 (justified `# nosec B110` per repo convention) | D | [x] | `3a39b00`, `4106c39`, `d2b3939`; parent re-ran both gates: TOTAL 0, bandit exit 0 |
 | T14 | R7 | Sync fan-out isolates each group; useful failure log | D | [ ] | |
 | T15 | R6 | SSE lease tolerates transient renew errors within the TTL | D | [ ] | |
 | T16 | R8, P17 | Nested to-many AND without per-level EXISTS explosion; NOT complement consistent | D | [ ] | |
@@ -95,6 +95,10 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T10, T11 done. Residual for T32: rollback of non-default aliases on item errors.
 
+- T12 done. Note for audit: plain-notation Decimal output of a server-side value with a huge exponent is unbounded in length.
+
+- T13 done. From here on every task must keep all gates clean.
+
 ## Next step
 
-T12 (directives on Decimal/BigInt), then T13 (CI gates).
+T14 + T15 (subscriptions).
