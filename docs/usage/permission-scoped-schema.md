@@ -418,9 +418,9 @@ The JSON examples assume `CLEAN_RESPONSE=False` (the default). Enabling
 false; it does not change the
 resolver's denied-target result or the permission decision.
 
-The second response requires `billing.view_account` and, when an `Account`
-output type is registered in the **request schema's Registry**, admission by
-its row hook. For example:
+The second response requires `billing.view_account` (pruned schemas) and, when
+an `Account` output type is registered in the **request schema's Registry**,
+admission by its row hook (every schema). For example:
 
 ```python
 from django.db.models import QuerySet
@@ -442,8 +442,8 @@ No registered target type or an inherited no-op hook adds no row-scope lookup
 after the GFK resolves. An overridden hook must return a synchronous
 `QuerySet` for the same concrete model; JOIN duplicates and ordered slices
 retain their membership meaning. An invalid hook result raises a GraphQL
-field error instead of exposing target metadata. A scoped lookup can add one
-database query per resolved target. A missing target also returns `null`.
+field error instead of exposing target metadata. A resolver without the batched
+scoped prefetch can add one database query per resolved target. A missing target also returns `null`.
 
 **Migration:** If callers previously read flat target IDs with only the
 owner's permission, grant the target model's read permission and check any
@@ -455,8 +455,10 @@ destination-hook rules; see [forward-FK filter scope](filtering.md#forward-fk-fi
 [forward OneToOne filter scope](filtering.md#forward-o2o-filter-scope),
 [reverse-FK filter scope](filtering.md#reverse-fk-filter-scope), and
 [M2M filter scope](filtering.md#m2m-filter-scope).
-Ordinary unpruned public schemas and explicitly typed GFK unions retain their
-existing behavior.
+The registered target hook is not specific to pruned schemas: an unpruned
+schema and a typed GFK union also resolve a target excluded by its output
+type's `get_queryset` to `null`. Only the model read permission check is
+specific to the pruned flat field.
 
 ### `ordering` follows the pruned schema, not the full one
 

@@ -27,6 +27,7 @@ _UNION_LIST = """
   ... on ScopedInvoice { note }
 } } } }
 """
+_FLAT_LIST = "{ allComments { results { body target { appLabel modelName id } } } }"
 
 
 def _hide_secret(queryset: QuerySet, info: GraphQLResolveInfo) -> QuerySet:
@@ -356,6 +357,148 @@ def test_union_single_owner_resolver_falls_back_to_membership_check() -> None:
         "hidden": {"target": None},
         "shown": {"target": {"__typename": "SingleInvoice"}},
     }
+
+
+@pytest.mark.django_db
+def test_flat_target_scope_applies_without_permission_pruning() -> None:
+    """The full schema redacts a flat target hidden by its output type.
+
+    No permission-scoped schema is involved.
+    """
+    _seed(1)
+    data, _ = _run(_schema(union=False), _FLAT_LIST)
+    targets = _targets(data)
+    assert targets["secret-acct-0"] is None
+    assert targets["open-acct-0"]["modelName"] == "Track2Account"
+    # Invoice rows have a registered type with the no-op scope: unchanged.
+    assert targets["secret-inv-0"]["modelName"] == "Track2Invoice"
+
+
+@pytest.mark.django_db
+def test_flat_target_scope_query_count_does_not_grow_with_owners() -> None:
+    """The flat redaction check is batched per target model.
+
+    Adding owners must not add queries.
+    """
+    schema = _schema(union=False, scope_invoice=True)
+    _seed(2)
+    _, small = _run(schema, _FLAT_LIST)
+    _seed(6)
+    data, large = _run(schema, _FLAT_LIST)
+    assert len(data["allComments"]["results"]) == 32
+    assert large == small
+    for body, target in _targets(data).items():
+        assert (target is None) == body.startswith("secret"), body
+
+
+def _build_with_extra_scopes(*, sliced: bool, proxy: bool) -> DjangoGraphQLSchema:
+    """Build a flat-GFK schema whose scopes cannot use one batched prefetch.
+
+    Args:
+        sliced: Whether the account hook returns an ordered slice.
+        proxy: Whether a proxy of the account model also registers a scope.
+
+    Returns:
+        The compiled schema with an "allComments" list root.
+    """
+    from tests.models import Track2AccountProxy
+
+    reg = Registry()
+
+    class AccountType(DjangoObjectType):
+        """Account scope, optionally sliced."""
+
+        class Meta:
+            """Bind to the private registry."""
+
+            model = Track2Account
+            registry = reg
+
+        @classmethod
+        def get_queryset(cls, queryset: QuerySet, info: Any) -> QuerySet:
+            """Hide secret accounts, optionally through a slice.
+
+            Args:
+                queryset: Unscoped rows.
+                info: Request resolve info.
+
+            Returns:
+                The visible rows.
+            """
+            visible = queryset.exclude(label__startswith="secret")
+            return visible.order_by("pk")[:1000] if sliced else visible
+
+    if proxy:
+
+        class ProxyType(DjangoObjectType):
+            """Proxy sharing the account content type."""
+
+            class Meta:
+                """Bind to the private registry."""
+
+                model = Track2AccountProxy
+                registry = reg
+
+            @classmethod
+            def get_queryset(cls, queryset: QuerySet, info: Any) -> QuerySet:
+                """Hide secret accounts.
+
+                Args:
+                    queryset: Unscoped rows.
+                    info: Request resolve info.
+
+                Returns:
+                    The visible rows.
+                """
+                return queryset.exclude(label__startswith="secret")
+
+    class CommentType(DjangoObjectType):
+        """Owner exposing the flat GFK."""
+
+        class Meta:
+            """Bind to the private registry."""
+
+            model = Track2GfkComment
+            registry = reg
+
+    class CommentListType(DjangoListObjectType):
+        """List container for owners."""
+
+        class Meta:
+            """Bind to the private registry."""
+
+            model = Track2GfkComment
+            registry = reg
+            pagination = LimitOffsetGraphqlPagination(
+                default_limit=None, max_limit=None
+            )
+
+    class Query(ObjectType):
+        """Expose the owner list."""
+
+        all_comments = DjangoListObjectField(CommentListType)
+
+    return DjangoGraphQLSchema(query=Query, registries=isolated_pair(reg))
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("sliced", "proxy"), [(True, False), (False, True)], ids=["sliced", "shared-ct"]
+)
+def test_unbatchable_scopes_still_hide_per_row(sliced: bool, proxy: bool) -> None:
+    """A sliced or content-type-sharing scope falls back to a row check.
+
+    Django cannot batch these scopes, so each target is checked itself.
+
+    Args:
+        sliced: Whether the account hook returns an ordered slice.
+        proxy: Whether a proxy of the account model also registers a scope.
+    """
+    _seed(2)
+    data, _ = _run(_build_with_extra_scopes(sliced=sliced, proxy=proxy), _FLAT_LIST)
+    for body, target in _targets(data).items():
+        if "acct" in body:
+            assert (target is None) == body.startswith("secret"), body
 
 
 @pytest.mark.django_db

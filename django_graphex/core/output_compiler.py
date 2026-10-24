@@ -332,12 +332,12 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
     def _gfk_resolver(
         root: Any, info: GraphQLResolveInfo | None, *, _name: str = field_name
     ) -> Any:
-        """Resolve the target, redacting it under a pruned schema when denied.
+        """Resolve the target, redacting it when denied or hidden by its type.
 
         Args:
             root: Owner model or mapping containing the GFK accessor.
-            info: Resolve info carrying the effective prune ACL and Registry, or
-                None for a direct resolver call outside GraphQL execution.
+            info: Resolve info carrying the Registry and, in a pruned schema, the
+                effective ACL, or None outside GraphQL execution.
             _name: The Python GFK accessor name.
 
         Returns:
@@ -346,48 +346,23 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
         Raises:
             TypeError: If a registered target hook returns an invalid queryset.
         """
-        target = (
-            root.get(_name) if isinstance(root, dict) else getattr(root, _name, None)
-        )
+        from django_graphex.utils import gfk_target_is_visible, read_gfk_target
+
+        target, scoped = read_gfk_target(root, _name)
         if target is None:
             return None
         extensions = getattr(getattr(info, "schema", None), "extensions", None) or {}
         granted = extensions.get(EFFECTIVE_GRANTS_EXT)
-        if granted is None:
-            return target  # ordinary full schemas retain the public wire contract
+        if granted is not None:
+            from django_graphex.core.perm_labels import required_perms_for
 
-        from django.db.models import Subquery
-
-        from django_graphex.core.perm_labels import required_perms_for
-        from django_graphex.types import DjangoObjectType
-        from django_graphex.utils import apply_object_type_get_queryset
-
-        model = type(target)
-        if not required_perms_for(model, "retrieve") <= granted:
-            return None
-        pair = extensions.get("gdx_registry")
-        registry = getattr(pair, "graphene", None)
-        output_type = registry.get_type_for_model(model) if registry else None
-        if output_type is None and registry:
-            output_type = registry.get_type_for_model(model._meta.concrete_model)
-        if output_type is None or not issubclass(output_type, DjangoObjectType):
+            if not required_perms_for(type(target), "retrieve") <= granted:
+                return None
+        if scoped or gfk_target_is_visible(target, info):
             return target
-        hook = output_type.get_queryset
-        if getattr(hook, "__func__", hook) is DjangoObjectType.get_queryset.__func__:
-            return target
-        queryset = model._default_manager.db_manager(target._state.db).all()
-        scoped = apply_object_type_get_queryset(queryset, output_type, info)
-        if scoped.model._meta.concrete_model is not model._meta.concrete_model:
-            raise TypeError(
-                f"{output_type.__name__}.get_queryset returned a queryset for "
-                f"{scoped.model.__name__}, expected {model.__name__}."
-            )
-        visible = (
-            model._default_manager.db_manager(scoped.db)
-            .filter(pk=target.pk, pk__in=Subquery(scoped.values("pk")))
-            .exists()
-        )
-        return target if visible else None
+        return None
+
+    _gfk_resolver._gqx_automatic_gfk = True  # type: ignore[attr-defined]
 
     return {
         camel_name: GraphQLField(

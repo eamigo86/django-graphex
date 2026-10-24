@@ -14,6 +14,17 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Apply the target output type's `get_queryset` to flat `GenericForeignKey`
+  targets in every schema. Without `PERMISSION_SCOPED_SCHEMA` the flat
+  `GenericForeignKeyType` still returned `appLabel`, `modelName` and `id` of a
+  target that its registered output type hid; it now resolves to `null`, like
+  the permission-pruned field already did, and the pruned and full schemas use
+  one rule. The check is batched in one `GenericPrefetch` for optimized and list
+  reads (query counts do not grow with the number of owners); a resolver
+  without it issues one membership query per target of a type that overrides
+  the hook. Targets of unregistered models, and types keeping the default
+  hook, are unchanged.
+
 - Apply a member type's `get_queryset` to typed `GenericForeignKey` union
   targets. A `Meta.unions` union returned the target of any member in full even
   when that member type's hook hid the row. A hidden target now resolves to
