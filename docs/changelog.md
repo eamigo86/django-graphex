@@ -14,6 +14,14 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Docs: the known limitations of three type mappings are now documented and
+  pinned by tests (no behavior change). A populated `DecimalRangeField` bound is
+  typed `Float` and fails to serialize, a `BigIntegerRangeField` bound beyond 32
+  bits fails with the `Int` scalar, and a `DurationField` selected on a
+  subscription event type fails because the payload carries an ISO duration
+  string for a `Float` field. Workarounds are in the types and subscriptions
+  guides.
+
 - Fix: a subscription `exact` filter on a `Float` or `Decimal` field now matches
   an event whose snapshot holds a plain integer. A FloatField or DecimalField
   saved with an int (`floating=1`) serializes to the JSON number `1`, which never

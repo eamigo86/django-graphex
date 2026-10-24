@@ -1763,6 +1763,25 @@ How Django model fields map to GraphQL **output** types:
 | `FileField` / `ImageField` | `String` — the storage name on output; on input, a storage path **or** the file a multipart part carries (see [Mutations › Automatic multipart uploads](mutations.md#automatic-multipart-uploads)) |
 | `HStoreField`, GIS geometry | a permissive scalar (no native modeling — see [Backends](backends.md)) |
 
+!!! warning "Known limitation: `DecimalRangeField` and `BigIntegerRangeField` bounds"
+
+    The bounds of a `DecimalRangeField` are typed `Float` and those of a
+    `BigIntegerRangeField` are typed `Int`, the same as `IntegerRangeField`.
+    This is kept as is in 4.x:
+
+    - A `Decimal` bound is not a number to the `Float` scalar, so a populated
+      `DecimalRangeField` fails with `Float cannot represent non numeric value`
+      (and the bound would lose precision beyond about 15-17 significant
+      digits even if it were converted).
+    - A `BigIntegerRangeField` bound outside the 32-bit signed range
+      (`-2147483648` to `2147483647`) fails with `Int cannot represent non
+      32-bit signed integer value`.
+
+    Workaround: declare the field yourself on the type with a custom resolver
+    that returns the bounds as strings (or as a `BigInt` / `Decimal` scalar),
+    for example `lower`/`upper` formatted with `str()`. A future change to these
+    scalars would be a wire change and will be announced in the changelog.
+
 ### BigInt: 64-bit integers
 
 Auto-derived `BigIntegerField` and `PositiveBigIntegerField` use the `BigInt`
