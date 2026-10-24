@@ -706,9 +706,8 @@ page's last row — so it stays fast and stable. The list type also exposes a
     Cursors are **opaque**: treat them as an implementation detail returned by
     the server (`pageInfo.startCursor` / `pageInfo.endCursor`) and never build
     or edit one client-side. Corrupted base64, a wrong internal prefix, or a
-    decoded value that cannot convert to FloatField, DecimalField, or UUIDField
-    raises `GraphQLError("Invalid cursor")`. This is not a blanket promise for
-    every other ordering-field type.
+    decoded value that cannot convert to the ordering field's type
+    raises `GraphQLError("Invalid cursor")`.
 
 ### Null ordering across paginator types
 
@@ -1104,13 +1103,13 @@ it always fires.
 following failures return `GraphQLError("Invalid cursor")`:
 
 1. **Malformed base64 / wrong prefix** — `decode_cursor` raises `ValueError`.
-2. **Float, Decimal, or UUID type mismatch** — the decoded ordering value
-   cannot convert to the corresponding runtime type, whether the list is
-   queryset-backed or already materialized in memory. Both `results` and
-   `pageInfo` report the same error. Queryset-backed filters also retain their
+2. **Type mismatch** — the decoded ordering value or pk cannot convert to
+   the ordering field's runtime type (integer, float, Decimal, UUID, date,
+   datetime or time), or a float or Decimal boundary is `NaN` or infinite,
+   whether the list is queryset-backed or already materialized in memory.
+   Both `results` and `pageInfo` report the same error. Queryset-backed filters also retain their
    existing handling of Django validation failures.
 
-Other malformed ordering values are not covered by a uniform error policy.
 For example, a base64-valid cursor encoding `not-a-float` against a
 FloatField-ordered materialized list previously produced a raw comparison
 TypeError in `errors[]`; it now produces `Invalid cursor`. Clients matching

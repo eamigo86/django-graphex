@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fix: a tampered cursor on an in-memory (prefetched or nested) list answers
+  `Invalid cursor`, like the database path. A `NaN` Decimal, a non-numeric pk,
+  a bad date or a naive/aware datetime mismatch raised `InvalidOperation` or
+  `TypeError`, which the client saw as a masked internal error and the server
+  logged at ERROR. The boundary is now converted once to the rows' type for
+  every integer, float, Decimal, UUID, date, datetime and time ordering field,
+  and a non-finite float or Decimal boundary is refused on both paths (the
+  database path used to run the comparison with it).
+
 - Fix: a base64 upload of exactly `MAX_UPLOAD_SIZE` bytes is accepted. The
   decoded-size pre-check ignored `=` padding and over-counted by up to two
   bytes, so the same file passed as multipart but was refused as base64. The

@@ -462,18 +462,25 @@ class TestTypedCursorHttp:
                 paginator.get_page_info(source, first=2, cursor=token)
 
     @pytest.mark.parametrize(
-        "sample",
-        [1, date(2024, 1, 2), datetime(2024, 1, 2), time(12, 30), "value"],
+        "sample", [1, date(2024, 1, 2), datetime(2024, 1, 2), time(12, 30)]
     )
-    def test_unapproved_other_type_coercion_fallback_is_unchanged(
-        self, sample: int | date | datetime | time | str
+    def test_unconvertible_boundary_is_invalid_cursor(
+        self, sample: int | date | datetime | time
     ) -> None:
-        """Keep the existing raw fallback outside the three approved types.
+        """Reject a boundary that cannot convert to the row's temporal/int type.
 
         Args:
-            sample: A supported or unsupported sample outside the approved set.
+            sample: A row value whose type the boundary must convert to.
         """
-        assert _coerce_like("not-a-value", sample) == "not-a-value"
+        with pytest.raises(GraphQLError, match="^Invalid cursor$"):
+            _coerce_like("not-a-value", sample)
+
+    def test_string_sample_keeps_raw_boundary(self) -> None:
+        """Keep the raw string for string-typed ordering values.
+
+        Only types with a defined conversion can reject a boundary.
+        """
+        assert _coerce_like("not-a-value", "value") == "not-a-value"
 
     @pytest.mark.django_db
     @pytest.mark.parametrize(

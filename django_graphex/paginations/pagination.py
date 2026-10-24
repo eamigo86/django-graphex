@@ -9,12 +9,13 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime
-from decimal import Decimal, InvalidOperation
+import math
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from django.core.exceptions import ValidationError
-from django.db.models import F, QuerySet
+from django.core.exceptions import FieldDoesNotExist, ValidationError
+from django.db.models import DecimalField, F, FloatField, QuerySet
 from django.db.models.expressions import OrderBy
 from graphql import (
     GraphQLBoolean,
@@ -135,62 +136,62 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
     type (int, float, Decimal, UUID, date, etc.) before comparing — otherwise
     "10" < "2" (lexical) is wrong and unlike types raise TypeError. This keeps the
     in-memory path in parity with the DB path, whose filter coerces the same
-    string back to the field's runtime type. Unconvertible float, Decimal, and
-    UUID boundaries are invalid cursors; unsupported samples and other failed
-    coercions retain the prior in-memory raw-string behavior.
+    string back to the field's runtime type and answers a tampered boundary with
+    "Invalid cursor". A boundary that cannot be converted to the sample type, or
+    that is not finite (NaN or infinity), is therefore an invalid cursor; samples
+    of other types (for example strings) keep the raw string.
 
     Args:
         raw: The decoded cursor component (typically a string).
         sample: A live value read from a row, used only for its type.
 
     Returns:
-        *raw* coerced to type(sample) when possible, else *raw* unchanged.
+        *raw* coerced to type(sample) when it is a supported type, else *raw*
+        unchanged.
 
     Raises:
-        GraphQLError: If a float, Decimal, or UUID boundary cannot be converted.
+        GraphQLError: If the boundary cannot be converted to the sample's type
+            or is not finite.
     """
     if sample is None or not isinstance(raw, str):
         return raw
-    if isinstance(sample, bool):
-        return raw
-    if isinstance(sample, int):
-        try:
+    try:
+        if isinstance(sample, bool):
+            if raw not in ("True", "False"):
+                raise ValueError(raw)
+            return raw == "True"
+        if isinstance(sample, int):
             return int(raw)
-        except (TypeError, ValueError):
-            return raw
-    if isinstance(sample, float):
-        try:
-            return float(raw)
-        except ValueError as exc:
-            raise GraphQLError("Invalid cursor") from exc
-    if isinstance(sample, Decimal):
-        try:
-            return Decimal(raw)
-        except InvalidOperation as exc:
-            raise GraphQLError("Invalid cursor") from exc
-    if isinstance(sample, UUID):
-        try:
+        if isinstance(sample, float):
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError(raw)
+            return value
+        if isinstance(sample, Decimal):
+            number = Decimal(raw)
+            if not number.is_finite():
+                raise ValueError(raw)
+            return number
+        if isinstance(sample, UUID):
             return UUID(raw)
-        except ValueError as exc:
-            raise GraphQLError("Invalid cursor") from exc
-    # Temporal samples: str(value) is ISO 8601, so fromisoformat is the exact
-    # inverse. Order matters — datetime is a subclass of date, so it is checked
-    # first. A parse failure keeps the raw string (lenient fallback).
-    if isinstance(sample, datetime.datetime):
-        try:
-            return datetime.datetime.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return raw
-    if isinstance(sample, datetime.date):
-        try:
+        # Temporal samples: str(value) is ISO 8601, so fromisoformat is the exact
+        # inverse. Order matters — datetime is a subclass of date, so it is
+        # checked first. A naive/aware mismatch cannot be compared, so it is
+        # invalid too.
+        if isinstance(sample, datetime.datetime):
+            moment = datetime.datetime.fromisoformat(raw)
+            if (moment.tzinfo is None) != (sample.tzinfo is None):
+                raise ValueError(raw)
+            return moment
+        if isinstance(sample, datetime.date):
             return datetime.date.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return raw
-    if isinstance(sample, datetime.time):
-        try:
-            return datetime.time.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return raw
+        if isinstance(sample, datetime.time):
+            moment_time = datetime.time.fromisoformat(raw)
+            if (moment_time.tzinfo is None) != (sample.tzinfo is None):
+                raise ValueError(raw)
+            return moment_time
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise GraphQLError("Invalid cursor") from exc
     return raw
 
 
@@ -1838,20 +1839,16 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             obj: The candidate model instance.
             field_name: The bare ordering-field name.
             descending: Whether the ordering is descending.
-            value: The boundary row's ordering value (as decoded from the cursor).
-            pk: The boundary row's primary key (as decoded from the cursor).
+            value: The boundary row's ordering value, already coerced to the
+                rows' type by "_inmemory_cursor_start".
+            pk: The boundary row's primary key, already coerced likewise.
 
         Returns:
             True when *obj* comes after the boundary in the ordered sequence.
         """
         obj_value = getattr(obj, field_name, None)
         obj_pk = getattr(obj, "pk", None)
-        # The cursor components arrive as strings (they were serialised into the
-        # opaque token). Coerce them to the runtime type of the row's own value/pk
-        # so the comparison is numeric/date-aware instead of a broken lexical
-        # "10" < "2", and so int-vs-str never raises a TypeError.
-        boundary_value = _coerce_like(value, obj_value)
-        boundary_pk = _coerce_like(pk, obj_pk) if pk is not None else None
+        boundary_value, boundary_pk = value, pk
         obj_key = _sort_key(obj_value)
         boundary_key = _sort_key(boundary_value)
         if obj_key != boundary_key:
@@ -1958,6 +1955,15 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             value, pk = self.decode_cursor_parts(cursor)
         except ValueError as exc:
             raise GraphQLError("Invalid cursor") from exc
+        # The cursor components arrive as strings (they were serialised into the
+        # opaque token). Coerce them ONCE to the runtime type of the rows' own
+        # value/pk so the comparison is numeric/date-aware instead of a broken
+        # lexical "10" < "2", and so a tampered component is an "Invalid cursor"
+        # (like the DB path) instead of a TypeError/InvalidOperation.
+        values = [getattr(obj, field_name, None) for obj in items]
+        value = _coerce_like(value, next((v for v in values if v is not None), None))
+        if pk is not None:
+            pk = _coerce_like(pk, next((o.pk for o in items if o.pk is not None), None))
         for index, obj in enumerate(items):
             if self._inmemory_after_cursor(obj, field_name, descending, value, pk):
                 return index
@@ -1998,6 +2004,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             #      produce a clean GraphQLError, not an unhandled HTTP 500.
             try:
                 value, pk = self.decode_cursor_parts(cursor)
+                self._require_finite(qs.model, field_name, value)
                 if pk is None:
                     # Legacy value-only cursor: fall back to the plain value
                     # boundary (no pk tiebreak available). A NULL boundary value
@@ -2014,6 +2021,33 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
                 raise GraphQLError("Invalid cursor") from exc
 
         return qs[:page_size]
+
+    @staticmethod
+    def _require_finite(model: Any, field_name: str, value: str | None) -> None:
+        """Reject a NaN or infinite boundary for a float or decimal column.
+
+        The database accepts these values in a comparison and silently returns
+        a wrong page, while the in-memory path rejects them, so both paths share
+        this rule.
+
+        Args:
+            model: The model whose column is the ordering field.
+            field_name: The bare ordering-field name.
+            value: The decoded boundary ordering value ("None" for NULL).
+
+        Raises:
+            ValueError: If the boundary is not a finite number.
+        """
+        if value is None:
+            return
+        try:
+            field = model._meta.get_field(field_name)
+        except FieldDoesNotExist:
+            return
+        if isinstance(field, (FloatField, DecimalField)) and not math.isfinite(
+            float(value)
+        ):
+            raise ValueError(value)
 
     @staticmethod
     def _legacy_value_predicate(field_name: str, descending: bool, value: Any) -> Any:
@@ -2182,6 +2216,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # decode_cursor_parts (malformed base64) or at filter() (type coercion).
             try:
                 value, pk = self.decode_cursor_parts(cursor)
+                self._require_finite(qs.model, field_name, value)
                 if pk is None:
                     page_qs = page_qs.filter(
                         self._legacy_value_predicate(field_name, descending, value)
