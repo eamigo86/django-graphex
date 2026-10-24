@@ -1298,14 +1298,6 @@ def compile_input_type(
             else:
                 alias = to_camel(field_name)
 
-            # For multi-word fields: wire key != snake name → assert guard
-            if alias != field_name:
-                # Build-time assertion: out_name (snake) MUST differ from alias (camel)
-                assert field_name != alias, (
-                    f"compile_input_type: field {field_name!r} alias {alias!r} "
-                    f"collision — out_name must differ from alias for multi-word fields."
-                )
-
             # Resolve the Python type from annotation. First strip Optional
             # (``Optional[list[T]]`` / ``list[T] | None`` -> ``list[T]``), then
             # detect a list origin so ``list[T]`` compiles to a GraphQL list

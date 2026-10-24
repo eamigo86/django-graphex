@@ -1735,11 +1735,12 @@ def _assert_filter_type_complete(gql_input_type: GraphQLInputObjectType) -> None
         AssertionError: If the type's ".fields" evaluates to an empty dict.
     """
     fields = dict(gql_input_type.fields)  # forces the thunk to evaluate
-    assert fields, (
-        f"native filter input {gql_input_type.name!r} resolved to EMPTY .fields "
-        "— a thunk likely captured an incomplete (circular) type before its "
-        "fields were populated. Check the cache-before-thunk ordering."
-    )
+    if not fields:
+        raise AssertionError(
+            f"native filter input {gql_input_type.name!r} resolved to EMPTY .fields "
+            "— a thunk likely captured an incomplete (circular) type before its "
+            "fields were populated. Check the cache-before-thunk ordering."
+        )
 
 
 def _assert_filter_input_out_names(gql_input_type: GraphQLInputObjectType) -> None:
@@ -1772,12 +1773,13 @@ def _assert_filter_input_out_names(gql_input_type: GraphQLInputObjectType) -> No
     missing = [
         name for name, field in fields.items() if not getattr(field, "out_name", None)
     ]
-    assert not missing, (
-        f"native filter input {gql_input_type.name!r} has field(s) WITHOUT a snake "
-        f"out_name: {missing}. Every filter-input field MUST carry an out_name or "
-        "to_q receives the camelCase wire key and silently builds an EMPTY Q. A "
-        "custom extension likely mutated the compiled .fields and stripped it."
-    )
+    if missing:
+        raise AssertionError(
+            f"native filter input {gql_input_type.name!r} has field(s) WITHOUT a snake "
+            f"out_name: {missing}. Every filter-input field MUST carry an out_name or "
+            "to_q receives the camelCase wire key and silently builds an EMPTY Q. A "
+            "custom extension likely mutated the compiled .fields and stripped it."
+        )
 
 
 def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:

@@ -14,6 +14,17 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Fix: configuration and input checks no longer depend on `assert`. Under
+  `python -O` the `assert` statements in runtime code vanish, so an invalid
+  `Meta.model`, `Meta.registry`, `Meta.queryset`, `input_for`, an empty
+  `DjangoUnionType`, a bad paginator or an abstract type with extra options was
+  accepted in silence. These now raise `ImproperlyConfigured` with the same
+  message (they raised `AssertionError` before). The scalar serializers
+  `CustomTime`, `CustomDate` and `CustomDateTime` and the internal invariants
+  (filter input completeness, subscription routing parity) keep raising
+  `AssertionError`, now explicitly. No `assert` remains in the package, and the
+  Bandit `B101` skip is removed so none can come back.
+
 - Fix: `Meta.only_fields` and `Meta.exclude_fields` are validated on the write
   hosts too. `DjangoModelMutation`, `DjangoModelType`, `DjangoListObjectType`
   and `DjangoInputObjectType` accepted a typo (`exclude_fields = ("nmae",)`) or

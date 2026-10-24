@@ -1308,17 +1308,23 @@ class DjangoObjectType(NativeObjectType):
 
         _check_unknown_options(cls.__name__, options)
 
-        assert is_valid_django_model(model), (
-            'You need to pass a valid Django Model in {}.Meta, received "{}".'
-        ).format(cls.__name__, model)
+        if not is_valid_django_model(model):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid Django Model in {}.Meta, received "{}".'
+                ).format(cls.__name__, model)
+            )
 
         if not registry:
             registry = get_global_registry()
 
-        assert isinstance(registry, Registry), (
-            "The attribute registry in {} needs to be an instance of "
-            'Registry, received "{}".'
-        ).format(cls.__name__, registry)
+        if not isinstance(registry, Registry):
+            raise ImproperlyConfigured(
+                (
+                    "The attribute registry in {} needs to be an instance of "
+                    'Registry, received "{}".'
+                ).format(cls.__name__, registry)
+            )
 
         only_fields, exclude_fields = _validate_output_selectors(
             cls, model, only_fields, exclude_fields
@@ -1808,10 +1814,11 @@ class DjangoUnionType(NativeObjectType):
             registry = get_global_registry()
 
         member_types = tuple(types)
-        assert member_types, (
-            "{} must declare Meta.types with at least one "
-            "DjangoObjectType member.".format(cls.__name__)
-        )
+        if not member_types:
+            raise ImproperlyConfigured(
+                "{} must declare Meta.types with at least one "
+                "DjangoObjectType member.".format(cls.__name__)
+            )
 
         cls._dgx_member_models = tuple(t._meta.model for t in member_types)
         cls._dgx_registry = registry
@@ -2365,21 +2372,30 @@ class DjangoInputObjectType(NativeInputType):
         """
         _check_unknown_options(cls.__name__, options)
 
-        assert is_valid_django_model(model), (
-            'You need to pass a valid Django Model in {}.Meta, received "{}".'
-        ).format(cls.__name__, model)
+        if not is_valid_django_model(model):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid Django Model in {}.Meta, received "{}".'
+                ).format(cls.__name__, model)
+            )
 
         if not registry:
             registry = get_global_registry()
 
-        assert isinstance(registry, Registry), (
-            "The attribute registry in {} needs to be an instance of "
-            'Registry, received "{}".'
-        ).format(cls.__name__, registry)
+        if not isinstance(registry, Registry):
+            raise ImproperlyConfigured(
+                (
+                    "The attribute registry in {} needs to be an instance of "
+                    'Registry, received "{}".'
+                ).format(cls.__name__, registry)
+            )
 
-        assert input_for.lower() in ("create", "delete", "update"), (
-            'You need to pass a valid input_for value in {}.Meta, received "{}".'
-        ).format(cls.__name__, input_for)
+        if input_for.lower() not in ("create", "delete", "update"):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid input_for value in {}.Meta, received "{}".'
+                ).format(cls.__name__, input_for)
+            )
 
         input_for = input_for.lower()
 
@@ -2619,9 +2635,12 @@ class DjangoListObjectType(NativeObjectType):
         """
         _check_unknown_options(cls.__name__, options)
 
-        assert is_valid_django_model(model), (
-            'You need to pass a valid Django Model in {}.Meta, received "{}".'
-        ).format(cls.__name__, model)
+        if not is_valid_django_model(model):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid Django Model in {}.Meta, received "{}".'
+                ).format(cls.__name__, model)
+            )
 
         if not registry:
             registry = get_global_registry()
@@ -2630,10 +2649,13 @@ class DjangoListObjectType(NativeObjectType):
             cls, model, only_fields, exclude_fields
         )
 
-        assert isinstance(queryset, QuerySet) or queryset is None, (
-            "The attribute queryset in {} needs to be an instance of "
-            'Django model queryset, received "{}".'
-        ).format(cls.__name__, queryset)
+        if not (isinstance(queryset, QuerySet) or queryset is None):
+            raise ImproperlyConfigured(
+                (
+                    "The attribute queryset in {} needs to be an instance of "
+                    'Django model queryset, received "{}".'
+                ).format(cls.__name__, queryset)
+            )
 
         results_field_name = results_field_name or "results"
 
@@ -2736,9 +2758,12 @@ class DjangoListObjectType(NativeObjectType):
         else:
             global_paginator = graphql_api_settings.DEFAULT_PAGINATION_CLASS
             if global_paginator:
-                assert issubclass(global_paginator, BaseDjangoGraphqlPagination), (
-                    'You need to pass a valid DjangoGraphqlPagination class in {}.Meta, received "{}".'
-                ).format(cls.__name__, global_paginator)
+                if not issubclass(global_paginator, BaseDjangoGraphqlPagination):
+                    raise ImproperlyConfigured(
+                        (
+                            'You need to pass a valid DjangoGraphqlPagination class in {}.Meta, received "{}".'
+                        ).format(cls.__name__, global_paginator)
+                    )
 
                 paginator = global_paginator()
 

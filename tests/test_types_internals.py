@@ -6,6 +6,7 @@
 from unittest.mock import patch
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
 from django.utils.functional import SimpleLazyObject
 from graphql import graphql_sync
@@ -172,7 +173,7 @@ def test_invalid_global_paginator_class_asserts(db: None) -> None:
         "django_graphex.types.graphql_api_settings.DEFAULT_PAGINATION_CLASS",
         dict,  # not a BaseDjangoGraphqlPagination subclass
     ):
-        with pytest.raises(AssertionError):
+        with pytest.raises(ImproperlyConfigured):
 
             class _BadList(DjangoListObjectType):
                 class Meta:

@@ -482,7 +482,7 @@ def test_union_requires_nonempty_types() -> None:
     union must not silently construct.
     """
     reg = Registry()
-    with pytest.raises(AssertionError):
+    with pytest.raises(ImproperlyConfigured):
 
         class EmptyUnion(DjangoUnionType):
             class Meta:

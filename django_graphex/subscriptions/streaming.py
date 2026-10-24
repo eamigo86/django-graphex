@@ -517,9 +517,10 @@ async def native_subscribe(
         # Parity assertion: a scope-routed index value must equal the merged value
         # (scope wins on conflict, so they cannot diverge) — proving SCOPE-ONLY
         # routing matches the kept hook's effective filter exactly.
-        assert all(index[f] == merged[f] for f in index), (
-            "index routing must be SCOPE-ONLY parity with the kept _subscribe hook"
-        )
+        if not all(index[f] == merged[f] for f in index):
+            raise AssertionError(
+                "index routing must be SCOPE-ONLY parity with the kept _subscribe hook"
+            )
 
     group_name = spec.group_name
     if group_name is None:  # pragma: no cover - spec must provide a namer

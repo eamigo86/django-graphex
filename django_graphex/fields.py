@@ -6,6 +6,7 @@ import operator
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Count, F, JSONField, Prefetch
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.expressions import OrderBy, Window
@@ -502,6 +503,9 @@ class DjangoFilterPaginateListField(NativeMountedField):
             fields: filterable field configuration, or None to use the type's.
             *args: extra positional arguments forwarded to the base field.
             **kwargs: extra keyword arguments forwarded to the base field.
+
+        Raises:
+            ImproperlyConfigured: If pagination is not a pagination instance.
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
@@ -513,9 +517,12 @@ class DjangoFilterPaginateListField(NativeMountedField):
             pagination = default_paginator_class() if default_paginator_class else None
 
         if pagination is not None:
-            assert isinstance(pagination, BaseDjangoGraphqlPagination), (
-                'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
-            ).format(pagination)
+            if not isinstance(pagination, BaseDjangoGraphqlPagination):
+                raise ImproperlyConfigured(
+                    (
+                        'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
+                    ).format(pagination)
+                )
 
             # The ordering allowlist is NOT stamped here. It is a per-SCHEMA
             # fact — which columns the node type publishes is decided by the

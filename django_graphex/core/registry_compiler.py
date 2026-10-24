@@ -739,7 +739,6 @@ def compile_outputs_into(registries: Any) -> None:
     from django_graphex.core.base import (
         _gdx_output_registry,
         recompile_fields,
-        resolved_output_type,
     )
     from django_graphex.types import DjangoListObjectType
 
@@ -808,10 +807,6 @@ def compile_outputs_into(registries: Any) -> None:
                 f"compile_outputs_into: forked type {forked.name!r} is missing "
                 f"extensions['gdx']."
             )
-
-    # Touch resolved_output_type so the symbol is exercised (it is the read path
-    # the schema build relies on; keeps the import meaningful for linters).
-    assert resolved_output_type is not None
 
 
 # ---------------------------------------------------------------------------

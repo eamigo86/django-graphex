@@ -170,7 +170,6 @@ output = "coverage.xml"
 [tool.bandit]
 exclude_dirs = ["tests", "migrations"]
 skips = [
-    "B101",  # Skip assert_used test - asserts are OK in library code for validation
     "B311",  # Skip random - not used for security purposes
     "B324",  # Skip MD5 - used for cache keys, not cryptographic security
 ]

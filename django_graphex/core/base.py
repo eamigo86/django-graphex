@@ -34,6 +34,7 @@ from typing import Any
 # ``name = graphene.String()`` -> ``name = field(GraphQLString)``. The native
 # descriptor currency below (``NativeField`` / ``NativeMountedField`` /
 # ``GraphQLField``) is what the detection tuples recognize now.
+from django.core.exceptions import ImproperlyConfigured
 from graphql import GraphQLField
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -451,10 +452,11 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
 
         if abstract:
             # Abstract base: graphene asserts no other options accompany it.
-            assert not options, (
-                "Abstract types can only contain the abstract attribute. "
-                f"Received: abstract, {', '.join(options)}"
-            )
+            if options:
+                raise ImproperlyConfigured(
+                    "Abstract types can only contain the abstract attribute. "
+                    f"Received: abstract, {', '.join(options)}"
+                )
             return
 
         # --- dispatch into the PARENT's __init_subclass_with_meta__ ---
