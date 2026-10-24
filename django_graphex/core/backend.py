@@ -14,6 +14,8 @@ import enum
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, connections, models, router, transaction
 from pydantic import BaseModel, ValidationError
 
@@ -390,6 +392,54 @@ class PydanticBackend(SerializerBackend):
 
         return errors
 
+    def _model_field_errors(
+        self, payload: dict[str, Any], obj: models.Model
+    ) -> dict[str, list[str]]:
+        """Run Django field validation for every written concrete field.
+
+        Mirrors "Field.clean" (type coercion, choices, null, blank and the
+        field validators) for the fields present in the payload only. It never
+        calls "Model.clean", "validate_unique" or "validate_constraints". A
+        relation, file or binary field runs its validators only, so no query is
+        issued to check an FK target.
+
+        Args:
+            payload: The written field values keyed by model field name.
+            obj: The instance being created or updated.
+
+        Returns:
+            A mapping of field name to Django's validation messages.
+        """
+        errors: dict[str, list[str]] = {}
+        for name, value in payload.items():
+            try:
+                field = self.model._meta.get_field(name)
+            except FieldDoesNotExist:
+                continue
+            if (
+                not getattr(field, "concrete", False)
+                or field.many_to_many
+                or not field.editable
+                or field.primary_key
+            ):
+                continue
+            if value is None and field.null:
+                continue  # an explicit null on a nullable column is accepted
+            if value in field.empty_values and value in [
+                c for c, _ in field.flatchoices
+            ]:
+                continue  # an empty value the developer listed as a choice
+            try:
+                if field.is_relation or isinstance(
+                    field, (models.FileField, models.BinaryField)
+                ):
+                    field.run_validators(value)
+                else:
+                    field.clean(value, obj)
+            except DjangoValidationError as exc:
+                errors[name] = list(exc.messages)
+        return errors
+
     # -- backend API ----------------------------------------------------------- #
     def save_object(
         self,
@@ -476,6 +526,11 @@ class PydanticBackend(SerializerBackend):
 
         payload = {key: _unwrap(value) for key, value in payload.items()}
 
+        obj = instance or self.model()
+        model_errors = self._model_field_errors(payload, obj)
+        if model_errors:
+            return False, _errors_to_type(model_errors)
+
         fks = self._fk_fields()
         m2m = self._m2m_names()
         # Snapshot the full payload (M2M keys included) BEFORE popping, so the
@@ -484,7 +539,6 @@ class PydanticBackend(SerializerBackend):
         diagnostic_payload = dict(payload)
         m2m_values = {name: payload.pop(name) for name in list(payload) if name in m2m}
 
-        obj = instance or self.model()
         for name, value in payload.items():
             setattr(obj, f"{name}_id" if name in fks else name, value)
         for name, value in (save_kwargs or {}).items():

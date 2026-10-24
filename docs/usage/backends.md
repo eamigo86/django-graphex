@@ -44,12 +44,28 @@ For a model `EmailField`, generated create/update inputs also run Django's email
 `ok: false` with an `errors` entry for the email field; neither the parent nor
 a nested child is saved. An `EmailField` without choices keeps its GraphQL `String` input; a field
 with choices keeps its existing Enum SDL, and validation checks the stored
-choice value rather than its display label. This does not run
-`full_clean()` or add model-wide/custom field-validator parity: omitted fields,
-explicit `null` where allowed, empty strings, defaults, and partial updates
-retain their existing behavior. In particular, this change does not make
-`blank=False` reject an empty string. Keep application-specific email rules in
-your declared `validate_<field>()` hook or `Meta.pydantic_model`.
+choice value rather than its display label. Keep application-specific email
+rules in your declared `validate_<field>()` hook or `Meta.pydantic_model`.
+
+### Model field validation
+
+After Pydantic validation, create and update (including nested child writes)
+run Django's field-level validation (`Field.clean`) on every field **present in
+the payload**: type coercion, `choices`, `null`, `blank` and the field's
+validators (`max_length`, `MinValueValidator`, `MaxValueValidator`,
+`RegexValidator`, custom `validators=[...]`). Failures return the normal
+`ok: false` response with one `errors[]` entry per field carrying all of
+Django's messages; nothing is written, and a nested child's field is prefixed
+with the nested field name (`items.score`).
+
+What does **not** run: fields the client did not send (defaults and stored
+values on a partial update are left alone), `Model.clean()`,
+`validate_unique()` and `validate_constraints()` (uniqueness is checked as
+described below), fields with `editable=False`, and an explicit `null` on a
+`null=True` column. A relation field runs only its validators, with no query
+to check the target (existence is reported by the foreign-key check). A value
+the developer lists in `choices` is accepted even if it is empty. Validators
+that query the database are the developer's choice and cost.
 
 Generated inputs for `PositiveIntegerField` and `PositiveSmallIntegerField`
 reject supplied negative values before a database write. They return the
@@ -59,7 +75,7 @@ input remains `Int`, with its existing upper bound. Choice-backed fields retain
 their existing Enum input and validate the stored numeric choice without
 replacing the Enum value. Omitted values, allowed nulls, defaults, partial
 updates, and `PositiveBigIntegerField` are unchanged. This is field-local input
-validation, not `full_clean()` or a general database-constraint conversion.
+validation; the model field validators above also run on the supplied value.
 
 ### Uniqueness validation
 

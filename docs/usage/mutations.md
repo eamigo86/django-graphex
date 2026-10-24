@@ -499,8 +499,9 @@ write rolls back when `ATOMIC_MUTATIONS=True` (or a request-wide
 commit. This is **not** an `ok: false` conversion: supported field-level
 unique, foreign-key, and many-to-many conflicts still use structured
 `errors[]`, while an unclassified integrity failure does not. Direct backend
-calls still raise the original exception. No general model validation,
-`full_clean()`, constraint pre-scan, or automatic upsert is added. Clients
+calls still raise the original exception. Model field validators run on written fields
+(see [Model field validation](backends.md#model-field-validation)), but no
+`Model.clean()`, constraint pre-scan, or automatic upsert is added. Clients
 inspecting raw database messages must migrate to the fixed message and
 GraphQL error path.
 

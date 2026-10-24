@@ -1066,6 +1066,20 @@
 
 ### Behavior changes
 
+- Generated create and update (`DjangoModelMutation`, `DjangoModelType`, and
+  nested child writes) now run Django's model field validation on every field
+  the client wrote: the field's validators (`MinValueValidator`,
+  `RegexValidator`, custom `validators=[...]`, `max_length`, ...), `blank`,
+  `null` and `choices`, with Django's own messages. Values that were previously
+  accepted, such as `""` into a `blank=False` field or a number below a
+  `MinValueValidator`, now return `ok: false` with one `errors[]` entry per
+  field and write nothing; a nested child error is prefixed with the nested
+  field name. Fields the client did not send (including developer defaults) are
+  not validated, an explicit `null` on a nullable column stays valid, and a
+  relation field runs its validators without an existence query. `Model.clean()`,
+  `validate_unique()` and `validate_constraints()` are not run. Clients that
+  relied on invalid values being stored must fix the data or relax the field's
+  validators.
 - Nested child payloads that carry an `id` no longer create a child when the
   `id` does not resolve to a visible child. A hidden `id` (outside the child's
   host or output scope) answered `<Model> with id N does not exist.` while a

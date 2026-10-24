@@ -98,7 +98,7 @@ class Post(DummyModel):
     """
 
     title = models.CharField(max_length=200)
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
     author = models.ForeignKey(Author, related_name="posts", on_delete=models.CASCADE)
     category = models.ForeignKey(
         Category, related_name="posts", null=True, on_delete=models.SET_NULL
@@ -118,7 +118,7 @@ class Comment(DummyModel):
     """
 
     post = models.ForeignKey(Post, related_name="comments", on_delete=models.CASCADE)
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
 
 
 class AuthorProfile(DummyModel):
@@ -250,7 +250,7 @@ class Track2GfkComment(DummyModel):
     whose explicit members are the Track2 members.
     """
 
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
     target_ct = models.ForeignKey(
         ContentType, null=True, on_delete=models.CASCADE, related_name="+"
     )
@@ -440,7 +440,7 @@ class MetaHygieneWidget(DummyModel):
     """
 
     title = models.CharField(max_length=200)
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
     is_active = models.BooleanField(default=True)
 
 
@@ -576,7 +576,7 @@ class NestedInpPost(DummyModel):
     """
 
     title = models.CharField(max_length=200)
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
     author = models.ForeignKey(
         NestedInpAuthor, related_name="posts", on_delete=models.CASCADE
     )
@@ -594,7 +594,7 @@ class NestedInpComment(DummyModel):
     post = models.ForeignKey(
         NestedInpPost, related_name="comments", on_delete=models.CASCADE
     )
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
 
 
 # --- Dedicated models for test_nested_objects.py -------------------------- #
@@ -641,7 +641,7 @@ class NestedObjPost(DummyModel):
     """
 
     title = models.CharField(max_length=200)
-    body = models.TextField(default="")
+    body = models.TextField(default="", blank=True)
     author = models.ForeignKey(
         NestedObjAuthor, related_name="nested_obj_posts", on_delete=models.CASCADE
     )
