@@ -57,7 +57,9 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T29 | P21 | Mutable input-field and argument defaults deep-copied per execution (immutables untouched) | D | [x] | `9fb321d`; RED 3 behavior tests; parent re-ran test_a7b: pristine per request; full 7093 passed, cov 97.60 % |
 | T30 | P22 | Base64 decoded-size estimate subtracts `=` padding; same byte limit as multipart | D | [x] | `3ebc835`; RED 12 > 10 at the limit; full 6938 passed, cov 97.67 %, gates clean |
 | T31 | P23 | Decimal scalar rejects NaN/sNaN/Infinity at coercion (Float/Int/BigInt/Date already did); mutation inputs now get a coercion error like BigInt (4.0.0 Float did the same) | D | [x] | `33862e8`; RED 16/68; full 7033 passed, cov 97.61 % |
-| T32 | Residual partials (A1, A2, A10, M-D6, M-D10, M-F3, SD6, Q8, others) | Fix compatible residuals; list incompatible ones for approval | D | [ ] | |
+| T32a | A10 residual (approved) | `PydanticBackend.save_object` runs `Field.clean` on each written editable field (validators, blank, null, max_length; relations/files run validators only); no Model.clean / validate_unique / validate_constraints | D | [x] | `219fd8f`; RED 12/15; full 7119 passed, cov 97.61 %; test fixtures' `TextField(default="")` got `blank=True` |
+| T32b | A1 other aliases, A2 cache bytes, M-D6 raw JSON non-finite output | Compatible residual fixes | D | [ ] | |
+| T32c | M-F3, M-D10, L-M1, SD6, Q8, Q10, M-D2, L-E4, M-U6, M-D1, L-E3 | Document contracts/dispositions (M-F3: every empty boolean construct is a no-op, verified 2026-10-24) | D | [ ] | |
 | T33 | D2, D3, D5, D6 | Upgrade guide split by version, audit disposition fixes, docs cleanup | D | [ ] | |
 | T34 | G1-G7 | Playground README/docs, `subscription_scope`, password validation, commands | D | [ ] | |
 | T35 | D1 | Set version 4.1.0 (pyproject, docs, README); changelog section and compatibility note | D | [ ] | |
@@ -117,6 +119,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T26, T28 done.
 
+- T32a done. Note for T34/T37: Playground and benchmark models must not send "" to `blank=False` columns.
+
 ## Next step
 
-T32a (A10 field validators), T32b (A1 aliases, A2 cache bytes, M-D6, M-D10), T32c (M-F3 + dispositions).
+T32b.
