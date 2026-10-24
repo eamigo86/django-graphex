@@ -69,10 +69,20 @@ The `--no-migrations` test option is deliberate: playground tests exercise the
 current models and must not depend on whatever generated migration happened to
 exist in a developer checkout.
 
+### Not production-ready
+
+The playground settings are a development fixture. `manage.py check --deploy`
+reports seven warnings on them: `DEBUG = True`, a short hard-coded
+`SECRET_KEY`, no HSTS, no SSL redirect, insecure session and CSRF cookies, and
+no clickjacking middleware. Copy the *patterns* (the `DJANGO_GRAPHEX` block, the
+schema wiring), not the file, into a real project and set those deliberately.
+
 ### WebSocket origin policy
 
 The shipped `ALLOWED_HOSTS` is exactly `127.0.0.1`, `localhost` and
-`testserver`. `AllowedHostsOriginValidator` applies that list to WebSocket
+`testserver`; the last one exists only because Django's test client and
+Channels' test communicator use that host, so drop it from a copy that is not
+run by this test suite. `AllowedHostsOriginValidator` applies that list to WebSocket
 handshakes, so a browser origin such as `evil.example` is rejected while the
 documented localhost and Django test-client origins connect.
 
@@ -99,10 +109,11 @@ so an allow-all Origin policy would enable cross-site WebSocket requests.
 - The superuser **`demo` / `demo12345`** (also linked to the first author)
 
 The counts are deliberate: 12 posts per author is **more than the page size
-of 10**, so nested `posts` lists span real multiple pages and the DB-side
-window-pagination path (`ROW_NUMBER() OVER (PARTITION BY ...)`) is genuinely
-exercised — try `results(offset: 10)` on a nested list. Scale the dataset
-without editing code:
+of 10**, so — **when logged in** — nested `posts` lists span real multiple pages
+and the DB-side window-pagination path (`ROW_NUMBER() OVER (PARTITION BY ...)`)
+is genuinely exercised: try `results(offset: 10)` on a nested list. Logged out,
+`PostType.get_queryset` shows only the 4 published posts per author, which fit
+on one page. Scale the dataset without editing code:
 
 ```bash
 uv run python manage.py seed --authors 25 --posts 15   # explicit counts
@@ -187,9 +198,9 @@ Everything lives in [`blog/schema.py`](https://github.com/eamigo86/django-graphe
     GraphiQL to see the anti-oracle guard reject them:
 
     - `posts { results(ordering: "author__user__password") { title } }` →
-      `Relation-spanning ordering is not permitted`
+      `Invalid ordering field: 'author__user__password'. Relation-spanning ordering is not permitted.`
     - `posts { results(ordering: "nonexistent") { title } }` →
-      `Invalid ordering field`
+      `Invalid ordering field: 'nonexistent'.`
 
 ## Starter queries
 
@@ -312,7 +323,7 @@ graphql-core generation.
 |---|---|
 | `{ authors { results { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
 | `{ authors { results(ordering: "bio") { name } } }` | `Invalid ordering field: 'bio'.` |
-| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | Rejected: `bio` is not an input field of `AuthorFilterInput`. |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Expected value of type 'AuthorFilterInput' not to include unknown field 'bio'. Did you mean 'id'? Found: { bio: { icontains: "x" } }.` |
 | `{ authors { results(ordering: "name", page: 1) { name } } }` | the control — still sorts, `Author 0`, `Author 1`, `Author 10`, … |
 
 The same rule is told on two columns where it matters more than on a bio:
@@ -321,7 +332,7 @@ The same rule is told on two columns where it matters more than on a bio:
 |---|---|
 | `{ authors { results { user { password } } } }` | `Cannot query field 'password' on type 'UserType'.` — without the exclusion `Author.user` answers the hash to every **authenticated** caller. Anonymous ones are stopped one layer earlier by `resolve_user` (see the hatch table below), so this column has two independent walls |
 | `{ comments { results(first: 1) { internalNote } } }` | `Cannot query field 'internalNote' on type 'CommentType'.` |
-| `mutation { commentCreate(newComment: { post: 1, authorName: "a", text: "t", internalNote: "x" }) { ok } }` | `Field 'internalNote' is not defined by type 'CommentCreateGenericType_p84059c'.` — the same projection on the **write** input |
+| `mutation { commentCreate(newComment: { post: 1, authorName: "a", text: "t", internalNote: "x" }) { ok } }` | `Expected value of type 'CommentCreateGenericType_p84059c' not to include unknown field 'internalNote', found: { post: 1, authorName: "a", text: "t", internalNote: "x" }.` — the same projection on the **write** input |
 
 The to-ONE hatch closes the ordering axis on the key behind it:
 

@@ -48,7 +48,7 @@ control that proves only the one column moved:
 |-------|--------|
 | `{ authors { results(page: 1) { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
 | `{ authors { results(page: 1, ordering: "bio") { id } } }` | `Invalid ordering field: 'bio'.` |
-| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | Rejected: `bio` is not an input field of `AuthorFilterInput`. |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Expected value of type 'AuthorFilterInput' not to include unknown field 'bio'. Did you mean 'id'? Found: { bio: { icontains: "x" } }.` |
 | `{ authors { results(page: 1, ordering: "name") { id name } } }` | The rows, ordered by name. |
 
 The input-field wording can vary with graphql-core. With
@@ -151,8 +151,8 @@ above, it rejects relation-spanning and non-existent terms:
 
 | Query | Error |
 |-------|-------|
-| `posts { results(ordering: "author__user__password") { title } }` | `Relation-spanning ordering is not permitted` |
-| `posts { results(ordering: "nonexistent") { title } }` | `Invalid ordering field` |
+| `posts { results(ordering: "author__user__password") { title } }` | `Invalid ordering field: 'author__user__password'. Relation-spanning ordering is not permitted.` |
+| `posts { results(ordering: "nonexistent") { title } }` | `Invalid ordering field: 'nonexistent'.` |
 
 Try these in GraphiQL to see the guard in action.
 
@@ -167,8 +167,10 @@ make install     # uv sync --group test — local library + daphne + test tools
 make migrate     # create + apply migrations (SQLite)
 make seed        # demo data: 15 authors × 12 posts × 3 comments, 12 notes,
                  #            2 accounts + 2 invoices + 4 attachments (GFK union).
-                 #            Each author's posts list spans multiple pages at
-                 #            page size 10, so nested window pagination is real.
+                 #            Each author has 12 posts (4 published), so logged in
+                 #            their posts list spans two pages at page size 10 and
+                 #            nested window pagination is real; logged out you see
+                 #            only the 4 published ones (one page).
                  #            Scale with: python manage.py seed --authors N --posts M
 make run         # ASGI server at http://127.0.0.1:8000/graphql/
 ```
@@ -320,6 +322,11 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
 | `payload_mode` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.payload_mode = "full"` |
 | Native WS consumer (`subscription_ws_consumer`) | ✅ | `consumers.py` — `AppWSConsumer` |
+| SSE heartbeat (`SSE_HEARTBEAT_ENABLED`) | not demonstrated | Commented, off by default in `config/settings.py`; needs no Redis, so you can uncomment it. Not exercised by the suite |
+| SSE connection lease (`SSE_CONNECTION_LIMIT_ENABLED`, per-account cap) | not demonstrated | Commented in `config/settings.py`; it needs a shared Redis URL, which a local playground does not run. See the [subscription guide](../../docs/usage/subscriptions.md#sse-connection-controls) for lease expiry and failover limits |
+| WS `on_connect` credential hook | not demonstrated | `AppWSConsumer` uses the default session auth; the hook needs a project-specific token verifier. See [Optional connection authentication](../../docs/usage/subscriptions.md#optional-connection-authentication) |
+| `BigInt` scalar (4.1) | ✅ | `models.py` — `Post.view_count` (`BigIntegerField`); the seed gives the first post `2**53 + 1`, so `{ posts { results { viewCount } } }` answers it as a string (`"9007199254740993"`) and `viewCount: "…"` is the matching input |
+| `Decimal` scalar (4.1) | ✅ | `Account.balance` / `Invoice.amount` (`DecimalField`) serialize as strings: the typed union query answers `balance: "1250.50"`, not a float |
 
 ---
 
@@ -394,6 +401,12 @@ view (`config/urls.py`):
 - **Registration** (`test_registration.py`) — weak and username-similar
   passwords are refused, a duplicate username gets the generic message, and a
   valid password still registers.
+- **Cost budget** (`test_cost_budget.py`) — every plain query this README shows
+  runs under the suggested `MAX_QUERY_COST`, reports its cost, and an unbounded
+  nested list is refused.
+- **Scalars, media, upload errors** (`test_scalars_media_uploads.py`) — `BigInt`
+  strings in and out, uploaded files served while `DEBUG` is on, and an
+  unexpected upload failure answered generically while the detail is logged.
 - **Public subscription scope** (`test_subscription_transports_e2e.py`) — an
   anonymous `postSubscription` never receives a draft over WebSocket or SSE,
   while a logged-in subscriber does.
@@ -443,10 +456,23 @@ DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migration
 ```
 
 The shipped `ALLOWED_HOSTS` contains only `127.0.0.1`, `localhost`, and
-`testserver`. This keeps `AllowedHostsOriginValidator` effective for the
+`testserver` (the host Django's test client and Channels' test communicator
+use, so the suite can connect; remove it from a copy that does not run these
+tests). This keeps `AllowedHostsOriginValidator` effective for the
 session-authenticated WebSocket endpoint. If you expose the playground through
 a tunnel or proxy, add that hostname explicitly — do not replace the list with
 `["*"]`.
+
+### These settings are not production-ready
+
+`config/settings.py` is a development fixture, and `manage.py check --deploy`
+says so with seven warnings: `DEBUG = True`, a short hard-coded `SECRET_KEY`, no
+`SECURE_HSTS_SECONDS`, no `SECURE_SSL_REDIRECT`, insecure session and CSRF
+cookies, and no `XFrameOptionsMiddleware`. Copy the patterns (the
+`DJANGO_GRAPHEX` block, the schema wiring), not the file, and set those values
+deliberately. Uploaded files are served by Django only while `DEBUG` is on
+(`MEDIA_URL` in `config/urls.py`); in production a web server or object store
+serves them.
 
 ---
 
