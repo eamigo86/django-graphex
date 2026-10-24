@@ -1240,8 +1240,52 @@ class BaseGraphQLView(View):
                         ),
                     )
 
-    @method_decorator(ensure_csrf_cookie)
     def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
+        """Refuse an oversized POST, then handle the request with the CSRF cookie.
+
+        The body cap runs HERE, ahead of "@ensure_csrf_cookie" on the inner
+        handler: that decorator runs Django's CSRF check, which reads
+        "request.POST" whenever the client holds a "csrftoken" cookie. For
+        multipart that parses the body and spools its files to disk, so a cap
+        checked inside the decorated handler came too late for every
+        cookie-bearing client. Subclass checks (authentication, cache) still run
+        before this method, so their precedence is unchanged.
+
+        Args:
+            request: The incoming HTTP request.
+            *args: Extra positional arguments forwarded from the URL resolver.
+            **kwargs: Extra keyword arguments forwarded from the URL resolver.
+
+        Returns:
+            The HTTP response.
+        """
+        try:
+            self._enforce_request_body_size(request)
+        except HttpError as e:
+            return self._http_error_response(request, e)
+        return self._dispatch_with_csrf_cookie(request, *args, **kwargs)
+
+    def _http_error_response(self, request: Any, error: HttpError) -> HttpResponse:
+        """Serialize an HttpError into the GraphQL error envelope.
+
+        Args:
+            request: The incoming HTTP request.
+            error: The error to serialize.
+
+        Returns:
+            The error's response carrying the JSON envelope.
+        """
+        response = error.response
+        response["Content-Type"] = "application/json"
+        response.content = self.json_encode(
+            request, {"errors": [self.format_error(error, request)]}
+        )
+        return response
+
+    @method_decorator(ensure_csrf_cookie)
+    def _dispatch_with_csrf_cookie(
+        self, request: Any, *args: Any, **kwargs: Any
+    ) -> HttpResponse:
         """Handle a GraphQL GET/POST request (and GraphiQL/batch).
 
         The cross-site POST guard runs BEFORE this method, in "as_view" — see
@@ -1320,8 +1364,6 @@ class BaseGraphQLView(View):
                     )
                 )
 
-            self._enforce_request_body_size(request)
-
             data = self.parse_body(request)
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
 
@@ -1387,12 +1429,7 @@ class BaseGraphQLView(View):
                 status=status_code, content=result, content_type="application/json"
             )
         except HttpError as e:
-            response = e.response
-            response["Content-Type"] = "application/json"
-            response.content = self.json_encode(
-                request, {"errors": [self.format_error(e, request)]}
-            )
-            return response
+            return self._http_error_response(request, e)
 
     def get_response(
         self, request: Any, data: Any, show_graphiql: bool = False

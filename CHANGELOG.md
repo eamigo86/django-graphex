@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fix: the request body cap now runs before Django's CSRF check. A multipart
+  POST carrying a `csrftoken` cookie was parsed (and its files spooled to disk)
+  by that check before `MAX_REQUEST_BODY_SIZE` could answer 413. `dispatch` now
+  checks the cap first, so an oversized body is refused unparsed whether or not
+  the client holds the cookie. CSRF behavior is unchanged.
+
 - Fix: bound the total text that directives add to one response. Only a
   per-field cap existed (`MAX_REPLACE_OUTPUT_LENGTH`), so many aliases and rows
   each under the cap could still produce hundreds of megabytes. New setting

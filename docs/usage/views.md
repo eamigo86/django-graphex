@@ -419,7 +419,9 @@ their existing envelope.
 With [`MAX_REQUEST_BODY_SIZE`](settings.md#file-uploads) set, `dispatch` refuses
 an oversized POST with **HTTP 413** before the body is parsed. It checks the
 declared `Content-Length` first, then measures the body itself — so a client
-cannot under-declare its length to slip past.
+cannot under-declare its length to slip past. The check runs before Django's
+CSRF check, which would otherwise parse a multipart body for any client holding
+a `csrftoken` cookie, so an oversized upload is refused unparsed.
 
 JSON that the decoder cannot parse returns **HTTP 400**, including when the
 decoder raises a recursion error. This is parser-error handling, not a promise
