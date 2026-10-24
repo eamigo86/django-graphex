@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Behavior change: define `not` inside a to-many relation object as "no
+  related row matches the operand". A `not` used to be evaluated on the same
+  related row when it sat beside a positive criterion, and its `and` operand
+  was split across rows, so `tags: { not: { and: [x, y] } }` was not the
+  complement of `tags: { and: [x, y] }`. Now (posts tagged with every subset of
+  x, y, z): `tags: { and: [x, { not: z }] }` returns posts tagged x and not z
+  (`x`, `xy`; was also `xyz`, `xz`), `tags: { label: x, not: y }` returns
+  `x`, `xz` (was also `xy`, `xyz`), `tags: { or: [z, { not: y }] }` no longer
+  returns `xy`, and `tags: { not: { and: [x, y] } }` returns every post. A
+  `not` alone, `not: { or: ... }`, top-level `not` and every filter outside
+  relation objects are unchanged.
+
 - Compile nested `and` filters over to-many relations without nested EXISTS.
   Each level of a nested `and` re-correlated on the root table, so a chain of
   about 25 levels failed on SQLite ("Expression tree is too large") and

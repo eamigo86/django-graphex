@@ -663,7 +663,10 @@ def test_reverse_fk_boolean_and_nested_forward_hop(rows: dict[str, Any]) -> None
     )
     assert _titles(combined) == ["both", "grouped", "split", "visible-match"]
     negative, _ = _execute('{ comments: { not: { label: { exact: "match" } } } }')
-    assert "both" in _titles(negative)
+    # A not inside the relation object means "no visible child matches":
+    # a visible matching child cannot be cancelled by a nonmatching sibling.
+    assert "both" not in _titles(negative)
+    assert "visible-match" not in _titles(negative)
     assert "hidden-only" in _titles(negative)
 
 

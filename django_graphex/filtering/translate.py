@@ -250,6 +250,18 @@ def to_q(
             touched_to_many = True
 
         related = _relation_target(model, key)
+        if (
+            related is not None
+            and _is_to_many(model, key)
+            and not _is_pk_lookups(value)
+        ):
+            from .backend import _has_inner_not, many_not_filter
+
+            if _has_inner_not(value, related, True):
+                not_q = many_not_filter(model, key, value, prefix, _scope)
+                if not_q:
+                    result &= not_q
+                    continue
         if related is not None and _scope is not None:
             many_q = _scope.many_to_many_filter(model, key, value, prefix)
             if many_q is not None:

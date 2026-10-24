@@ -1147,3 +1147,28 @@ def test_m2m_scope_keeps_one_set_based_query_per_list(rows: dict[str, Any]) -> N
     assert len(names) == 31
     assert len(captured) <= 3
     assert context.tag_aliases == ["default"]
+
+
+def test_m2m_not_inside_relation_object_uses_visible_witnesses(
+    rows: dict[str, Any],
+) -> None:
+    """A not inside a scoped relation object complements the visible match.
+
+    A hidden tag labelled match neither satisfies nor cancels the operand.
+
+    Args:
+        rows: Database witness rows.
+    """
+    outside, _ = _names(
+        "posts", '{ not: { tags: { label: { exact: "match" } } } }', "title"
+    )
+    inside, _ = _names(
+        "posts", '{ tags: { not: { label: { exact: "match" } } } }', "title"
+    )
+    assert inside == outside
+    sibling, _ = _names(
+        "posts",
+        '{ tags: { label: { exact: "other" }, not: { label: { exact: "match" } } } }',
+        "title",
+    )
+    assert sibling == ["mixed"]

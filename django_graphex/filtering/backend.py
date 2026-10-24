@@ -311,6 +311,46 @@ class _ForwardFkFilterScope:
             matching |= ~Q(Exists(linked))
         return matching
 
+    def visible_rows(
+        self, model: type[Model], name: str
+    ) -> tuple[QuerySet, _ForwardFkFilterScope]:
+        """Return the request-visible destination rows of a scoped to-many hop.
+
+        Args:
+            model: Model owning the reverse-FK or M2M relation.
+            name: Forward or reverse ORM relation name.
+
+        Returns:
+            The destination rows after its hook, and the scope for its fields.
+
+        Raises:
+            GraphQLError: If the hook changes the destination model or alias.
+        """
+        from django_graphex.core.compat import _gdx_graphene_type
+        from django_graphex.utils import apply_object_type_get_queryset
+
+        from .native_schema import _traversed_type
+
+        field = model._meta.get_field(name)
+        related = field.related_model
+        accessor = (
+            field.get_accessor_name() if isinstance(field, ManyToOneRel) else name
+        )
+        child_type = _traversed_type(self.node_type, accessor)
+        child_scope = type(self)(self.info, self.alias, child_type)
+        output_type = _gdx_graphene_type(child_type)
+        destination = related._default_manager.db_manager(self.alias).all()
+        visible = apply_object_type_get_queryset(destination, output_type, self.info)
+        if (
+            visible.model._meta.concrete_model is not related._meta.concrete_model
+            or visible.db != self.alias
+        ):
+            raise GraphQLError(
+                f"{output_type.__name__}.get_queryset must retain the "
+                "destination model and database alias for a relation filter."
+            )
+        return visible, child_scope
+
 
 def _matches_missing_child(condition: Q) -> bool:
     """Evaluate a child condition against a missing reverse-join row.
@@ -501,6 +541,7 @@ def _independent_many_q(
                     )
                 )
                 and not _is_pk_lookups(value)
+                and not _has_inner_not(value, related, True)
                 and _has_independent_many_and(value, related)
             ):
                 relation_scope, child_scope = (
@@ -518,6 +559,171 @@ def _independent_many_q(
             else:
                 result &= leaf_q
     return result
+
+
+def _negates_exists(condition: Q, negated: bool = False) -> bool:
+    """Find an EXISTS under a NOT, which an absent row cannot satisfy.
+
+    Args:
+        condition: Predicate compiled for a related row.
+        negated: Whether an enclosing Q negates this one.
+
+    Returns:
+        Whether a nested to-many test is negated within the condition.
+    """
+    negated = negated != condition.negated
+    for child in condition.children:
+        if isinstance(child, Q):
+            if _negates_exists(child, negated):
+                return True
+        elif negated and isinstance(child, Exists):
+            return True
+    return False
+
+
+def _has_inner_not(node: Any, model: type[Model], deep: bool) -> bool:
+    """Find a "not" inside a relation object.
+
+    Args:
+        node: A generated filter input node.
+        model: The model at the current relation-object scope.
+        deep: Whether to also look through nested relation objects.
+
+    Returns:
+        Whether the node holds a "not" at its own scope or, when deep, below.
+    """
+    if node is None or node is Undefined:
+        return False
+    for key, value in node.items():
+        if value is None or value is Undefined:
+            continue
+        if key == "not":
+            return True
+        if key in ("and", "or"):
+            if any(_has_inner_not(child, model, deep) for child in value):
+                return True
+        elif deep and not _is_pk_lookups(value):
+            related = _relation_target(model, key)
+            if related is not None and _has_inner_not(value, related, True):
+                return True
+    return False
+
+
+def _many_not_q(
+    node: Any,
+    related: type[Model],
+    rows: QuerySet,
+    linked: QuerySet,
+    scope: _ForwardFkFilterScope | None,
+    combinator: str | None = None,
+) -> Q:
+    """Compile a to-many relation object that holds a "not".
+
+    The relation object is a parent-level condition. Criteria without a "not"
+    share one related row (one correlated EXISTS); each "not" is the NOT of its
+    operand evaluated the same way, so it is the complement of the parent set
+    matching the operand, like the ORM's "~Q(rel__...)".
+
+    Args:
+        node: The relation object (or a Boolean operand of it).
+        related: Related model of the relation.
+        rows: Related rows, after any destination scope.
+        linked: The rows linked to the outer parent row.
+        scope: Request-bound destination scope for nested hops, when available.
+        combinator: Enclosing Boolean operator for unknown-field validation.
+
+    Returns:
+        A SQL-composable parent-row condition.
+    """
+    terms: list[Q] = []
+    row: dict[str, Any] = {}
+    row_and: list[Any] = []
+    for key, value in node.items():
+        if value is None or value is Undefined:
+            continue
+        if key == "not":
+            inner = _many_not_q(value, related, rows, linked, scope, "not")
+            if inner:
+                terms.append(~inner)
+        elif key == "and":
+            for child in _flat_and(value):
+                if _has_inner_not(child, related, False):
+                    inner = _many_not_q(child, related, rows, linked, scope, "and")
+                    if inner:
+                        terms.append(inner)
+                else:
+                    row_and.append(child)
+        elif key == "or" and any(_has_inner_not(c, related, False) for c in value):
+            combined = Q()
+            has_any = False
+            for child in value:
+                inner = _many_not_q(child, related, rows, linked, scope, "or")
+                combined = inner if not has_any else (combined | inner)
+                has_any = True
+            if has_any:
+                terms.append(combined)
+        else:
+            row[key] = value
+    if row_and:
+        row["and"] = row_and
+    if row:
+        if _has_independent_many_and(row, related):
+            row_q = _independent_many_q(row, rows, combinator, scope)
+        else:
+            row_q, _ = to_q(row, related, _combinator=combinator, _scope=scope)
+        if row_q:
+            witness = Q(Exists(linked.filter(row_q)))
+            if not _negates_exists(row_q) and _matches_missing_child(row_q):
+                witness |= ~Q(Exists(linked))
+            terms.append(witness)
+    result = Q()
+    for term in terms:
+        result &= term
+    return result
+
+
+def many_not_filter(
+    model: type[Model], name: str, value: Any, prefix: str, scope: Any
+) -> Q:
+    """Filter a to-many relation object that holds a "not".
+
+    Args:
+        model: Model owning the reverse-FK or M2M relation.
+        name: Forward or reverse ORM relation name.
+        value: Nested related fields with Boolean operators.
+        prefix: ORM path from the root source to this model.
+        scope: Request-bound destination scope, or None.
+
+    Returns:
+        A parent-row condition, or an empty Q when the relation is not a
+        plain reverse-FK or M2M one.
+    """
+    field = model._meta.get_field(name)
+    if isinstance(field, (ManyToManyField, ManyToManyRel)):
+        back = (
+            field.related_query_name()
+            if isinstance(field, ManyToManyField)
+            else field.field.name
+        )
+        link = {f"{back}__pk": OuterRef(f"{prefix}pk")}
+    elif isinstance(field, ManyToOneRel) and not hasattr(field.field, "ct_field"):
+        link = {field.field.attname: OuterRef(f"{prefix}pk")}
+    else:
+        return Q()
+    related = field.related_model
+    if not to_q(value, related)[0]:
+        return Q()
+    child_scope = None
+    if scope is None:
+        rows = related._base_manager.all()
+    elif scope.reverse_is_scoped(model, name) or scope.many_to_many_is_scoped(
+        model, name
+    ):
+        rows, child_scope = scope.visible_rows(model, name)
+    else:
+        rows = related._base_manager.using(scope.alias).all()
+        child_scope = scope.for_relation(model, name, prefix)[1]
+    return _many_not_q(value, related, rows, rows.filter(**link), child_scope)
 
 
 class FilterBackend:
