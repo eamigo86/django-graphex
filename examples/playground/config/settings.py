@@ -81,6 +81,8 @@ DJANGO_GRAPHEX = {
         # Process @directives.
         "django_graphex.middleware.GraphQLDirectiveMiddleware",
     ],
+    # 4.1 changed the library default to 100; the playground pins 10 so the
+    # nested lists below span several pages with only twelve posts per author.
     "DEFAULT_PAGE_SIZE": 10,
     "MAX_PAGE_SIZE": 100,
     # Keep introspection ON so GraphiQL works. Flip to False to see the
@@ -153,6 +155,15 @@ DJANGO_GRAPHEX = {
     #   "SSE_CONNECTION_LIMIT_ENABLED": True,
     #   "SSE_MAX_CONNECTIONS_PER_USER": 5,
     #   "SSE_CONNECTION_REDIS_URL": os.environ["SSE_CONNECTION_REDIS_URL"],
+    # ---------------------------------------------------------------------------
+    # New in 4.1, all ON with the defaults shown, so they are only named here
+    # (uncomment to change): the optimizer stops planning deeper relations past a
+    # work budget (same results, possibly more queries), very large documents skip the parse and
+    # validation caches, and directive output is bounded in total.
+    #   "OPTIMIZER_WORK_BUDGET": 2000,
+    #   "DOCUMENT_CACHE_MAX_QUERY_LENGTH": 65_536,
+    #   "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,
+    #   "COST_DIRECTIVE": 0,
     # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #

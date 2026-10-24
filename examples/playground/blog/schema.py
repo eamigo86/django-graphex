@@ -12,6 +12,7 @@
 - Subscriptions: public "postSubscription" and private "noteSubscription".
 """
 
+import logging
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -79,6 +80,7 @@ from .models import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 # Generic refusal for a registration that cannot proceed for a reason the caller
 # must not learn (a taken username).
@@ -1473,8 +1475,9 @@ class UploadDocument(Mutation):
 
         Returns:
             payload: A payload with "ok=True", the saved document name and the
-                stored record, or "ok=False" and the error message when
-                decoding or saving fails.
+                stored record, or "ok=False" and an error: the library's own
+                validation message for a bad payload, or a generic message
+                (the detail is logged) for an unexpected failure.
         """
         name = kwargs["name"]
         file = kwargs["file"]
@@ -1491,8 +1494,16 @@ class UploadDocument(Mutation):
             # Pass every payload field explicitly (incl. error=None): native does
             # not auto-default unset payload fields.
             return cls(ok=True, name=doc.name, document=doc, error=None)
-        except Exception as exc:  # noqa: BLE001
-            return cls(ok=False, name=name, document=None, error=str(exc))
+        except GraphQLError as exc:
+            # The library's own validation (bad base64, over the size cap) is
+            # written for the caller and safe to show.
+            return cls(ok=False, name=name, document=None, error=exc.message)
+        except Exception:  # noqa: BLE001
+            # Anything else (storage, configuration) is an operator problem and
+            # may carry paths or settings: log it, tell an anonymous caller only
+            # that the upload failed.
+            logger.exception("uploadDocument failed")
+            return cls(ok=False, name=name, document=None, error="Upload failed.")
 
 
 # --------------------------------------------------------------------------- #

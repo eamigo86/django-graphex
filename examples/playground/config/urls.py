@@ -7,6 +7,8 @@ the native WebSocket consumer (see "config/asgi.py").
 """
 
 from blog.schema import schema
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path
 
@@ -37,3 +39,9 @@ urlpatterns = [
     # the Django admin first, then open /graphql/secure/ in the same browser.
     path("graphql/secure/", AuthenticatedGraphQLView.as_view(graphiql=True)),
 ]
+
+# Serve uploaded files (MEDIA_URL -> MEDIA_ROOT) while DEBUG is True, the same
+# development-only contract as the static files in config/asgi.py. static()
+# returns nothing when DEBUG is off: in production a web server or object store
+# serves media, never Django.
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

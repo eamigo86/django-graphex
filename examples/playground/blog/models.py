@@ -109,6 +109,10 @@ class Post(models.Model):
     )
     tags = models.ManyToManyField(Tag, blank=True, related_name="posts")
     created = models.DateTimeField(auto_now_add=True)
+    # A BigIntegerField is exposed as the "BigInt" scalar and serialized as a
+    # string, so a counter past 2**53 survives a JSON round trip (a GraphQL Int
+    # cannot carry it). Query { posts { results { viewCount } } }.
+    view_count = models.BigIntegerField(default=0)
     # Reverse side of the GenericForeignKey on Attachment. Lets a Post expose its
     # attachments and demonstrates the GenericRelation prefetch + .only() narrowing.
     attachments = GenericRelation("Attachment")
