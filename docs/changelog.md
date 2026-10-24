@@ -14,13 +14,17 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
-- Docs: the known limitations of three type mappings are now documented and
-  pinned by tests (no behavior change). A populated `DecimalRangeField` bound is
-  typed `Float` and fails to serialize, a `BigIntegerRangeField` bound beyond 32
-  bits fails with the `Int` scalar, and a `DurationField` selected on a
-  subscription event type fails because the payload carries an ISO duration
-  string for a `Float` field. Workarounds are in the types and subscriptions
-  guides.
+- Fix: a populated `DecimalRangeField` and a `DurationField` selected on a
+  subscription event type no longer fail on every read. The declared types are
+  unchanged (the SDL is the same). A finite `Decimal` range bound is now
+  delivered as a `Float` instead of raising `Float cannot represent non numeric
+  value` (precision beyond about 15-17 digits is lost; a non-finite bound is
+  still an error). A subscription `DurationField` is delivered as total seconds,
+  the same `Float` the query output returns, instead of failing on the ISO
+  string in the payload; this applies to both WebSocket and SSE events. A
+  `BigIntegerRangeField` bound beyond 32 bits still fails with the `Int` scalar
+  and is documented as a known limitation, with the workaround, in the types
+  guide.
 
 - Fix: a subscription `exact` filter on a `Float` or `Decimal` field now matches
   an event whose snapshot holds a plain integer. A FloatField or DecimalField

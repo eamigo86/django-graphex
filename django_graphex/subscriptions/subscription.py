@@ -692,11 +692,14 @@ class Subscription(NativeObjectType):
             # RELATION as its DELIVERABLE pk shape, keyed by ``field.name`` (the
             # exact key the flat payload writes).
             datetime_names: set[str] = set()
+            duration_names: set[str] = set()
             for field in cls._meta.backend._output_fields():
                 name = field.name
                 wire = _to_camel_case(name)
                 if isinstance(field, _dj_models.DateTimeField):
                     datetime_names.add(name)
+                if isinstance(field, _dj_models.DurationField):
+                    duration_names.add(name)
                 if isinstance(field, _dj_models.ManyToManyField):
                     # M2M -> [pk scalar]; payload carries a list of pks under
                     # key ``field.name``.
@@ -734,6 +737,7 @@ class Subscription(NativeObjectType):
                             snake in datetime_names
                             and get_named_type(field.type) is GdxDateTime
                         ),
+                        native_duration=snake in duration_names,
                     ),
                     description=field.description,
                     deprecation_reason=field.deprecation_reason,

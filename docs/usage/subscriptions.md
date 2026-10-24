@@ -1023,16 +1023,13 @@ class UserSubscription(Subscription):
         payload_mode = "full"   # full payload for this one; "full"/"id_only"/None
 ```
 
-!!! warning "Known limitation: `DurationField` on the event type"
+!!! note "`DurationField` on the event type"
 
     A `DurationField` is typed `Float` (seconds) on the event type, as on the
-    query output, but the full payload carries the column as Django's ISO 8601
-    duration string (`P0DT00H00M05S`). Selecting the field in a subscription
-    therefore fails with `Float cannot represent non numeric value`, and the
-    field answers `null`. This is kept as is in 4.x. Workaround: leave the field
-    out with `Meta.exclude_fields` / `Meta.only_fields` and read it with a
-    follow-up query by `id`, or expose a computed `Float` or `String` field that
-    converts it yourself.
+    query output. The payload carries Django's ISO 8601 duration string
+    (`P0DT00H00M05S`) and the event type converts it to the same total seconds
+    (`5.0`) that the query output returns. The declared `Float` type is kept in
+    4.x, so a duration is never delivered as an ISO string.
 
 !!! note "File and binary columns"
 

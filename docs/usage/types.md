@@ -1767,20 +1767,19 @@ How Django model fields map to GraphQL **output** types:
 
     The bounds of a `DecimalRangeField` are typed `Float` and those of a
     `BigIntegerRangeField` are typed `Int`, the same as `IntegerRangeField`.
-    This is kept as is in 4.x:
+    The declared types are kept as is in 4.x:
 
-    - A `Decimal` bound is not a number to the `Float` scalar, so a populated
-      `DecimalRangeField` fails with `Float cannot represent non numeric value`
-      (and the bound would lose precision beyond about 15-17 significant
-      digits even if it were converted).
+    - A finite `Decimal` bound is delivered as a `Float`, so it loses precision
+      beyond about 15-17 significant digits. Values are never rejected for being
+      decimals; a non-finite bound (`NaN`, `Infinity`) is still an error.
     - A `BigIntegerRangeField` bound outside the 32-bit signed range
       (`-2147483648` to `2147483647`) fails with `Int cannot represent non
-      32-bit signed integer value`.
+      32-bit signed integer value`, as any `Int` field does.
 
-    Workaround: declare the field yourself on the type with a custom resolver
-    that returns the bounds as strings (or as a `BigInt` / `Decimal` scalar),
-    for example `lower`/`upper` formatted with `str()`. A future change to these
-    scalars would be a wire change and will be announced in the changelog.
+    Workaround for exact or large values: declare the field yourself on the
+    type with a custom resolver that returns the bounds as strings (or as a
+    `BigInt` / `Decimal` scalar). Changing these scalars would be a wire change
+    and will be announced in the changelog.
 
 ### BigInt: 64-bit integers
 

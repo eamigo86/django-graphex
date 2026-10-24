@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import logging
 from datetime import timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from django.core.exceptions import ImproperlyConfigured
@@ -580,9 +581,15 @@ def _get_range_composite_type(bound_scalar: Any) -> Any:
         def _resolve(root: Any, _info: Any) -> Any:
             if root is None:
                 return None
-            if isinstance(root, dict):
-                return root.get(attr)
-            return getattr(root, attr, None)
+            value = (
+                root.get(attr) if isinstance(root, dict) else getattr(root, attr, None)
+            )
+            # A DecimalRangeField bound is a Decimal, which the declared Float
+            # scalar cannot serialize; deliver the (possibly rounded) float. A
+            # non-finite Decimal is left alone so the scalar still rejects it.
+            if isinstance(value, Decimal) and value.is_finite():
+                return float(value)
+            return value
 
         return _resolve
 

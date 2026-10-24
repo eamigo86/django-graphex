@@ -23,11 +23,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Callable
 
+from django.utils.dateparse import parse_duration
+
 __all__ = ["make_snake_resolver"]
 
 
 def make_snake_resolver(
-    snake: str, *, native_datetime: bool = False
+    snake: str, *, native_datetime: bool = False, native_duration: bool = False
 ) -> Callable[..., Any]:
     """Return a resolver closure that reads "snake" from a flat snake-keyed dict.
 
@@ -55,6 +57,9 @@ def make_snake_resolver(
                 return datetime.fromisoformat(value)
             except ValueError:
                 return value
+        if native_duration and isinstance(root, dict) and isinstance(value, str):
+            parsed = parse_duration(value)
+            return value if parsed is None else parsed.total_seconds()
         return value
 
     resolver._gdx_pure_projection = True  # type: ignore[attr-defined]
