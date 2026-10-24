@@ -51,9 +51,9 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T23 | P13 | Body cap runs in `dispatch` before `@ensure_csrf_cookie` (moved to an inner method); auth-before-cap precedence kept | D | [x] | `2b5c99b`; RED parse calls 1 != 0 with cookie |
 | T24 | P14 | All 18 runtime asserts replaced (ImproperlyConfigured / explicit errors); B101 skip removed from bandit; `-O` subprocess test | D | [x] | `39e343d`; RED 10/10; parent ran lc2 with -O: rejected; 0 asserts left |
 | T25 | P15 | `_SUGGESTION_RE` replaced by linear `_strip_suggestion`; old regex kept as test oracle (4000 random + 22 samples equal) | D | [x] | `97461e2`; RED 2.55 s |
-| T26 | P16 | Subscription snapshot int vs Float/Decimal filter values match | D | [ ] | |
+| T26 | P16 | Non-bool int snapshot matches equal finite float/Decimal exact filters (lookups with `__` already DB-checked) | D | [x] | `ca0d0ec`; RED split_filters None |
 | T27 | P19 | AttributeError raised inside any class descriptor (cached_property x2, custom `__get__`) surfaces; `__getattr__` classes documented | D | [x] | `4c6b537`; RED 3/6 |
-| T28 | P20 | Not changed (user chose 4.1.0): document range fields and subscription DurationField mapping as a known limitation | D | [ ] | |
+| T28 | P20 | SDL unchanged (user chose 4.1.0); compatible fixes for fields that always errored: DecimalRangeField bounds -> float, subscription DurationField -> total seconds; BigIntegerRangeField 32-bit limit documented; current mapping pinned by test | D | [x] | `b69b4a1`, `a2060eb`; RED 3 tests; full 7104 passed, cov 97.61 % |
 | T29 | P21 | Mutable input-field and argument defaults deep-copied per execution (immutables untouched) | D | [x] | `9fb321d`; RED 3 behavior tests; parent re-ran test_a7b: pristine per request; full 7093 passed, cov 97.60 % |
 | T30 | P22 | Base64 decoded-size estimate subtracts `=` padding; same byte limit as multipart | D | [x] | `3ebc835`; RED 12 > 10 at the limit; full 6938 passed, cov 97.67 %, gates clean |
 | T31 | P23 | Decimal scalar rejects NaN/sNaN/Infinity at coercion (Float/Int/BigInt/Date already did); mutation inputs now get a coercion error like BigInt (4.0.0 Float did the same) | D | [x] | `33862e8`; RED 16/68; full 7033 passed, cov 97.61 % |
@@ -115,6 +115,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T20, T24, T27, T29 done.
 
+- T26, T28 done.
+
 ## Next step
 
-T26 + T28 (subscription filters, range-field limitation).
+T32a (A10 field validators), T32b (A1 aliases, A2 cache bytes, M-D6, M-D10), T32c (M-F3 + dispositions).
