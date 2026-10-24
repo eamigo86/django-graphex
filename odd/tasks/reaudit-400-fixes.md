@@ -31,10 +31,10 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T03 | P9 | Depth and cost walkers iterative; parse/validate stack exhaustion -> 400 `QUERY_TOO_DEEP`; private structural depth ceiling 100 (sync execution with cyclic data fails at ~130) applied even with `MAX_QUERY_DEPTH` unset | D | [x] | `c863deb`, `e24dbbc`, `d8188f3`; RED 9+3+1 tests; full 6731 passed, cov 97.83 %; parent re-ran chain/deep-frag/inline-band repros: no 500, no internal error, no ERROR log |
 | T04 | P3, R9 | Forward OneToOne destinations scoped like FK (hidden = missing error); one batched membership query per relation | D | [x] | `56c5be3`; RED 3 tests (hidden accepted; 13/68 queries for 5/60 tags; SQLite int overflow); full 6737 passed, cov 97.81 %; parent re-ran t_sd3 write attacks: all rejected |
 | T05 | P4 | Reverse OneToOne orphan adoption needs a child update host (same rule as reverse FK) | D | [x] | `e2d7de1`; RED adoption without host; full 6741 passed, cov 97.81 %; parent re-ran t_sd4: refused |
-| T06 | P7 | Hidden and nonexistent IDs in nested child updates give the same response | D | [ ] blocked | Every option changes a documented, test-pinned contract: (A) hidden creates a new child like a missing id; (B) missing id errors like hidden (fail-closed); (C) document the oracle. Needs user approval. |
-| T07 | P2 | Typed GFK unions honor the member type `get_queryset` | D | [ ] | |
-| T08 | P5 | GFK target metadata redacted when the target is hidden, also without pruning | D | [ ] | |
-| T09 | P6 | Generated update/delete vs output type `get_queryset`: fix or document | D | [ ] | |
+| T06 | P7 | Hidden and nonexistent IDs in nested child updates give the same error (option B approved: fail-closed) | D | [ ] | |
+| T07 | P2 | Typed GFK union targets resolve through the member type `get_queryset` (hidden -> null), batched via scoped GenericPrefetch | D | [x] | `6673531`; RED 4 leak tests; parent re-ran t_gfk_union: target null |
+| T08 | P5 | Flat GFK target redacted by the registered type's `get_queryset` in every schema (pruned or not); unregistered targets unchanged | D | [x] | `3e6535b`; RED 4 tests; full 6751 passed, cov 97.78 %; parent re-ran t_sd5 matrix |
+| T09 | P6 | Generated update/delete also scoped by the registered output type's `get_queryset` (approved: close it) | D | [ ] | |
 | T10 | R3 | Custom scalar coercion errors stay client errors (no INTERNAL, no ERROR log) | D | [ ] | |
 | T11 | R4, P18 | Batch with `ATOMIC_REQUESTS`: item errors do not roll back other items; consistent batch abort | D | [ ] | |
 | T12 | R5, R10 | Numeric directives correct on Decimal/BigInt; Decimal output without scientific notation | D | [ ] | |
@@ -53,14 +53,14 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T25 | P15 | `format_graphql_error` regex linear | D | [ ] | |
 | T26 | P16 | Subscription snapshot int vs Float/Decimal filter values match | D | [ ] | |
 | T27 | P19 | `cached_property` and `__getattr__` AttributeError not turned into null | D | [ ] | |
-| T28 | P20 | Range fields and subscription DurationField mapping (incompatible: needs approval) | D | [ ] | |
+| T28 | P20 | Not changed (user chose 4.1.0): document range fields and subscription DurationField mapping as a known limitation | D | [ ] | |
 | T29 | P21 | Mutable literal defaults not shared between requests | D | [ ] | |
 | T30 | P22 | Base64 upload size accounts for padding | D | [ ] | |
 | T31 | P23 | Decimal filter invalid value returns a clean field error | D | [ ] | |
 | T32 | Residual partials (A1, A2, A10, M-D6, M-D10, M-F3, SD6, Q8, others) | Fix compatible residuals; list incompatible ones for approval | D | [ ] | |
 | T33 | D2, D3, D5, D6 | Upgrade guide split by version, audit disposition fixes, docs cleanup | D | [ ] | |
 | T34 | G1-G7 | Playground README/docs, `subscription_scope`, password validation, commands | D | [ ] | |
-| T35 | D1 | Version decision (incompatible: needs approval) | I | [ ] | |
+| T35 | D1 | Set version 4.1.0 (pyproject, docs, README); changelog section and compatibility note | D | [ ] | |
 | T36 | Audit | Fresh independent audit of HEAD; fix confirmed new findings | D | [ ] | |
 | T37 | Benchmark, D4, D7 | Rerun core33 benchmark; update why.md, README, benchmarks README | D | [ ] | |
 
@@ -83,11 +83,14 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T04, T05 done. T06 blocked on an incompatible-change decision (queued after the version question).
 
-## Pending user decisions
+## User decisions
 
-1. Version 5.0.0 vs 4.1.0 (asked 2026-10-24); P20 depends on it.
-2. T06 oracle: option A, B or C (not asked yet; one question at a time).
+1. 2026-10-24: version **4.1.0**, with the wire changes declared as bug fixes under an explicit compatibility policy in the changelog/upgrade guide. P20 (range fields, subscription DurationField) stays out: documented limitation, no wire change.
+2. 2026-10-24: T06 option **B** (fail-closed): a nested child id that does not resolve to a visible child returns the same error as a hidden one.
+3. 2026-10-24: T09 close P6: generated update/delete honor the registered output type's `get_queryset`; hidden row = same error as missing.
+
+- T07, T08 done.
 
 ## Next step
 
-T07-T08 (GFK scoping).
+T06 + T09 (one agent, two commits).
