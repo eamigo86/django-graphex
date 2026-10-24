@@ -53,7 +53,7 @@ def _log_automatic_drop(
             stage,
             type(error).__name__,
         )
-    except Exception:
+    except Exception:  # nosec B110 — logging must never fail the caller
         # A logging backend must not make a successful model write fail.
         pass
 

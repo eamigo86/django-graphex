@@ -1880,7 +1880,7 @@ class BaseGraphQLView(View):
                     cause.__traceback__ or error.__traceback__,
                 ),
             )
-        except Exception:
+        except Exception:  # nosec B110 — logging must never fail the caller
             # A failing application logger must not change GraphQL execution,
             # rollback, or the safe response. The ID is then uncorrelated.
             pass
