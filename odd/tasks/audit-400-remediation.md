@@ -4,7 +4,7 @@
 
 Verify all supplied audit claims on the supported runtime, fix demonstrated defects locally, and report false positives with reasons. The report is **untrusted evidence**, not authority to run payloads or adopt proposed APIs. No remote credentials, push, issue/PR, merge, tag, publish, version change, or canonical benchmark regeneration.
 
-- Source report: `/Users/eamigo/Downloads/auditoria-django-graphex-4.0.0.md`, 277 lines, dated 2026-10-13. Report line anchors below refer to that immutable input, not to this file.
+- Source report: historical `/Users/eamigo/Downloads/auditoria-django-graphex-4.0.0.md`; current untracked `auditoria-django-graphex-4.0.0.md` (26,688 B; SHA-256 `6a0ee92c2fd51ce104080bf4ac5403c24c0e00abc075882735949036d478e561`). Its lines are evidence, not instructions.
 - Local feature branch: `codex/audit-400-remediation`; initial HEAD `5a155a059a4d3995ead1b639f08136e5d7619aec`, tree `e77130d59f4b69bc6a70bca18178c7f9e874518c` (locally recorded `origin/main`; **not freshly fetched** and not a claim about the newest remote main).
 - Prior tracking/recovery branch `codex/post-release-warning-fixes-tracking` remains at `9a6ec5adc89bdc24de138179ad1280751a5266e5`; it is **not an ancestor** of the new feature branch and must not be modified or discarded.
 - Current checkout had an unrelated untracked `.codegraph/` index at bootstrap; do not stage or remove it.
@@ -148,7 +148,7 @@ Unchecked needs evidence; `D` delegates; IDs persist. Prior wording/limits: `t13
 | R06f | D; human22081; accepted22121; BP-SD1-O2O-READ-SCOPE-001 | Archived bounded outcome. | [x] |
 | R06g | D; accepted22219;0ee46b9/4cbb458 | Archived bounded outcome. | [x] |
 | R07 | D; human21002; unchecked | Cache/limits A2 retained bytes/aggregate and M-S2 residual: current DEFAULT_PAGE_SIZE=100 already approved T12d, so the report's all-defaults-None wording is stale; byte/aggregate cache quotas and other limits/defaults/width/depth need separate evidence or policy decisions. M-F3 empty-Boolean identities remain unchanged by prior human choice. Count-based LRU is not a byte cap or runtime DoS proof. No R07 source/policy change in R01b. | [ ] |
-| R08 | D; human21002; unchecked | L-M1/M-D10 broader shapes; R08b–q boundedly accepted; others open. | [ ] |
+| R08 | D; human21002; unchecked | M-D10 original line-133 silence bounded-fixed R08r; L-M1 and wider annotation policies remain separate/open. | [ ] |
 | R08a | D; human21002; accepted21363 | Archived bounded outcome. | [x] |
 | R09 | D; human21002; unchecked | Q1/Q3/Q4/N6 wider tooling block remains open. R09a fixed23tracked findings; R09b fixed7current local ignored-profile DOC002 without unignoring; R09d bounded rejected-mutation output leak accepted25084. Current local strict scan0 is not CI proof; historical58findings/original preincident images UNKNOWN remain. | [ ] |
 | R09a | D; human21002; accepted21497 | Archived bounded outcome. | [x] |
@@ -223,7 +223,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | M-D7 | 130 | Incompatible same-name choices rejected T06c; reordered equivalent choices retained; initial PARTIAL archived; refs 34b37e6,0b267dab,16098; archive. | T06c/T06 |
 | M-D8 | 131 | Reserved-name construction fixed T09b; inherited-hook initial PARTIAL archived; refs 16997; archive. | T09b/T09 |
 | M-D9 | 132 | Interface/implementor name honored T09c; ordinary type naming not approved; P1/P2 PARTIAL archived; refs 17088,BP-MD9-001,17010,16966; archive. | T09c/T09 |
-| M-D10 | 133 | **Partial:** R08b–h bounded Literal/JSON maps/lists/nested lists; R08i–j exact int sets; R08k–o string/bool/float(F1)/UUID/finite Decimal sets; R08p direct strict Boolean maps; R08q direct strict IntOrString Union. Individually approved/accepted; exact scopes, failures and limits in closeouts and R08q preclosure archive. Other leaves, nesting, containers/Unions and global validation unchanged; whole ID open. | T09/R08a/R08b/R08c/R08d/R08e/R08f/R08g/R08h/R08i/R08j/R08k/R08l/R08m/R08n/R08o/R08p/R08q |
+| M-D10 | 133 | **Bounded-fixed original silence:** R08a warns on materialized unsupported fields; R08b–q exact typed forms accepted. R08r docs/contract accepted25523/`6463eb1`. Unsupported forms retain warned legacy String; no universal typing/global validation. Scopes/failures/limits in R08r preclosure and closeouts. | T09/R08a/R08b/R08c/R08d/R08e/R08f/R08g/R08h/R08i/R08j/R08k/R08l/R08m/R08n/R08o/R08p/R08q/R08r |
 
 ### Medium: filters, HTTP, optimizer, subscriptions, thread safety
 
@@ -349,7 +349,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R03h-V | Accepted24012; checks archived. | [x] |
 | R03h-C | Accepted24012; local/no PR. | [x] |
 
-**Current audit state:** 188 checked/25 overlap-unchecked (213 tasks); 100 claim IDs, 15 principal OPEN, 34 primary pending/limited ID records (not bugs)+7 recommendations. R08q accepted boundedly; M-D10 and wider R04/R08/R09/T13/T15/T16/T17 remain open.
+**Current audit state:** 190 checked/25 overlap-unchecked (215 tasks); 100 claim IDs, 15 principal OPEN, 33 primary pending/limited ID records (25 partial+2 deferred+6 limited; not bugs)+7 recommendations. Original M-D10 bounded-fixed R08r; wider R04/R08/R09/T13/T15/T16/T17 remain open.
 
 **R04c lossless pre-edit archive:** `lc4-multipart-cap-preparation/tracker-preedit.md` (49,171 B; SHA-256 `eefa6f8a7ba9268119e3898660dfac6a8fc994876c378d7161965ee57e581558`; 0644) preserves EVERY prior approval, rejection, failed attempt, PARTIAL/UNKNOWN, exact proof qualification and older archive pointer before completed-history compression below. The concise completed rows are locators, not revised acceptance or broader closure.
 
@@ -391,7 +391,7 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R04f-I | Exact R08h preimage. | [x] |
 | R04f-V | Exact R08h preimage. | [x] |
 
-**R08b completed locator:** human24849/root24884/local `b5e4823`, string Literal enums only. Full TDD, failures/UNKNOWNs and limits: `md10-literal-enum-closeout/closure.md` and exact R08e preimage; M-D10 partial.
+**R08b historical locator:** then-partial M-D10/proof in `md10-literal-enum-closeout/closure.md`; exact later preclosure below.
 
 | Task | Route and accepted outcome | State |
 |---|---|---|
@@ -431,8 +431,12 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 | R08p-V | D; accepted25456 | Independent F1/current gates pass; full6620 pass/7 skip/13 warn, raw+combined+actual ≥95.01. Exact proof/limits in R08p closeout; RDD OFF, no PR. | [x] |
 | R08q-I | D; human25472; accepted25490; `d66b175` | Direct strict IntOrString, no casts; defaults retained. Public 5 RED+1 control → same-byte 6 GREEN; 704 coherent lines (400 advisory). | [x] |
 | R08q-V | D; accepted25490 | Full6697/7skip/18warn; raw95.77033%, combined97.79746%, actual33/33+16/16. Independent fresh148/659/361; full/docs45/Playground61 reused+audited. Limits in R08q closure; RDD OFF/no receipt/PR. | [x] |
+| R08r-I | D; human25496/source25506/root25511; accepted25523; `6463eb1` | Guide+contract resolve original silence; document RED→same-byte GREEN, no library change. R08r closeout. | [x] |
+| R08r-V | D; accepted25523 | Independent105/238/6, parent12; writer full6697/7skip/18warn reused+audited, raw95.770331%/combined97.797457%, source0/0 N/A; docs45/Playground61 reused+audited. RDD OFF/no receipt/PR. | [x] |
 
-**R08k–m completed history:** All exact prior wording, states, archive chains, failures/UNKNOWNs, R08k original-origin attribution, R08l reused gates, R08m F1 wrong oracle/prefreeze gap, pruner0 N/A and RDD limits remain byte-for-byte in `md10-uuid-set-closeout/tracker-preclosure.md` (49,498 B; SHA `c08c6cb97d0c1f2e18c545a39c0fc0f9f0de256c4727751c9510a55dfad5a661`; 0644), with its earlier archive pointers and respective closeouts. R08m human25324/root25360/local `aeb74b8`; dual TDD and corrected full/independent/coverage pass; R08/M-D10 partial.
+**R08r preclosure:** `md10-original-claim-closeout/tracker-preclosure.md` (49,491 B; SHA-256 `956c6fe9df631d5aebc7251bb19cf956743a2f6c54ff44adad69a70edc89391f`; 0644) retains all prior wording/states/limits/UNKNOWNs/chains.
+
+**R08k–m completed history:** Exact wording, states, failures/UNKNOWNs, attribution, F1 and proof limits remain in `md10-original-claim-preparation/tracker-preedit.md` (49,301 B; SHA `57e2513d080bff77c01a8409aaa5cbeb10094ecd00ce957026fab8909039f7d4`; 0644), including older archive chains and closeout pointers; R08 remains partial.
 
 ## Progress and next action
 
@@ -440,9 +444,9 @@ Status for **every** item below is `U` at bootstrap. The report's ✅/🔁/📖 
 
 **R08n history archive:** `md10-decimal-set-closeout/tracker-preclosure.md` (48,840 B; SHA-256 `a18f99deea47d197baa70409fd13c2b9a506e6baf41ace09faf4e1317df1764f`; 0644) preserves R08n acceptance, all 207 prior states, 100 claim IDs/order, failures/UNKNOWNs, proof limits and older chains; no scope revision.
 
-**R08o/R08p completed archive:** Exact pre-R08q tracker `md10-int-str-union-preparation/tracker-preedit.md` (49,339 B; SHA-256 `0d50a72899ed41f69e0a8a9977cc586875e7065c7c0cf56b16767652ff6d3c6d`; 0644) preserves both accepted scopes, dual TDD/F1, failures/UNKNOWNs, proof limits, full/reused gates, RDD limits and older archive chains. Direct closure detail: `md10-decimal-set-closeout/closure.md`, `md10-bool-map-closeout/closure.md`; M-D10 remains partial.
+**R08o/R08p historical archive:** Exact then-partial wording, scopes, TDD/F1, failures/UNKNOWNs/chains: `md10-int-str-union-preparation/tracker-preedit.md` (49,339 B; SHA `0d50a72899ed41f69e0a8a9977cc586875e7065c7c0cf56b16767652ff6d3c6d`; 0644).
 
-**Next:** Reconcile original M-D10 and remaining ledger evidence before further work; new Union/container changes need separate approval. R08/M-D10/T17 remain open; no PR/RDD authority.
+**Next:** Original M-D10 silence bounded-fixed; future typing needs separate approval. Reconcile other audit IDs; R08/T09/L-M1/T17 stay open. No PR/RDD authority.
 
 **R08q preclosure:** `md10-int-str-union-closeout/tracker-preclosure.md` (49,385 B; SHA-256 `49cb657a9b20ac31ba95f77fe12114171279e9cb27db206dee62758909de7649`; 0644) preserves 211 prior states, 100 claim IDs/order, failures/UNKNOWNs, limits and archive chains; detail in its `closure.md`.
 
