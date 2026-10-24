@@ -553,9 +553,22 @@ matched by that object. A `not` under a to-one hop inside the object
     matched, and `not: { and: [x, y] }` was not the complement of
     `and: [x, y]`. Both now follow the parent-level rule above.
 
-Empty Boolean operands retain the existing no-op behavior: `or: []` and
-`not: {}` add no predicate, while `or: [{}, X]` contributes only `X`. The
-`exact: null` change does not assign classical Boolean identities to them.
+#### Empty operands are no-ops
+
+An empty Boolean construct imposes **no condition** and returns every row the
+rest of the filter allows. In particular `or: []` is a no-op, **not** "match
+nothing", and `not: {}` is a no-op, not "match everything but nothing". The
+rule is uniform at the top level and inside a relation object:
+
+- `{}`, `and: []`, `or: []`, `not: {}`, `not: { and: [] }` and
+  `not: { or: [] }`
+- `tags: {}`, `tags: { and: [] }`, `tags: { or: [] }` and
+  `tags: { not: {} }`
+- nested forms such as `and: [{ or: [] }]` and `or: [{ and: [] }]`
+- an empty scalar object such as `title: {}`
+
+An empty operand next to a real one contributes nothing: `or: [{}, X]` is
+`X`. Use an explicit `exact: null` or `isnull` lookup when you mean "no value".
 
 ## Filtering across relations
 
