@@ -1,5 +1,7 @@
 # Remediación de la auditoría de Django GraphEx 4.0.0: evidencias y decisiones detalladas
 
+> **Ronda posterior (4.1.0).** Esta retrospectiva está congelada en la instantánea de la remediación 4.0.0. Una ronda posterior en la rama 4.1.0 cambió varias disposiciones (por ejemplo A1, A2, A10, A13, M-D4 y M-D6 recibieron correcciones, y M-F3 y L-M1 pasaron a contratos documentados). Las disposiciones vigentes están en la [guía de disposiciones](docs/audit-4.0.0.md) y en [CHANGELOG.md](CHANGELOG.md). Los bloques JSON de Antes y Después son ilustraciones reducidas, no salida capturada, sea cual sea su etiqueta; los alegatos sin implementación no llevan bloque de Después.
+
 Este complemento del [informe original](auditoria-django-graphex-4.0.0.md) explica qué se investigó, por qué y qué falta. Es una **retrospectiva local congelada**, no un anuncio de versión ni la afirmación de que se corrigieron 100 bugs. El informe recibido es evidencia no rastreada (SHA-256 `6a0ee92c2fd51ce104080bf4ac5403c24c0e00abc075882735949036d478e561`), no una fuente confiable de cargas para ejecutar. Base de implementación `5a155a059a4d3995ead1b639f08136e5d7619aec`; snapshot `8d93483d2fd654012a544ce68365baf1964056f3`, registrado **2026-10-23 23:13:45 -04:00 (America/New_York)**. La rama histórica `9a6ec5adc89bdc24de138179ad1280751a5266e5` no es ancestro de esta implementación.
 
 ## Resultado esencial
@@ -174,8 +176,6 @@ mutation {
    ```
    - [tests/test_views_atomic_errors.py](tests/test_views_atomic_errors.py): `test_atomic_mutations_execution_error_rolls_back_native_write` (definición añadida); `test_atomic_requests_execution_error_rolls_back_native_write` (definición añadida); `test_atomic_requests_explicit_flag_rolls_back_without_graphql_error` (definición añadida); `test_atomic_mutations_explicit_flag_still_rolls_back` (definición añadida); `test_nonatomic_execution_error_keeps_durable_write_and_invalidates` (definición añadida); `test_atomic_execution_error_does_not_invalidate_rolled_back_write` (definición añadida); `test_atomic_success_commits_and_invalidates` (definición añadida); `test_native_ok_false_does_not_retroactively_rollback_prior_root` (definición añadida); `test_batch_failed_atomic_operation_then_success_invalidates_once` (definición añadida).
 
-**Límite pendiente:** Los errores GraphQL revierten escrituras hermanas en la base predeterminada cubierta. ok:false nativo, bases múltiples y sobrescritura por instancia obsoleta siguen siendo decisiones distintas.
-
 
 ### A2 — Caché de parseo/validación sin límite de memoria. El LRU está acotado por número de entradas (128), no por bytes.…
 
@@ -209,8 +209,6 @@ Content-Type: application/json
 3. Límite comprobado: El límite del cuerpo POST se aplica antes del parseo y de la caché; no se aprobó un presupuesto de bytes retenidos ni de memoria agregada.
 4. Pruebas reales localizadas y procedencia de definiciones frente a la base:
    - [tests/test_views_body_cap_cache.py](tests/test_views_body_cap_cache.py): `test_oversized_cache_active_body_is_rejected_before_parse_or_cache` (definición añadida); `test_body_at_cap_still_warms_and_hits_response_cache` (definición añadida); `test_tightened_cap_rejects_an_already_cached_query` (definición añadida); `test_spoofed_low_content_length_still_rejects_actual_body` (definición añadida); `test_cache_disabled_retains_early_base_view_rejection` (definición añadida); `test_disabled_cap_allows_the_same_query` (definición añadida); `test_get_with_invalid_body_keeps_bad_request_not_body_cap` (definición añadida); `test_authentication_denial_precedes_body_cap` (definición añadida).
-
-**Límite pendiente:** El límite del cuerpo POST se aplica antes del parseo y de la caché; no se aprobó un presupuesto de bytes retenidos ni de memoria agregada.
 
 
 ### A3 — exclude_fields/only_fields sin validar. En auth.User: exclude_fields=("pasword",) publica password;…
@@ -500,8 +498,6 @@ mutation { submit(payload: {}) { result } }
    ```
    - [tests/core/test_positive_input_validation.py](tests/core/test_positive_input_validation.py): `test_positive_validator_preserves_null_and_reports_invalid_choice_value` (definición añadida); `test_generated_positive_input_rejects_negative_before_sql` (definición añadida); `test_positive_field_error_preserves_earlier_sibling_write` (definición añadida); `test_positive_choices_validate_stored_number_and_keep_enum` (definición añadida); `test_custom_schema_preserves_nullable_positive_choice_enum` (definición añadida); `test_nested_positive_input_rejects_child_before_parent_persists` (definición añadida).
 
-**Límite pendiente:** Se validaron casos acotados de email y enteros positivos y se redactaron errores de persistencia generada. full_clean general y upsert anidado siguen pendientes.
-
 
 ### A11 — @replace sin tope de salida. @replace(old:"", new:"<20 KB>") sobre 5.000 caracteres genera 100 M de caracteres en…
 
@@ -607,8 +603,6 @@ mutation { submit(payload: {}) { result } }
    ```
    - [tests/test_pagination_cursor_typed_http.py](tests/test_pagination_cursor_typed_http.py): `test_generated_root_cursor_and_nested_relation_http` (definición añadida); `test_malformed_cursor_is_existing_graphql_error_envelope` (definición añadida); `test_typed_invalid_cursor_value_http_error` (definición añadida); `test_typed_invalid_cursor_direct_pagination_and_page_info` (definición añadida); `test_unapproved_other_type_coercion_fallback_is_unchanged` (definición añadida); `test_tied_boundaries_match_orm_in_both_orderings` (definición añadida).
 
-**Límite pendiente:** La continuación de cursores tipados cubiertos funciona y los límites decodificados inválidos se rechazan; otros contratos de cursor permanecen abiertos.
-
 
 ### SD1 — get_queryset del tipo destino no se aplica a través de relaciones. Lo señalaron cuatro auditores por separado
 
@@ -643,8 +637,6 @@ mutation { submit(payload: {}) { result } }
    assert context.calls
    ```
    - [tests/test_sd1_m2m_output_scope.py](tests/test_sd1_m2m_output_scope.py): `test_optimized_m2m_scope_uses_source_database_alias` (definición añadida); `test_declared_m2m_members_follow_destination_scope` (definición añadida); `test_reverse_m2m_members_follow_destination_scope` (definición añadida); `test_declared_m2m_count_only_is_scoped` (definición añadida); `test_reverse_m2m_count_only_is_scoped` (definición añadida); `test_m2m_scope_uses_current_request_and_compiled_schema` (definición añadida); `test_m2m_count_precedes_nested_page_limit` (definición añadida); `test_unscoped_prefetch_cache_cannot_authorize_m2m_output` (definición añadida); `test_custom_through_and_reverse_accessor_scope_m2m_output` (definición añadida); `test_optimized_scoped_m2m_prefetch_does_not_grow_per_parent` (definición añadida).
-
-**Límite pendiente:** Las relaciones automáticas FK, OneToOne, FK inversa y M2M aplican el scope de destino en los casos aprobados; los resolvers personalizados y una política global quedan fuera.
 
 
 ### SD2 — Filtro como oráculo: Author{posts:{title:{icontains:"secret"}}} filtra por posts ocultos, y un recorrido por…
@@ -682,8 +674,6 @@ mutation { submit(payload: {}) { result } }
    - [tests/test_sd2_forward_o2o_filter_scope.py](tests/test_sd2_forward_o2o_filter_scope.py): `test_forward_and_reverse_destination_policies` (definición añadida); `test_null_and_direct_id_controls` (definición añadida); `test_boolean_and_empty_forward_nodes_keep_visible_sources` (definición añadida); `test_reverse_then_forward_one_to_one_scopes_each_destination` (definición añadida); `test_forward_scope_errors_fail_closed` (definición añadida).
 
 **Distinción de alcance:** Con una fuente visible y dos hijos, `child.color="red" AND child.size="large"` exige **el mismo hijo visible** como testigo; un hijo solo rojo y otro solo grande no bastan. Un hijo oculto nunca sirve de testigo. Los IDs directos de hijo inverso/objetivo M2M se acotan al destino; un ID directo FK/OneToOne propiedad de la fuente no cambia de significado en silencio. Véanse `tests/test_sd2_forward_o2o_filter_scope.py` y la fila aceptada de la guía; recorridos personalizados y scope de salida siguen aparte.
-
-**Límite pendiente:** Los filtros FK, OneToOne, FK inversa y M2M recorren únicamente destinos visibles en los casos cubiertos; el ID directo de origen conserva su política anterior.
 
 
 ### SD3 — Vinculación (IDOR de enlace): category:{id:<pk de otro tenant>} o tags:[<pk ajeno>] enlaza filas fuera de scope, y…
@@ -805,9 +795,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"unchanged; proposal deferred"
-```
 
 **Cómo se llegó al resultado:**
 1. No se instaló strict_scope ni un system check. Ese predeterminado rechazaría esquemas que hoy optan por scope relacional y exige una decisión pública de compatibilidad.
@@ -870,9 +857,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-{"effective_page_size": 100, "depth_or_byte_cap": "not inferred"}
-```
 
 **Cómo se llegó al resultado:**
 1. La inspección separó el tamaño de página 100 ya aceptado de políticas de profundidad, anchura y bytes. No se cambió otro predeterminado por una alegación agrupada.
@@ -880,8 +864,6 @@ mutation { submit(payload: {}) { result } }
    El predeterminado de página 100 procede del cambio distinto `M-F7` (`5faeef7188`); esta fila no añadió límites predeterminados de profundidad, anchura ni bytes retenidos.
 3. Límite comprobado: El tamaño de página omitido ya tiene predeterminado 100; profundidad, anchura y cuotas de bytes requieren evidencia o política separadas.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** El tamaño de página omitido ya tiene predeterminado 100; profundidad, anchura y cuotas de bytes requieren evidencia o política separadas.
 
 
 ### M-S3 — ALLOW_INTROSPECTION=False por defecto, pero es inerte sin DisableIntrospectionMiddleware. Está documentado, aunque…
@@ -898,9 +880,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"configuration-dependent contract documented"
-```
 
 **Cómo se llegó al resultado:**
 1. El guardia de introspección documentado depende de instalar el middleware. No se añadió middleware predeterminado; el despliegue debe configurar ese límite opt-in.
@@ -998,9 +977,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"TypeError; use documented lower-case field form"
-```
 
 **Cómo se llegó al resultado:**
 1. La API de campo acepta el argumento de permisos documentado en minúsculas, no el atajo propuesto required_perms. Conservar TypeError evita inventar una firma pública.
@@ -1033,17 +1009,12 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-{"final_title": "old", "change": "no universal update_fields policy accepted"}
-```
 
 **Cómo se llegó al resultado:**
 1. Un testigo secuencial con instancia obsoleta confirmó que un save amplio puede sobrescribir un valor reciente. Se registra el riesgo; no se añadió update_fields universal ni se afirmó una carrera PostgreSQL.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: El testigo secuencial nativo confirmó la sobrescritura por instancia obsoleta; no se aprobó update_fields general ni se afirmó una carrera PostgreSQL.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** El testigo secuencial nativo confirmó la sobrescritura por instancia obsoleta; no se aprobó update_fields general ni se afirmó una carrera PostgreSQL.
 
 
 ### M-D2 — transaction.atomic() sin using= en las escrituras anidadas: con multi-DB no hay transacción externa y quedan…
@@ -1082,8 +1053,6 @@ mutation { submit(payload: {}) { result } }
 
 **Dos comprobaciones de routing:** (1) Si la tabla through M2M explícita va a otro alias, se rechaza antes del DML. (2) Si la ruta cambia al asignarse el PK del padre, se reevalúa antes del enlace y se revierten las escrituras en el alias local elegido al divergir. Esto no convierte varias bases en una transacción ni garantiza que el router permanezca estable después de la última comprobación. `tests/test_routed_nested_atomic.py` prueba ambos casos.
 
-**Límite pendiente:** El backend Django incluido fija alias en CREATE anidado y rechaza rutas through divergentes antes de DML; backends personalizados y atomicidad entre bases siguen abiertos.
-
 
 ### M-D3 — DecimalField → Float pierde precisión (≥ 17 dígitos), además de C1
 
@@ -1119,8 +1088,6 @@ mutation { submit(payload: {}) { result } }
    ```
    - [tests/core/test_decimal_output.py](tests/core/test_decimal_output.py): `test_automatic_decimal_output_preserves_exact_text` (definición añadida); `test_automatic_decimal_primary_key_uses_decimal_nonnull` (definición añadida); `test_automatic_decimal_field_executes_as_exact_decimal` (definición añadida); `test_explicit_decimal_scalar_and_input_mapping_stay_precise` (definición añadida); `test_explicit_float_resolver_retains_legacy_numeric_contract` (definición añadida); `test_decimal_filter_literals_and_variables_remain_precise` (definición añadida); `test_generated_create_mutation_returns_exact_decimal_output` (definición añadida); `test_decimal_primary_key_keeps_nonnull_and_exact_output` (definición añadida); `test_null_decimal_primary_key_propagates_nonnull_error` (definición añadida).
 
-**Límite pendiente:** La salida decimal automática usa texto exacto; el redondeo al recargar SQLite y la coerción de entrada son temas distintos.
-
 
 ### M-D4 — El scalar Decimal acepta NaN, Infinity y 1E+999999999, lo que provoca un ValidationError de Django no-GraphQL
 
@@ -1141,17 +1108,12 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-{"save_attempt": false, "graphql_error": "non-finite decimal rejected"}
-```
 
 **Cómo se llegó al resultado:**
 1. La mutación pública rechaza NaN, ambas infinidades y el exponente extremo ejercitado antes de guardar. No se ejecutó el token exacto 1E+999999999 del informe.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: La mutación pública rechaza NaN, ±Infinity y 1e1000 sin guardar; el caso exacto 1E+999999999 no se ejecutó.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** La mutación pública rechaza NaN, ±Infinity y 1e1000 sin guardar; el caso exacto 1E+999999999 no se ejecutó.
 
 
 ### M-D5 — El scalar JSON deja pasar str que sean JSON válido: el string "123" se emite como el número 123
@@ -1168,9 +1130,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"JSONField stays string; JSONString yields integer"
-```
 
 **Cómo se llegó al resultado:**
 1. La cadena de JSONField crudo se conserva en entrada, base y salida; JSONString decodifica deliberadamente texto JSON. Son dos contratos de scalar, no un único defecto.
@@ -1218,8 +1177,6 @@ mutation { submit(payload: {}) { result } }
    assert _CALLS == []
    ```
    - [tests/test_json_nonfinite_input.py](tests/test_json_nonfinite_input.py): `test_literal_overflow_rejected_before_resolver` (definición añadida); `test_nested_variable_infinity_rejected_before_resolver` (definición añadida); `test_variable_nonfinite_values_fail_before_resolver` (definición añadida); `test_overflow_literal_shapes_fail_before_resolver` (definición añadida); `test_nonfinite_default_literal_rejected` (definición añadida); `test_available_variable_literal_path_rejects_nonfinite` (definición añadida); `test_finite_and_string_values_keep_identity_and_wire_shape` (definición añadida); `test_huge_finite_int_and_native_container_aliases_are_not_rewritten` (definición añadida); `test_defaults_missing_members_and_explicit_null_keep_their_contract` (definición añadida); `test_http_input_error_uses_graphql_error_wire` (definición añadida); `test_raw_output_and_json_string_scalar_remain_separate` (definición añadida).
-
-**Límite pendiente:** La lista JSON sitúa null donde falta la variable y la clave de objeto omitida sigue omitida; números no finitos fallan antes del resolver. Salida cruda mantiene límites propios.
 
 
 ### M-D7 — Colisión de nombres de enum: shop.Order.line_status y shop_order.Line.status generan ambos…
@@ -1485,8 +1442,6 @@ class Payload(InputType):
    assert _titles(path_name, explicit) == ["Django deep dive"]
    ```
    - [tests/test_exact_null_filtering.py](tests/test_exact_null_filtering.py): `test_public_literal_exact_null_is_distinct_from_omission` (definición añadida); `test_public_variable_exact_null_is_distinct_from_omission` (definición añadida); `test_native_coercion_preserves_lookup_presence` (definición añadida); `test_public_exact_null_composes_without_changing_empty_nodes` (definición añadida); `test_exact_null_field_matrix_and_json_sql_null` (definición añadida); `test_nullable_choice_and_text_exact_null` (definición añadida); `test_direct_relation_and_unset_lookup_boundaries` (definición añadida); `test_to_many_null_keeps_distinct_and_nested_prefix` (definición añadida).
-
-**Límite pendiente:** Se diferenciaron exact:null y la omisión; identidades Boolean vacías requieren decisión distinta y no cambiaron.
 
 
 ### M-F4 — page: null provoca un TypeError crudo
@@ -1769,8 +1724,6 @@ class Payload(InputType):
    ```
    - [tests/test_success_response_cache.py](tests/test_success_response_cache.py): `test_partial_execution_error_recovers_then_success_hits` (definición añadida); `test_validation_error_is_not_stored_or_reused` (definición añadida); `test_legacy_failed_entry_is_ignored_and_replaced` (definición añadida); `test_malformed_legacy_entry_is_ignored` (definición añadida); `test_disabled_cache_executes_without_response_cache_io` (definición añadida); `test_cookie_bearing_queries_bypass_response_cache` (definición añadida).
 
-**Límite pendiente:** Solo se cachean respuestas exitosas; las salvedades de seguridad finita y de lint histórico permanecen.
-
 
 ### M-O1 — El optimizador raíz solo mira info.field_nodes[0]: si un campo raíz aparece también dentro de un fragmento, se…
 
@@ -1872,8 +1825,6 @@ class Payload(InputType):
    ```
    - [tests/subscriptions/test_startup_cleanup.py](tests/subscriptions/test_startup_cleanup.py): `test_client_complete_during_real_join_discards_membership` (definición añadida); `test_disconnect_during_real_join_discards_membership` (definición añadida); `test_sse_cancel_during_real_join_discards_membership` (definición añadida); `test_failed_second_join_discards_only_its_memberships` (definición añadida); `test_failure_before_backend_join_preserves_original_error` (definición añadida); `test_cleanup_failure_does_not_replace_startup_failure` (definición añadida); `test_same_source_retry_after_failed_join_delivers_and_cleans_up` (definición añadida); `test_explicit_close_after_failed_join_stays_closed` (definición añadida).
 
-**Límite pendiente:** El arranque ASGI libera el grupo tras la cancelación antes de devolver; la limpieza distribuida sigue siendo de mejor esfuerzo.
-
 
 ### M-U2 — Los eventos delete se descartan si hay scope o filtros no-pk en modo id_only (por defecto): la comprobación…
 
@@ -1911,8 +1862,6 @@ class Payload(InputType):
 
 **Por qué coincide un borrado solo-ID:** La fila borrada ya no puede recargarse tras commit. Por ello la señal automática guarda **solo escalares privados concretos, proyectados y ya cargados** antes de borrar. Para `{pk: 7, tenant: "A"}`, el filtro de igualdad `tenant: "A"` puede coincidir y el dato publicado seguir siendo `{"pk": 7}`; `tenant: "B"` no coincide. Un `tenant` diferido, ausente o no proyectado no se adivina desde el PK. IDs de relación solos y predicados lookup, backends personalizados y payloads externos de broadcast quedan fuera de esta confianza. Véase `tests/subscriptions/test_delete_snapshot_matching.py`.
 
-**Límite pendiente:** La señal captura escalares concretos privados al borrar, suficientes para igualdad y scope aprobados; no convierte un evento externo genérico en dato confiable.
-
 
 ### M-U3 — Los filtros en memoria comparan con str(): Decimal, DateTime y Float nunca coinciden
 
@@ -1948,8 +1897,6 @@ class Payload(InputType):
    ```
    - [tests/subscriptions/test_float_snapshot_filter.py](tests/subscriptions/test_float_snapshot_filter.py): `test_real_float_field_exact_event` (definición añadida); `test_float_pair_only_changes_finite_exact_equality` (definición añadida).
 
-**Límite pendiente:** Se corrigieron por separado Decimal finito, DateTime nativo exacto y Float finito (incluido ±0); tipos mixtos y no finitos conservan límites.
-
 
 ### M-U4 — No hay m2m_changed, y bulk_/QuerySet.update no emiten eventos (sin documentar)
 
@@ -1965,9 +1912,6 @@ class Payload(InputType):
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"model save after commit; bulk none; manual immediate"
-```
 
 **Cómo se llegó al resultado:**
 1. Las señales post-save/delete programan envío automático tras commit; bulk no emite señal y broadcast manual sigue inmediato. Son límites documentados, no implementación cambiada.
@@ -2050,8 +1994,6 @@ class Payload(InputType):
    - [tests/test_directive_date_naive_timezone.py](tests/test_directive_date_naive_timezone.py): `test_missing_components_keep_the_parser_default_across_midnight` (definición añadida); `test_named_unknown_and_numeric_offset_text_keep_previous_paths` (definición añadida); `test_original_explicit_offset_helper_retains_its_boolean_contract` (definición añadida); `test_timezone_less_summer_text_uses_each_active_zone` (definición añadida); `test_timezone_less_text_uses_active_zone_for_absolute_and_relative_formats` (definición añadida).
 
 **Ejemplos por límite de directiva:** `@date`, `@number` y `@currency` nullable devuelven null para entrada null; un campo GraphQL NonNull sigue propagando. `"2026-01-10"` pasa a medianoche, y `"2026-01-10 14:30"` completa segundos/microsegundos con cero; el texto solo-hora conserva la política de fecha actual del parser. Para salida absoluta, `2026-01-10T23:30:00+00:00` puede mostrar **el día siguiente** en zona activa +02:00 conservando el instante; `"2026-01-10 14:30"` sin zona asocia la zona activa a su hora escrita incluso con `USE_TZ=False`. La frase relativa puede variar por la zona de referencia. Los offsets equivalentes `Z`, `+00:00` y `+0000` se reconocen en el camino cubierto; zonas nombradas/desconocidas siguen pendientes. Las directivas de caso convierten `orderTotal` en `order_total`/`order-total` y `HTTPServer` en `httpServer`/`http_server`/`http-server`; no renombran campos SDL. Preservar null en number/currency no elimina validación de formato ni topes de salida. Parsear el escalar DateTime nativo es otro contrato. Pruebas representativas: `tests/test_directive_date_text_time.py`, `test_directive_date_timezone.py`, `test_directive_date_naive_timezone.py` y `test_directive_date_null.py`.
-
-**Límite pendiente:** Se corrigieron límites concretos de null en date/number/currency, texto de fecha y zona activa, y formas de palabras/acrónimos en directivas de caso; parseo DateTime nativo y otros formatos siguen aparte.
 
 
 ### M-T1 — _forking_depth es un global de módulo, no threading.local/ContextVar. Construir un schema forked en un hilo hace…
@@ -2279,9 +2221,6 @@ class Payload(InputType):
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"miss may set cookie; hit does not; cookie-bearing request bypasses"
-```
 
 **Cómo se llegó al resultado:**
 1. Se documentó la traza cookie/caché sin parche: un miss sin cookie puede fijar csrftoken, un hit sin cookie retorna antes y la petición posterior con cookie omite la caché de respuesta.
@@ -2344,9 +2283,6 @@ class Payload(InputType):
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"actual tail window contains 10 rows (unchanged contract)"
-```
 
 **Cómo se llegó al resultado:**
 1. No se cambió paginación por este alegato: page:-1 ya designa la ventana final de tamaño fijo, no el resto corto de la última página positiva. La equivalencia esperada era incorrecta.
@@ -2495,8 +2431,6 @@ class Payload(InputType):
 4. Pruebas reales localizadas y procedencia de definiciones frente a la base:
    - [tests/test_optimizer_phase_e.py](tests/test_optimizer_phase_e.py): `test_returns_hook_when_present` (definición sin cambios); `test_returns_none_when_absent` (definición sin cambios); `test_returns_none_when_gql_type_is_none` (definición sin cambios); `test_returns_none_when_no_graphene_type` (definición sin cambios); `test_camel_case_field_name_is_snake_cased` (definición sin cambios); `test_returns_qs_unchanged_when_hook_is_none` (definición sin cambios); `test_returns_hook_result_when_valid_queryset` (definición sin cambios); `test_hook_receives_filter_value_and_is_window_kwargs` (definición sin cambios); `test_non_queryset_return_emits_warning_and_returns_original` (definición sin cambios); `test_exception_propagates_when_safe_mode_false` (definición sin cambios); `test_exception_propagates_from_helper_even_when_safe_mode_true` (definición sin cambios); `test_ac1_window_hook_fires_with_is_window_true` (definición sin cambios); `test_ac5_hook_adds_distinct_falls_back_to_plain` (definición sin cambios); `test_ac6_hook_aliasing_gqx_rn_is_silently_overwritten_noop` (definición sin cambios); `test_ac2_filtered_plain_hook_fires_with_is_window_false` (definición sin cambios); `test_ac2b_unfiltered_top_level_hook_fires` (definición sin cambios); `test_ac2b_no_hook_is_noop` (definición sin cambios); `test_site_b_hook_fires_for_reroot_child` (definición sin cambios); `test_hook_fires_through_forward_fk_relation` (definición sin cambios); `test_multiple_children_and_multi_segment_hooks_all_fire` (definición sin cambios); `test_hook_fires_when_only_and_annotated_off` (definición sin cambios); `test_hook_does_not_fire_when_optimize_queryset_false` (definición sin cambios); `test_hooked_case_has_join_control_does_not` (definición sin cambios); `test_safe_mode_raising_hook_degrades_whole_resolve_coarsely` (definición sin cambios); `test_no_hook_no_error_and_no_behavior_change` (definición sin cambios).
 
-**Límite pendiente:** Se corrigió N+1 del envoltorio union GFK probado; herencia multi-tabla fuera de ese caso permanece sin demostración.
-
 
 ### L-C13 — Fechas naive o sin hora se interpretan en hora local sin documentarlo (core/scalars.py:134-146)
 
@@ -2512,9 +2446,6 @@ class Payload(InputType):
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"scalar stays naive; @date uses active timezone"
-```
 
 **Cómo se llegó al resultado:**
 1. La documentación separó parseo DateTime naive de formato @date en zona activa, incluso USE_TZ=False. No se cambió silenciosamente el scalar.
@@ -2612,9 +2543,6 @@ class Payload(InputType):
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-{"observed_hook_calls": 1, "returned_rows": "visible only", "other_branches": "not proved"}
-```
 
 **Cómo se llegó al resultado:**
 1. El testigo SITE-B mostró optimize_<field> una vez, solo filas visibles y predicado agrupado intacto. No justificó parche del optimizador en esa ruta; otros sitios siguen sin medir.
@@ -2622,8 +2550,6 @@ class Payload(InputType):
 3. Límite comprobado: El testigo público SQLite SITE-B contradijo esa variante: hook una vez, filas visibles, predicado agrupado; otros sitios quedan abiertos.
 4. Pruebas reales localizadas y procedencia de definiciones frente a la base:
    - [tests/test_optimizer_phase_e.py](tests/test_optimizer_phase_e.py): `test_returns_hook_when_present` (definición sin cambios); `test_returns_none_when_absent` (definición sin cambios); `test_returns_none_when_gql_type_is_none` (definición sin cambios); `test_returns_none_when_no_graphene_type` (definición sin cambios); `test_camel_case_field_name_is_snake_cased` (definición sin cambios); `test_returns_qs_unchanged_when_hook_is_none` (definición sin cambios); `test_returns_hook_result_when_valid_queryset` (definición sin cambios); `test_hook_receives_filter_value_and_is_window_kwargs` (definición sin cambios); `test_non_queryset_return_emits_warning_and_returns_original` (definición sin cambios); `test_exception_propagates_when_safe_mode_false` (definición sin cambios); `test_exception_propagates_from_helper_even_when_safe_mode_true` (definición sin cambios); `test_ac1_window_hook_fires_with_is_window_true` (definición sin cambios); `test_ac5_hook_adds_distinct_falls_back_to_plain` (definición sin cambios); `test_ac6_hook_aliasing_gqx_rn_is_silently_overwritten_noop` (definición sin cambios); `test_ac2_filtered_plain_hook_fires_with_is_window_false` (definición sin cambios); `test_ac2b_unfiltered_top_level_hook_fires` (definición sin cambios); `test_ac2b_no_hook_is_noop` (definición sin cambios); `test_site_b_hook_fires_for_reroot_child` (definición sin cambios); `test_hook_fires_through_forward_fk_relation` (definición sin cambios); `test_multiple_children_and_multi_segment_hooks_all_fire` (definición sin cambios); `test_hook_fires_when_only_and_annotated_off` (definición sin cambios); `test_hook_does_not_fire_when_optimize_queryset_false` (definición sin cambios); `test_hooked_case_has_join_control_does_not` (definición sin cambios); `test_safe_mode_raising_hook_degrades_whole_resolve_coarsely` (definición sin cambios); `test_no_hook_no_error_and_no_behavior_change` (definición sin cambios).
-
-**Límite pendiente:** El testigo público SQLite SITE-B contradijo esa variante: hook una vez, filas visibles, predicado agrupado; otros sitios quedan abiertos.
 
 
 ### L-E4 — _cancel_operation hace except (CancelledError, Exception): pass (ws.py:753)
@@ -2661,8 +2587,6 @@ class Payload(InputType):
    - [tests/subscriptions/test_delivery_runtimeerror_diagnostic.py](tests/subscriptions/test_delivery_runtimeerror_diagnostic.py): `test_client_complete_logs_suppressed_delivery_runtimeerror` (definición añadida); `test_client_complete_valueerror_keeps_existing_error_frame` (definición añadida); `test_delivery_close_runtimeerror_warns_once_and_stays_idempotent` (definición añadida).
    - [tests/subscriptions/test_source.py](tests/subscriptions/test_source.py): `test_all_actions_joins_exactly_three_groups` (localizador histórico fuera del inventario); `test_single_action_joins_exactly_one_group_1420_guard` (localizador histórico fuera del inventario); `test_context_manager_start_joins_groups` (localizador histórico fuera del inventario); `test_broadcast_to_joined_group_yields_flat_data_dict` (localizador histórico fuera del inventario); `test_serialize_instance_not_called_on_consumer_yield_path` (localizador histórico fuera del inventario); `test_assertNumQueries_zero_on_consumer_yield_path` (localizador histórico fuera del inventario); `test_non_matching_filter_event_dropped_pre_execute` (localizador histórico fuera del inventario); `test_no_filters_yields_every_event` (localizador histórico fuera del inventario); `test_aclose_group_discards_every_joined_group` (localizador histórico fuera del inventario); `test_aexit_group_discards_every_joined_group` (localizador histórico fuera del inventario); `test_aclose_releases_blocked_receive_promptly` (localizador histórico fuera del inventario); `test_aclose_idempotent` (localizador histórico fuera del inventario); `test_group_discard_runs_even_on_abnormal_teardown` (localizador histórico fuera del inventario); `test_aclose_discard_sweep_is_exception_isolated` (localizador histórico fuera del inventario); `test_external_cancellation_propagates` (localizador histórico fuera del inventario); `test_aclose_initiated_cancel_still_stops_cleanly` (localizador histórico fuera del inventario); `test_lookup_filter_without_verifier_drops_conservatively` (localizador histórico fuera del inventario); `test_lookup_filter_with_verifier_true_yields_false_drops` (localizador histórico fuera del inventario); `test_source_module_has_no_graphene_import` (localizador histórico fuera del inventario); `test_source_module_is_async_iterator` (localizador histórico fuera del inventario).
 
-**Límite pendiente:** La cancelación esperada es deliberada; solo se corrigió el warning aclose de un grupo. Otras rutas siguen abiertas.
-
 
 ### L-M1 — _gdx_input_registry crece sin límite y produce un duplicado al redefinir
 
@@ -2678,9 +2602,6 @@ class Payload(InputType):
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"bounded static reuse; dynamic churn unproven"
-```
 
 **Cómo se llegó al resultado:**
 1. Tres esquemas estáticos reutilizaron clases sin crecimiento observado, pero churn dinámico carece de contrato de propiedad/evicción. No se cambió la vida útil del registro global.
@@ -2692,8 +2613,6 @@ class Payload(InputType):
    assert compiled_b.name == "NodeB"
    ```
    - [tests/core/test_registry_compiler.py](tests/core/test_registry_compiler.py): `test_mutual_recursion_terminates` (localizador histórico fuera del inventario); `test_mutual_recursion_thunks_resolve_correctly` (localizador histórico fuera del inventario); `test_self_referential_type_compiles` (localizador histórico fuera del inventario); `test_compile_all_raises_on_missing_gdx_extensions` (localizador histórico fuera del inventario); `test_compile_all_no_error_when_all_types_have_gdx` (localizador histórico fuera del inventario).
-
-**Límite pendiente:** Tres esquemas estáticos reutilizan clases sin crecimiento observado; churn dinámico necesita decisión de propiedad y vida útil.
 
 
 ### L-M2 — _NATIVE_FIELD_IDENTITIES usa id(), que puede reciclarse
@@ -2730,8 +2649,6 @@ class Payload(InputType):
    ```
    - [tests/core/test_native_field_identity_lifetime.py](tests/core/test_native_field_identity_lifetime.py): `test_native_field_marker_expires_when_field_dies` (definición añadida); `test_live_native_field_survives_registry_slot_overwrite` (definición añadida); `test_current_registry_value_is_a_defensive_identity_source` (definición añadida); `test_stale_identity_key_cannot_admit_an_unrelated_field` (definición añadida); `test_modeltype_builder_tracks_its_actual_native_field` (definición añadida); `test_model_mutation_builder_tracks_its_actual_native_field` (definición añadida).
 
-**Límite pendiente:** Se corrigió el caso interno de identidad/vida útil; impacto público y Graphene no establecidos.
-
 
 ### L-M3 — _TYPE_CACHE de enums sin lock
 
@@ -2767,8 +2684,6 @@ class Payload(InputType):
    ```
    - [tests/core/test_enum_cache_concurrency.py](tests/core/test_enum_cache_concurrency.py): `test_compile_enum_shares_one_object_after_contended_miss` (definición añadida); `test_compile_type_shares_one_object_after_contended_miss` (definición añadida); `test_compile_schema_keeps_reset_and_build_in_one_transaction` (definición añadida); `test_native_choices_reuse_one_object_after_contended_miss` (definición añadida); `test_native_choices_reject_incompatible_concurrent_definition` (definición añadida); `test_native_choices_keep_serial_ambiguity_and_registry_isolation` (definición añadida).
 
-**Límite pendiente:** Se protegió la creación concurrente de enums en GraphQLSchema directo; exposición pública no demostrada.
-
 
 ### L-M4 — get_global_registry / get_or_create_list_object_type hacen check-then-act sin lock
 
@@ -2803,8 +2718,6 @@ class Payload(InputType):
    assert registry_module.get_global_registry() is first_result
    ```
    - [tests/core/test_registry_creation_concurrency.py](tests/core/test_registry_creation_concurrency.py): `test_global_registry_concurrent_cold_calls_share_one_instance` (definición añadida); `test_global_registry_failed_construction_retries_and_reset_isolated` (definición añadida); `test_concurrent_list_misses_share_class_graphql_object_and_cache` (definición añadida); `test_explicit_list_registration_keeps_last_registration_wins` (definición añadida); `test_list_creation_is_scoped_to_each_model_and_registry` (definición añadida).
-
-**Límite pendiente:** Se protegió el registro de lista en GraphQLSchema directo; exposición pública no demostrada.
 
 
 ### L-S1 — SSE sin heartbeat ni tope de streams por usuario
@@ -2843,8 +2756,6 @@ Accept: text/event-stream
    - [integration/live_redis/test_sse_live_redis.py](integration/live_redis/test_sse_live_redis.py): `test_real_lua_cross_process_cap` (definición añadida); `test_real_lua_ownership_expiry_and_independent_accounts` (definición añadida); `test_real_lua_unknown_acquire_reply_releases_committed_token` (definición añadida); `test_real_lua_double_cancellation_waits_for_commit_then_releases` (definición añadida); `test_real_lua_crashed_owner_expires_without_release` (definición añadida); `test_public_sse_live_cap_and_cleanup` (definición añadida); `test_public_sse_live_backend_unavailable_is_503_before_source` (definición añadida); `test_public_sse_live_source_start_failure_releases_lease` (definición añadida); `test_public_sse_live_normal_source_completion_releases_lease` (definición añadida); `test_public_sse_live_midstream_loss_is_generic_and_closes` (definición añadida).
    - [tests/subscriptions/test_sse_lease_lifecycle.py](tests/subscriptions/test_sse_lease_lifecycle.py): `test_expired_initial_lease_never_delivers_application_data` (definición añadida); `test_ready_events_still_renew_overdue_lease` (definición añadida); `test_repeated_cancellation_settles_admission_before_release` (definición añadida); `test_backend_error_after_start_closes_source_before_503` (definición añadida); `test_cancelled_startup_revalidation_closes_source_and_lease` (definición añadida); `test_consumer_delay_rechecks_before_next_source_read` (definición añadida); `test_overdue_ready_result_is_withheld_on_backend_error` (definición añadida).
    - [tests/subscriptions/test_sse_controls.py](tests/subscriptions/test_sse_controls.py): `test_idle_heartbeat_keeps_one_source_alive` (definición añadida); `test_heartbeat_remains_off_by_default` (definición añadida); `test_second_account_stream_is_rejected_before_source` (definición añadida); `test_backend_failure_is_pre_stream_503` (definición añadida); `test_sixth_stream_is_429_and_existing_five_survive` (definición añadida); `test_anonymous_request_does_not_access_account_lease_backend` (definición añadida); `test_source_start_failure_releases_reserved_slot` (definición añadida); `test_renewal_failure_finishes_stream_without_backend_secret` (definición añadida); `test_expired_lease_cannot_be_resurrected` (definición añadida); `test_cancelled_unknown_admission_cleans_its_token` (definición añadida); `test_event_heartbeat_and_natural_completion_share_one_source` (definición añadida); `test_healthy_lease_renews_without_heartbeat` (definición añadida); `test_subscribe_result_releases_unused_lease` (definición añadida); `test_missing_persistent_account_id_is_refused` (definición añadida); `test_failed_release_is_bounded_by_expiry` (definición añadida); `test_cancelled_backend_failure_still_propagates_cancellation` (definición añadida); `test_controls_ship_disabled_with_independent_values` (definición añadida); `test_invalid_control_settings_fail_explicitly` (definición añadida).
-
-**Límite pendiente:** Se incorporaron controles opt-in OFF por defecto (15 segundos/cinco streams), probados históricamente con Redis real en una instancia. Failover/partición y plazo total estricto siguen sin prueba.
 
 
 ### L-S2 — El connection_init payload se ignora: no hay hook on_connect para auth por token
@@ -2966,9 +2877,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"use isolated 3.3 evidence; root remains unsupported"
-```
 
 **Cómo se llegó al resultado:**
 1. Dependencias, lock, tox y CI especifican graphql-core 3.3; el 3.2.13 ambiente no está soportado y no se reinstaló. Desajuste de entorno no es arreglo de tox.
@@ -3064,9 +2972,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"mapped as coverage work under existing IDs"
-```
 
 **Cómo se llegó al resultado:**
 1. La matriz de regresión se vinculó a IDs de comportamiento existentes; un título de cobertura no exige parche runtime independiente. Los tests añadidos se atribuyen a cada caso.
@@ -3089,9 +2994,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"no runtime change; naming review pending"
-```
 
 **Cómo se llegó al resultado:**
 1. No se renombraron tests históricos solo por descubribilidad: un rename puede romper referencias de colección sin cambiar comportamiento. La organización queda aparte.
@@ -3114,9 +3016,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"no split adopted on size alone"
-```
 
 **Cómo se llegó al resultado:**
 1. La longitud de módulos no justificó extracción amplia de rutas sensibles a compatibilidad. No se dividieron en masa sin alcance y prueba de conservación.
@@ -3139,9 +3038,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"retain pending caller/contract review"
-```
 
 **Cómo se llegó al resultado:**
 1. Los candidatos de walkers y vistas/mutaciones se asociaron a arreglos C2, A9, A1 y L-C3, no se fusionó toda duplicación. Abstracciones restantes exigen análisis de llamadores.
@@ -3164,17 +3060,12 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"live view path retained; other symbols unproved"
-```
 
 **Cómo se llegó al resultado:**
 1. MUTATION_ERRORS_FLAG supuestamente muerto conserva ruta viva de rollback en GraphQLView. No se borró ningún símbolo por lista especulativa; otras eliminaciones necesitan prueba de llamadas y compatibilidad.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: MUTATION_ERRORS_FLAG tiene ruta viva; las demás eliminaciones requieren análisis de referencias y compatibilidad. No se borró código por sospecha.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** MUTATION_ERRORS_FLAG tiene ruta viva; las demás eliminaciones requieren análisis de referencias y compatibilidad. No se borró código por sospecha.
 
 
 ### Q9 — Nombres y comentarios heredados de graphene (graphene_cls, "graphene parity") en código que ya no depende de…
@@ -3191,9 +3082,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"no compatibility name removed"
-```
 
 **Cómo se llegó al resultado:**
 1. Los nombres históricos de Graphene permanecen porque su compatibilidad no se deduce muerta por el nombre. Limpiar comentarios no autorizó rename público incompatible.
@@ -3216,17 +3104,12 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"unchanged until SDL policy approved"
-```
 
 **Cómo se llegó al resultado:**
 1. El SDL no deriva GraphQLNonNull automáticamente de Django null=False. Proyectarlo en general cambia propagación de errores; sigue siendo decisión opt-in.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: El SDL no cambia automáticamente; hacer campos non-null puede propagar errores y necesita decisión explícita de compatibilidad.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** El SDL no cambia automáticamente; hacer campos non-null puede propagar errores y necesita decisión explícita de compatibilidad.
 
 
 ### P1 — 1. Antes de publicar 4.0.0: arreglar C1 (Decimal) con su test, y ejecutar uv sync en local
@@ -3243,9 +3126,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"no extra ID or release action"
-```
 
 **Cómo se llegó al resultado:**
 1. Las prioridades se vincularon a IDs existentes, sin autorizar uv sync, release/publicación, predeterminados nuevos ni otro conteo de bugs. La entrega quedó fuera.
@@ -3268,17 +3148,12 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"schema signature may match; response cache separate"
-```
 
 **Cómo se llegó al resultado:**
 1. La caché de esquema usa firma efectiva de permisos, no objeto único por usuario. Se acotó la afirmación negativa universal; aquí no se probó aislamiento de caché de respuesta.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: La caché de esquema usa firma efectiva de permisos, no identidad única; no se infiere aislamiento universal de caché de respuesta.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** La caché de esquema usa firma efectiva de permisos, no identidad única; no se infiere aislamiento universal de caché de respuesta.
 
 
 ### N2 — Las permission classes fallan cerradas con anónimos y con resultados falsy; update/delete resuelven la fila vía…
@@ -3295,17 +3170,12 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"bounded paths only; universal guarantee unproven"
-```
 
 **Cómo se llegó al resultado:**
 1. Las pruebas cubiertas no establecen toda identidad anónima/falsy ni cadena arbitraria update/delete. No se afirmó garantía fail-closed global desde ese subconjunto.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: No se declaró una prueba universal de permisos anónimos/falsy ni de toda cadena update/delete; se conserva evidencia limitada.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** No se declaró una prueba universal de permisos anónimos/falsy ni de toda cadena update/delete; se conserva evidencia limitada.
 
 
 ### N3 — La introspección anidada está bloqueada por MaxIntrospectionDepthRule de graphql-core
@@ -3322,9 +3192,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"one bounded query rejected; universal claim withheld"
-```
 
 **Cómo se llegó al resultado:**
 1. Un rechazo de introspección anidada provino de validación graphql-core; MAX_QUERY_DEPTH de la biblioteca es otro límite. Una garantía DoS universal exige más pruebas.
@@ -3332,8 +3199,6 @@ Accept: text/event-stream
 3. Límite comprobado: La regla de graphql-core rechazó una consulta acotada; MAX_QUERY_DEPTH propio es otro límite y no prueba seguridad universal.
 4. Pruebas reales localizadas y procedencia de definiciones frente a la base:
    - [tests/test_depth_limit.py](tests/test_depth_limit.py): `test_within_limit_passes` (localizador histórico fuera del inventario); `test_exceeding_per_type_limit_errors` (localizador histórico fuera del inventario); `test_scalars_do_not_count` (localizador histórico fuera del inventario); `test_max_depth_zero_blocks_any_nesting` (localizador histórico fuera del inventario); `test_fragment_spread_does_not_bypass` (localizador histórico fuera del inventario); `test_inline_fragment_is_counted` (localizador histórico fuera del inventario); `test_most_restrictive_constraint_wins` (localizador histórico fuera del inventario); `test_global_default_from_setting` (localizador histórico fuera del inventario); `test_no_limit_configured_is_noop` (localizador histórico fuera del inventario); `test_object_type_stores_max_depth` (localizador histórico fuera del inventario); `test_list_type_stores_max_depth` (localizador histórico fuera del inventario); `test_serializer_type_forwards_max_depth_to_output_type` (localizador histórico fuera del inventario); `test_view_includes_depth_rule_with_standard_rules` (localizador histórico fuera del inventario); `test_each_operation_type_is_named_in_its_own_refusal` (localizador histórico fuera del inventario).
-
-**Límite pendiente:** La regla de graphql-core rechazó una consulta acotada; MAX_QUERY_DEPTH propio es otro límite y no prueba seguridad universal.
 
 
 ### N4 — Las cachés de utils.py son de ámbito de petición: no hay memo global sin límite
@@ -3350,9 +3215,6 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"process-global class metadata cache exists"
-```
 
 **Cómo se llegó al resultado:**
 1. Los metadatos de tipo GenericForeignKey se cachean por proceso/clase, no por petición. Se corrigió la descripción sin reescribir otras cachés.
@@ -3375,17 +3237,12 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"bounded result only; universal claim withheld"
-```
 
 **Cómo se llegó al resultado:**
 1. Una prueba finita de regex en format_graphql_error no demuestra seguridad para toda cadena y forma de backtracking. Se conserva el caso ejercitado sin garantía global.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: No se confirmó una garantía universal de regex; una prueba finita solo respalda el caso ejercitado.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** No se confirmó una garantía universal de regex; una prueba finita solo respalda el caso ejercitado.
 
 
 ### N6 — Lint, tipos y el resto de la suite: limpios
@@ -3402,17 +3259,12 @@ Accept: text/event-stream
 ```
 
 **Después (observado/actual):** No se implementó un cambio para este alegato.
-```json
-"local zero only; historical ignored originals unknown"
-```
 
 **Cómo se llegó al resultado:**
 1. La exploración local estricta acabó limpia tras atender hallazgos rastreados e históricamente ignorados. Faltan preimágenes originales y CI para afirmación histórica universal.
 2. No se aceptó un cambio de producción para este alegato; se documenta el comportamiento vigente, la premisa contradicha o la política propuesta, no un arreglo ficticio.
 3. Límite comprobado: La exploración local estricta quedó en cero tras arreglar 23 hallazgos rastreados y siete del perfil ignorado; imágenes originales y CI siguen desconocidas.
 4. El índice congelado no ofrece una prueba primaria con nombre. Es una laguna de procedencia, no prueba de que no existan tests.
-
-**Límite pendiente:** La exploración local estricta quedó en cero tras arreglar 23 hallazgos rastreados y siete del perfil ignorado; imágenes originales y CI siguen desconocidas.
 
 
 ## Qué se descartó, acotó o difirió deliberadamente
@@ -3448,7 +3300,7 @@ El helper de tests sustituía Registry y el registro de salida global, pero cons
 {"setup": "two isolated tests share process", "before": {"cached_pair": "temporary prior-test pair"}, "current": {"cached_pair": "exact pre-scope pair restored"}}
 ```
 
-### L-S1 F1–F3: tres carreras del candidato corregidas antes de aceptación
+### Seguimiento F1–F3 (L-S1): tres carreras del candidato corregidas antes de aceptación
 
 F1: un lease adquirido antes de arrancar lentamente la fuente podía caducar antes del HTTP 200/primer frame, pero el candidato aún podía entregar datos. La ruta aceptada renueva tras arrancar la fuente y otra vez antes de leer el cuerpo; al perder propiedad cierra fuente y lease, con 503 previo al stream o error terminal seguro tras 200. `test_expired_initial_lease_never_delivers_application_data` parametriza arranque y primera lectura.
 

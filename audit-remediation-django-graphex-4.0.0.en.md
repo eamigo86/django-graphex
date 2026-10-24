@@ -1,5 +1,7 @@
 # Django GraphEx 4.0.0 audit remediation: detailed evidence and decisions
 
+> **Later round (4.1.0).** This retrospective is frozen at the 4.0.0 remediation snapshot. A later round on the 4.1.0 branch changed several dispositions (for example A1, A2, A10, A13, M-D4 and M-D6 gained fixes, and M-F3 and L-M1 became documented contracts). The current dispositions are in the [disposition guide](docs/audit-4.0.0.md) and [CHANGELOG.md](CHANGELOG.md). The Before and After JSON blocks are reduced illustrations, not captured output, whatever their label says; claims with no implementation carry no After block.
+
 This companion to the [original Spanish audit](auditoria-django-graphex-4.0.0.md) explains what happened, why, and what remains. It is a **frozen local retrospective**, not a release statement or a claim that 100 bugs were fixed. The original report is untracked user evidence (SHA-256 `6a0ee92c2fd51ce104080bf4ac5403c24c0e00abc075882735949036d478e561`), not a trusted payload source. The implementation base is `5a155a059a4d3995ead1b639f08136e5d7619aec`; the frozen snapshot is `8d93483d2fd654012a544ce68365baf1964056f3`, committed **2026-10-23 23:13:45 -04:00 (America/New_York)**. The earlier `9a6ec5adc89bdc24de138179ad1280751a5266e5` audit branch is not an ancestor of this implementation.
 
 ## Read the outcome first
@@ -177,11 +179,11 @@ mutation {
    - [tests/test_views_atomic_errors.py](tests/test_views_atomic_errors.py): `test_atomic_mutations_execution_error_rolls_back_native_write` (added definition); `test_atomic_requests_execution_error_rolls_back_native_write` (added definition); `test_atomic_requests_explicit_flag_rolls_back_without_graphql_error` (added definition); `test_atomic_mutations_explicit_flag_still_rolls_back` (added definition); `test_nonatomic_execution_error_keeps_durable_write_and_invalidates` (added definition); `test_atomic_execution_error_does_not_invalidate_rolled_back_write` (added definition); `test_atomic_success_commits_and_invalidates` (added definition); `test_native_ok_false_does_not_retroactively_rollback_prior_root` (added definition); `test_batch_failed_atomic_operation_then_success_invalidates_once` (added definition).
 
 
-### A2 — The parse/cache path could run before an oversized POST body guard
+### A2 — The parse/validation cache had no memory bound: its LRU counts entries (128), not bytes
 
 **Status:** partial
 
-**Original problem:** The parse/cache path could run before an oversized POST body guard; entry-count LRU was not a byte quota. [original audit](auditoria-django-graphex-4.0.0.md), lines 81. The [disposition guide](docs/audit-4.0.0.md) indexes this claim at line 196; [task T04a/T04](odd/tasks/audit-400-remediation.md) records the work boundary.
+**Original problem:** The parse/validation cache had no memory bound. Its LRU is bounded by entry count (128), not bytes; per the original report a 1.5 MB query yields an AST of about 120 MB, so 128 distinct queries would pin about 15 GB per process. With `CACHE_ACTIVE`, the document was also parsed and hashed before the `MAX_REQUEST_BODY_SIZE` guard (repro: a correct 413, but the AST was already cached). [original audit](auditoria-django-graphex-4.0.0.md), lines 81. The [disposition guide](docs/audit-4.0.0.md) indexes this claim at line 196; [task T04a/T04](odd/tasks/audit-400-remediation.md) records the work boundary.
 
 **Example context:** POST body exceeds configured cap with cache active. The paired values below are deliberately reduced illustrations, not newly executed output:
 
@@ -796,9 +798,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"unchanged; proposal deferred"
-```
 
 **How the result was reached:**
 1. No strict_scope option or Django system check was installed. Such a default would reject schemas that currently opt into relation scoping and needs a separate public compatibility decision.
@@ -861,9 +860,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-{"effective_page_size": 100, "depth_or_byte_cap": "not inferred"}
-```
 
 **How the result was reached:**
 1. Inspection separated the already accepted page-size default of 100 from depth, width, and byte-limit policies. No extra resource default was changed to satisfy a bundled allegation.
@@ -887,9 +883,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"configuration-dependent contract documented"
-```
 
 **How the result was reached:**
 1. The documented introspection guard remains conditional on installing the middleware. No default middleware was silently added; deployment must configure the opt-in boundary.
@@ -987,9 +980,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"TypeError; use documented lower-case field form"
-```
 
 **How the result was reached:**
 1. The checked field API accepts its documented lower-case permission keyword, not the proposed shortcut required_perms. Keeping the TypeError avoids inventing a new public signature.
@@ -1022,9 +1012,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-{"final_title": "old", "change": "no universal update_fields policy accepted"}
-```
 
 **How the result was reached:**
 1. A sequential stale-instance witness confirmed that a broad save can overwrite a newer column value. The report records the lost-update risk; it did not add universal update_fields or claim a PostgreSQL race test.
@@ -1124,9 +1111,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-{"save_attempt": false, "graphql_error": "non-finite decimal rejected"}
-```
 
 **How the result was reached:**
 1. The public mutation rejects NaN, both infinities, and the exercised extreme exponent before saving. The specific 1E+999999999 token in the audit was not run, so its exact failure path is not asserted.
@@ -1149,9 +1133,6 @@ mutation { submit(payload: {}) { result } }
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"JSONField stays string; JSONString yields integer"
-```
 
 **How the result was reached:**
 1. A raw JSONField string is preserved through input, database and output; JSONString deliberately parses JSON text into a JSON value. These are two scalar contracts, not a single decoding defect.
@@ -1934,9 +1915,6 @@ class Payload(InputType):
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"model save after commit; bulk none; manual immediate"
-```
 
 **How the result was reached:**
 1. Post-save/delete model signals schedule automatic delivery after commit; bulk updates have no signal, while direct manual broadcast remains immediate. These are documented lifecycle boundaries, not a changed implementation.
@@ -2246,9 +2224,6 @@ class Payload(InputType):
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"miss may set cookie; hit does not; cookie-bearing request bypasses"
-```
 
 **How the result was reached:**
 1. The cookie/cache trace was documented, not patched: a no-cookie miss can set csrftoken, a no-cookie hit returns earlier without setting it, and a later cookie request bypasses server response caching.
@@ -2311,9 +2286,6 @@ class Payload(InputType):
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"actual tail window contains 10 rows (unchanged contract)"
-```
 
 **How the result was reached:**
 1. No pagination code changed for this allegation: page:-1 already denotes the final fixed-size window, not the short remainder of the last positive page. The audit's expected equivalence was incorrect.
@@ -2477,9 +2449,6 @@ class Payload(InputType):
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"scalar stays naive; @date uses active timezone"
-```
 
 **How the result was reached:**
 1. The documentation separated native DateTime naive parsing from @date's active-timezone formatting, including USE_TZ=False. The scalar implementation was not silently changed.
@@ -2577,9 +2546,6 @@ class Payload(InputType):
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-{"observed_hook_calls": 1, "returned_rows": "visible only", "other_branches": "not proved"}
-```
 
 **How the result was reached:**
 1. The exact SITE-B witness showed optimize_<field> called once, visible rows only, and the grouped predicate intact. No optimizer patch was justified for that route; other sites remain unmeasured.
@@ -2639,9 +2605,6 @@ class Payload(InputType):
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"bounded static reuse; dynamic churn unproven"
-```
 
 **How the result was reached:**
 1. Three static schemas reused input classes without observed growth, but dynamic class churn lacks an ownership/eviction contract. No global registry lifecycle change was made.
@@ -2917,9 +2880,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"use isolated 3.3 evidence; root remains unsupported"
-```
 
 **How the result was reached:**
 1. The dependency declaration, lock, tox and CI specify graphql-core 3.3; the checkout's ambient 3.2.13 is unsupported and was not reinstalled. Environment mismatch is not a tox configuration fix.
@@ -3015,9 +2975,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"mapped as coverage work under existing IDs"
-```
 
 **How the result was reached:**
 1. The proposed regression matrix was mapped onto existing behavior IDs; no independent runtime patch follows from a coverage heading. Specific added tests are attributed in their corresponding case chapters.
@@ -3040,9 +2997,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"no runtime change; naming review pending"
-```
 
 **How the result was reached:**
 1. No historical test file was renamed merely to improve discoverability, because renaming can break collection references without changing behavior. Organization remains a separate review task.
@@ -3065,9 +3019,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"no split adopted on size alone"
-```
 
 **How the result was reached:**
 1. Module length alone did not justify broad extraction across compatibility-sensitive call paths. No mass split was performed without a behavior-preserving scope and review proof.
@@ -3090,9 +3041,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"retain pending caller/contract review"
-```
 
 **How the result was reached:**
 1. The repeated-walker and view/mutation candidates were tied to specific C2, A9, A1 and L-C3 repairs instead of merging all duplicates. Their remaining shared abstractions require caller analysis.
@@ -3115,9 +3063,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"live view path retained; other symbols unproved"
-```
 
 **How the result was reached:**
 1. The alleged dead MUTATION_ERRORS_FLAG still has a live GraphQLView rollback path. No symbol was deleted on a speculative reference list; other removals need call-site and compatibility proof.
@@ -3140,9 +3085,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"no compatibility name removed"
-```
 
 **How the result was reached:**
 1. Historical Graphene-era names remain because compatibility surfaces cannot be inferred dead from naming alone. Comment cleanup was not promoted to an API-breaking rename.
@@ -3165,9 +3107,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"unchanged until SDL policy approved"
-```
 
 **How the result was reached:**
 1. The SDL still does not automatically derive GraphQLNonNull from Django null=False. A broad non-null projection can change error propagation, so it remains an opt-in design decision.
@@ -3190,9 +3129,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"no extra ID or release action"
-```
 
 **How the result was reached:**
 1. Priority prose was cross-referenced to existing IDs but did not authorize uv sync, release/publish, default changes or another bug count. Delivery remained outside the remediation.
@@ -3215,9 +3151,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"schema signature may match; response cache separate"
-```
 
 **How the result was reached:**
 1. Permission schema caching is keyed by effective permission signature rather than a uniquely isolated object per user. The negative universal claim is narrowed; response-cache isolation was not proved here.
@@ -3240,9 +3173,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"bounded paths only; universal guarantee unproven"
-```
 
 **How the result was reached:**
 1. Covered permission and scoped mutation tests do not establish every anonymous/falsy principal or arbitrary update/delete chain. No global fail-closed guarantee was asserted from that subset.
@@ -3265,9 +3195,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"one bounded query rejected; universal claim withheld"
-```
 
 **How the result was reached:**
 1. One nested introspection rejection came from graphql-core validation; the library's MAX_QUERY_DEPTH is a separate bound. A universal introspection DoS claim needs wider threat testing.
@@ -3291,9 +3218,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"process-global class metadata cache exists"
-```
 
 **How the result was reached:**
 1. GenericForeignKey type metadata is cached at process/class scope, not per request. The all-caches-request-local statement was corrected without rewriting unrelated caches.
@@ -3316,9 +3240,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"bounded result only; universal claim withheld"
-```
 
 **How the result was reached:**
 1. A finite format_graphql_error regex probe cannot prove safety for arbitrary strings and backtracking shapes. The exercised case is retained without global assurance.
@@ -3341,9 +3262,6 @@ Accept: text/event-stream
 ```
 
 **After (observed/current):** No implementation was made for this claim.
-```json
-"local zero only; historical ignored originals unknown"
-```
 
 **How the result was reached:**
 1. Local strict lint/type/test exploration ended clean after tracked and historically ignored findings were addressed. Missing original preimages and CI runs prevent a universal historical claim.
@@ -3385,7 +3303,7 @@ The isolated test helper replaced the global Registry and output registry but le
 {"setup": "two isolated tests share process", "before": {"cached_pair": "temporary prior-test pair"}, "current": {"cached_pair": "exact pre-scope pair restored"}}
 ```
 
-### L-S1 F1–F3: three candidate-introduced lease races corrected before acceptance
+### Follow-up F1–F3 (L-S1): three candidate-introduced lease races corrected before acceptance
 
 F1: a lease acquired before a slow source start could expire before the first HTTP 200/body frame, yet the candidate could expose application data. The accepted path renews after source start and again before the first body read; on lost ownership it closes the source and lease, returning a pre-stream 503 or a safe terminal error after 200. `test_expired_initial_lease_never_delivers_application_data` has source-start and before-body parameters.
 
