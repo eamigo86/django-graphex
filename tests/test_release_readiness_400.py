@@ -1,8 +1,7 @@
-"""Contracts for the 4.0.0 migration release and historical provenance."""
+"""Historical contracts for the published 4.0.0 migration release."""
 
 import json
 import re
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -12,49 +11,6 @@ VERSION = "4.0.0"
 DATE = "2026-10-05"
 
 
-def _project(path: Path) -> dict:
-    """Read project metadata from a TOML document.
-
-    Args:
-        path: Project or lock path to parse.
-
-    Returns:
-        Parsed TOML document.
-    """
-    return tomllib.loads(path.read_text(encoding="utf-8"))
-
-
-def _local_graphex(lock: dict) -> dict:
-    """Find the editable local library in a lock.
-
-    Args:
-        lock: Parsed uv lock document.
-
-    Returns:
-        The local django-graphex package entry.
-    """
-    return next(
-        package for package in lock["package"] if package["name"] == "django-graphex"
-    )
-
-
-def test_prepared_version_agrees_with_both_local_locks() -> None:
-    """Keep the package and both editable lock entries on one version.
-
-    The release preparation does not resolve third-party dependencies anew.
-    """
-    project = _project(ROOT / "pyproject.toml")["project"]
-    assert project["version"] == VERSION
-    assert "graphql-core>=3.3.0,<3.4" in project["dependencies"]
-    for path, source in (
-        (ROOT / "uv.lock", "."),
-        (ROOT / "examples/playground/uv.lock", "../../"),
-    ):
-        package = _local_graphex(_project(path))
-        assert package["version"] == VERSION
-        assert package["source"] == {"editable": source}
-
-
 def test_400_notes_are_dated_and_describe_version_requirements() -> None:
     """Keep dated migration notes independent of publication status.
 
@@ -62,7 +18,7 @@ def test_400_notes_are_dated_and_describe_version_requirements() -> None:
     """
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         notes = path.read_text(encoding="utf-8")
-        after_unreleased = notes.split("## Unreleased", maxsplit=1)[1]
+        after_unreleased = notes.split("## 4.1.0 — Unreleased", maxsplit=1)[1]
         first_release_heading = next(
             line for line in after_unreleased.splitlines() if line.startswith("## ")
         )
@@ -100,8 +56,6 @@ def test_release_guidance_names_versioned_install_and_migration() -> None:
     for text in (guide, readme):
         assert "graphql-core>=3.3.0,<3.4" in text
         assert "graphql-core>=3.2.13,<3.3" in text
-        assert 'pip install "django-graphex==4.0.0"' in text
-    assert "4.0.0 checkout" in playground
     assert "graphql-core 3.3" in playground
     assert "not yet used by the website" not in benchmark
     assert "docs/why.md#current-core33-comparison" in benchmark

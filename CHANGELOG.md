@@ -1,13 +1,56 @@
 # Changelog
 
-## Unreleased
+## 4.1.0 — Unreleased
 
-- Fix: the raw `JSON` scalar no longer emits `NaN` or `Infinity` in its output.
-  A resolver or `JSONField` value that is or contains a non-finite float, at any
-  depth, is now a field error (`JSON cannot represent non-finite numbers`) with
-  the field set to `null`, so the HTTP, WebSocket and SSE payloads stay valid
-  JSON for strict parsers. Finite values and the `JSONString` scalar are
-  unchanged; this mirrors the existing input-side rejection.
+### Compatibility policy
+
+4.1.0 is a minor release. The changes listed under "Behavior changes" alter wire
+output, defaults, validation or schema-build behavior in ways a client or an
+application may notice. They are treated as bug fixes: each corrects incorrect,
+unsafe or inconsistent behavior of 4.0.0, and each has a migration note in the
+[4.1 upgrade guide](UPGRADE-4.1.md). Everything else below is a fix or an addition that does
+not change documented behavior.
+
+### Behavior changes
+
+Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.1.md).
+
+- Decimal output is a `Decimal` string and BigInteger fields are `BigInt` strings (outputs, inputs, filters) ([migration](docs/UPGRADE-4.1.md#decimal-and-bigint-scalars-in-outputs-inputs-and-filters)).
+- `DEFAULT_PAGE_SIZE` is `100` instead of `None`: unpaginated lists return the first 100 rows ([migration](docs/UPGRADE-4.1.md#default_page_size-is-now-100)).
+- A second public output type for one model in one registry raises `ImproperlyConfigured` ([migration](docs/UPGRADE-4.1.md#one-public-output-type-per-model-and-registry)).
+- Unknown or bare-string `only_fields`/`exclude_fields` raise on object types and write hosts ([migration](docs/UPGRADE-4.1.md#strict-only_fields-and-exclude_fields)).
+- Ambiguous or colliding `choices` enums raise ([migration](docs/UPGRADE-4.1.md#ambiguous-and-colliding-choices-enums)).
+- Reserved `__` `Literal` values and failing `get_fields()` stop the schema build ([migration](docs/UPGRADE-4.1.md#reserved-double-underscore-enum-values)).
+- Configuration checks raise `ImproperlyConfigured` instead of `AssertionError` ([migration](docs/UPGRADE-4.1.md#configuration-checks-raise-improperlyconfigured)).
+- Interface fields: only fields the interface declares use the explicit wire name ([migration](docs/UPGRADE-4.1.md#interface-field-wire-names)).
+- Mutable input defaults are copied per request; zero-argument factories run per input ([migration](docs/UPGRADE-4.1.md#mutable-defaults-are-copied)).
+- `not` inside a to-many relation filter means NOT EXISTS; separate `and` branches use separate rows ([migration](docs/UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
+- `exact: null` selects NULL rows ([migration](docs/UPGRADE-4.1.md#explicit-exact-null-selects-null-rows)).
+- Primary-key tie-break can reorder tied rows; tampered cursors answer `Invalid cursor` ([migration](docs/UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
+- Numeric `DateField`/`DateTimeField` part filters take `Int` ([migration](docs/UPGRADE-4.1.md#numeric-date-part-filters-take-int)).
+- Generated writes run all model field validators (`blank`, `choices`, `max_length`, `validators`) ([migration](docs/UPGRADE-4.1.md#model-field-validators-run-on-generated-writes)).
+- `ATOMIC_MUTATIONS`/`ATOMIC_REQUESTS` roll back on GraphQL errors, on every database alias ([migration](docs/UPGRADE-4.1.md#rollback-on-graphql-errors-on-every-alias)).
+- Generated update/delete and nested writes honor the output type `get_queryset` ([migration](docs/UPGRADE-4.1.md#update-and-delete-honor-the-output-type-scope)).
+- Linked foreign-key, one-to-one and many-to-many ids must be visible; orphan adoption needs an update host ([migration](docs/UPGRADE-4.1.md#linked-rows-must-be-visible)).
+- A nested child `id` that matches no visible child is an error instead of creating a child ([migration](docs/UPGRADE-4.1.md#nested-child-ids-that-match-no-visible-child)).
+- Generic foreign key targets are scoped by their output type ([migration](docs/UPGRADE-4.1.md#genericforeignkey-targets-are-scoped)).
+- Generated database error messages are generic ([migration](docs/UPGRADE-4.1.md#database-error-messages-are-generic)).
+- Cost is checked before resolving and `pageSize` is costed; depth ceiling of 100 ([migration](docs/UPGRADE-4.1.md#cost-is-checked-before-resolving-and-pagesize-is-costed)).
+- Batches answer every item and isolate items in savepoints ([migration](docs/UPGRADE-4.1.md#batches-answer-every-item)).
+- `@replace` is capped at 1,000,000 characters; `MAX_DIRECTIVE_OUTPUT_TOTAL` bounds directive output ([migration](docs/UPGRADE-4.1.md#output-caps-for-directives)).
+- `Decimal` rejects `NaN`/`Infinity`; `@round` rounds half to even on `Decimal` ([migration](docs/UPGRADE-4.1.md#decimal-and-bigint-scalars-in-outputs-inputs-and-filters)).
+- Custom scalar coercion errors are client errors ([migration](docs/UPGRADE-4.1.md#custom-scalar-errors-are-client-errors)).
+- Subscription WebSocket handshakes without `graphql-transport-ws` are rejected before accept ([migration](docs/UPGRADE-4.1.md#websocket-subprotocol-is-required)).
+- Raw `JSON` output rejects non-finite numbers; `CLEAN_RESPONSE` keeps `0` and `false` ([migration](docs/UPGRADE-4.1.md#numbers-in-json-output)).
+
+### Added settings
+
+- `OPTIMIZER_WORK_BUDGET` (default 2000) ([details](docs/UPGRADE-4.1.md#optimizer-work-budget)).
+- `DOCUMENT_CACHE_MAX_QUERY_LENGTH` (default 65536) ([details](docs/UPGRADE-4.1.md#document-caches-skip-very-large-documents)).
+- `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000) and `COST_DIRECTIVE` (default 0) ([details](docs/UPGRADE-4.1.md#output-caps-for-directives)).
+- Also `DEFAULT_PAGE_SIZE` now defaults to `100` (see Behavior changes).
+
+### Security
 
 - Fix: the parse and validation document caches no longer retain very large
   documents. They were bounded by entry count only, so `DOCUMENT_CACHE_MAXSIZE`
@@ -25,6 +68,287 @@
   that alias in `transaction.atomic()` for mutations. The global
   `ATOMIC_MUTATIONS` setting still covers only the default alias, and aliases
   outside an atomic block are untouched.
+
+- Fix: `Meta.only_fields` and `Meta.exclude_fields` are validated on the write
+  hosts too. `DjangoModelMutation`, `DjangoModelType`, `DjangoListObjectType`
+  and `DjangoInputObjectType` accepted a typo (`exclude_fields = ("nmae",)`) or
+  a bare string (`exclude_fields = "name"`) in silence, so the column the
+  developer meant to hide stayed writable. They now raise
+  `ImproperlyConfigured` at class creation with the same message
+  `DjangoObjectType` gives.
+
+- Fix: the request body cap now runs before Django's CSRF check. A multipart
+  POST carrying a `csrftoken` cookie was parsed (and its files spooled to disk)
+  by that check before `MAX_REQUEST_BODY_SIZE` could answer 413. `dispatch` now
+  checks the cap first, so an oversized body is refused unparsed whether or not
+  the client holds the cookie. CSRF behavior is unchanged.
+
+- Fix: bound the total text that directives add to one response. Only a
+  per-field cap existed (`MAX_REPLACE_OUTPUT_LENGTH`), so many aliases and rows
+  each under the cap could still produce hundreds of megabytes. New setting
+  `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters per request,
+  `None` disables) charges every directive for the text it adds; once spent,
+  further directive uses become field errors. New opt-in setting
+  `COST_DIRECTIVE` (default `0`, so existing costs do not change) adds cost per
+  custom directive use so aliases x directives counts toward `MAX_QUERY_COST`.
+
+- Apply the target output type's `get_queryset` to flat `GenericForeignKey`
+  targets in every schema. Without `PERMISSION_SCOPED_SCHEMA` the flat
+  `GenericForeignKeyType` still returned `appLabel`, `modelName` and `id` of a
+  target that its registered output type hid; it now resolves to `null`, like
+  the permission-pruned field already did, and the pruned and full schemas use
+  one rule. The check is batched in one `GenericPrefetch` for optimized and list
+  reads (query counts do not grow with the number of owners); a resolver
+  without it issues one membership query per target of a type that overrides
+  the hook. Targets of unregistered models, and types keeping the default
+  hook, are unchanged.
+
+- Apply a member type's `get_queryset` to typed `GenericForeignKey` union
+  targets. A `Meta.unions` union returned the target of any member in full even
+  when that member type's hook hid the row. A hidden target now resolves to
+  `null`, like a missing one. Optimized and list reads scope the targets in one
+  batched `GenericPrefetch` per request, stored under a dedicated attribute so a
+  cached unscoped target is never trusted, so query counts do not grow with the
+  number of owners; only the union's own member models are scoped, and a member
+  with a hook loads full rows instead of the narrowed `.only()` columns. A
+  resolver without that prefetch issues one membership query per target of a
+  type that overrides the hook. A sliced hook, or two scoped members sharing a
+  content type, resolves per row instead. Types keeping the default hook are
+  unchanged.
+
+- Require a child update host to adopt an existing reverse `OneToOneField`
+  orphan by ID. Naming the ID of a child whose nullable one-to-one key is null
+  in a parent update re-parented and rewrote that child with no host check and
+  no scope, because the adoption guard only covered reverse `ForeignKey`. It
+  now follows the same rule: a registered child `DjangoModelType` or
+  `DjangoModelMutation` serving update must exist, and its scope and
+  permissions apply. Children the parent already owns and new children are
+  unchanged.
+
+- Scope forward `OneToOneField` links like `ForeignKey` links. A generated
+  create or update could point a one-to-one field (scalar ID or nested id-only
+  payload) at a row hidden by the destination output type's `get_queryset`, and
+  a nonexistent ID answered differently, so it was also an existence oracle.
+  Hidden and nonexistent IDs now return the same `Invalid pk ... object does
+  not exist.` relation error. The ID membership check also runs one query per
+  relation instead of one per ID (200 tags cost 209 queries before), and the
+  nested M2M existence and already-linked checks are batched.
+
+- Make the depth and cost walkers iterative. `DepthLimitValidationRule` and the
+  cost estimator recursed once per fragment link and per nesting level, so an
+  acyclic chain of ~1000 fragments (~38 KB) raised `RecursionError` and answered
+  HTTP 500. They now use an explicit stack with the same verdicts, messages and
+  memoization. Documents that exceed graphql-core's own recursive parser or
+  validator (about 250 nested selection sets, several hundred chained
+  fragments) are answered as HTTP 400 `QUERY_TOO_DEEP` instead of 500, on the
+  HTTP view and the subscription transports; resolver errors are unaffected.
+  `DepthLimitValidationRule` also enforces a hard ceiling of 100 nested object
+  levels even when `MAX_QUERY_DEPTH` is unset or larger: Python's stack cannot
+  execute deeper documents (with data, requests fail with an internal error
+  from about 130 levels), and fragments hide depth from the parser. Deeper
+  documents get HTTP 400 `QUERY_TOO_DEEP` instead of an internal error.
+
+- Bound the queryset optimizer for fragments reached through distinct relation
+  paths. Memoizing by selection context only helped a fragment repeated in the
+  same context; a document such as `author { ...A }` / `coAuthors { results {
+  ...A } }` where each fragment reaches the next through four relations
+  describes 4**n distinct `select_related`/`prefetch_related` lookups, so a
+  ~1 KB anonymous request took more than 20 s of CPU on an empty database. The
+  new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
+  selection contexts each optimizer walker expands per request, including the
+  scoped to-one walker that ran a second exponential pass. Past the cap deeper
+  relations are not planned and load through the normal resolvers (results are
+  identical, scoped relations stay scoped); a DEBUG record names the walker.
+
+- Scope automatic declared and reverse M2M output lists with the destination
+  type's request-specific `get_queryset`. A visible parent retains its row,
+  while hidden linked targets leave `results` and the pre-pagination
+  `totalCount`; an empty or hidden-only relation returns `[]` and `0`.
+  Optimized reads use a scoped prefetch rather than trusting an unrelated
+  relation cache. Explicit resolvers, through-model access rules, custom
+  filters, and ordering are not changed.
+
+- Apply the destination type's request-specific `get_queryset` to automatic
+  forward and reverse OneToOne output reads. A visible parent keeps its row
+  while a hidden linked destination resolves to `null`; genuine absent
+  relations and the nullable output shape are unchanged. Scoped to-one reads
+  are batched for ordinary list traversal, including when queryset optimization
+  is disabled. Explicit resolvers and M2M output reads have separate rules.
+
+- Scope nested forward OneToOne destination-field filters to the destination
+  type's request-specific `get_queryset`. A visible profile cannot match a
+  hidden linked user's fields; real absent OneToOne NULL matches, unrelated
+  Boolean branches, and direct source-column ID lookups keep their existing
+  meanings. Reverse OneToOne filters already used the destination hook.
+  Automatic OneToOne output reads have the separate rule above; custom filters
+  and ordering are unchanged.
+
+- Scope forward and reverse many-to-many filters to each destination type's
+  request-specific `get_queryset`. A linked hidden target no longer satisfies
+  a nested field or target-ID predicate. One relation object retains one
+  visible target witness, separate `and` branches may use different targets,
+  and `not` complements the matching-parent set. Empty and absent-target
+  predicates keep their existing meanings. M2M output reads have the separate
+  rule above; through models, custom filter bodies and ordering are unchanged.
+
+- Scope public nested forward-FK filters to the destination type's
+  request-specific `get_queryset`. Hidden target rows no longer make a
+  visible source row match; each hop in a forward-FK chain is checked.
+  Real absent-FK NULL matches, unrelated Boolean branches, and direct source
+  FK-ID predicates retain their existing meanings. This does not scope
+  custom filter bodies or ordering. Forward OneToOne
+  and M2M filters have separate bounded rules.
+
+- Scope public reverse-FK filters to the child type's request-specific
+  `get_queryset`. One visible child must satisfy each grouped predicate;
+  separate `and` branches retain independent visible witnesses, and `not`
+  complements the matching-parent set. Direct reverse-child IDs are scoped,
+  unlike direct forward source FK IDs. Default and named output accessors now
+  resolve declarations using their ORM query names without reopening a
+  declared or pruned relation. M2M has the separate bounded rule above;
+  forward OneToOne has the separate bounded rule above.
+
+- Apply the destination type's `get_queryset` hook to automatic forward-FK
+  and reverse-FK output reads. Hidden nullable FK targets now resolve to
+  `null`; reverse-FK results, windows, and `totalCount` include only visible
+  rows. Optimized scoped FK reads stay batched, while disabling optimization
+  can add per-parent scope queries. Automatic OneToOne has the separate rule
+  above; M2M outputs have their own rule, while custom resolvers and other
+  joined filters remain outside this FK rule. Clients previously relying on expanded
+  hidden rows should review their destination hooks before upgrading.
+
+- Replace unexpected resolver-exception details on built-in HTTP views when
+  `DEBUG=False` with safe `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`
+  diagnostics and an opaque `errorId` correlated with restricted server logs.
+  Clients must stop relying on raw exception text or custom extensions from
+  these failures. Deliberate `GraphQLError`, validation errors, existing
+  generated-mutation errors, `DEBUG=True`, and WebSocket/SSE formatting are
+  unchanged; custom `format_error` overrides remain application-owned.
+
+- Reject a selected GraphQL operation before resolution when its real,
+  GraphQL-coerced request variables or defaults put it over `MAX_QUERY_COST`,
+  including document-validation cache hits. A variable page size that previously
+  passed the static fallback estimate may now return HTTP 400 / `QUERY_TOO_COMPLEX`.
+  Conservative static validation remains: a cheap variable cannot undo an
+  earlier fallback-based rejection. `MAX_PAGE_SIZE` is still optional, though
+  recommended for unbounded lists; the public cost model/API is unchanged.
+  A mutation refused before resolver execution does not invalidate a warmed
+  response cache; an earlier executed mutation in a non-atomic batch still does.
+
+- Hide table, column, and constraint details from unclassified Django
+  `IntegrityError` failures in generated create/update/delete GraphQL fields,
+  including nested writes. Clients now receive the fixed top-level message
+  `A database constraint prevented this operation.` instead of raw database
+  text; the field remains `null`, with its GraphQL path and normal HTTP shape.
+  Nested and atomic sibling rollback remain intact. Mapped unique/FK field
+  errors stay structured, direct backend exceptions stay unchanged, and no
+  general constraint validation or upsert is added.
+
+- Replace Django collector details in generated delete `PROTECT`/`RESTRICT`
+  failures with a generic GraphQL execution error. Both mutation frontends keep
+  the existing field-null, HTTP and atomic rollback behavior; blocked deletes
+  do not become `ok: false` payloads. Clients relying on the old collector
+  message must migrate to the generic error and field path.
+
+- Redact the whole flat `GenericForeignKeyType` target to `null` in
+  permission-pruned schemas when the actual target model's read permission is
+  absent or its registered row hook excludes the row. The flat SDL, unpruned
+  schemas, and typed GFK unions are unchanged. Schema-variant and HTTP response
+  caches now include all grants only for schemas with the native flat fallback,
+  so target permission grants and revocations do not reuse stale responses.
+  Apps that relied on source-only permission for flat target metadata must
+  grant target read permission and review target row scopes.
+
+- Require a registered update-serving child write host to adopt an existing
+  nullable reverse-FK orphan by ID through a generated parent update. The
+  host's existing scope and permissions apply; without one the mutation
+  returns a structured error and rolls back. New children, already-owned
+  children, and the different-parent guard are unchanged. Applications that
+  intentionally adopted hostless or read-hidden orphans must register an
+  appropriate child update host and review their authorization policy.
+
+- Check generated create/update foreign-key and many-to-many ID links against
+  the request schema's destination `DjangoObjectType.get_queryset` when it is
+  overridden. Hidden and nonexistent target IDs now share the ordinary
+  structured invalid-pk error before persistence, including nested link
+  operations whose extra attributes are ignored. Actual child writes and
+  unscoped/default-hook paths retain their previous behavior and query
+  cost; child-write permissions, relation reads, and ORM filter joins are
+  unchanged. Apps that intentionally link read-hidden rows must migrate their
+  destination scope or link workflow. Destination scopes may use callable hooks,
+  duplicate-producing JOINs, ordered slices, or same-table proxies; membership
+  follows the actual returned queryset window. A queryset for a different
+  concrete table is rejected.
+
+- Reject bare-string and unknown `DjangoObjectType.Meta.only_fields` or
+  `exclude_fields` selectors at class definition, before registry mutation.
+  Previously a typo could leave a sensitive model field published. Valid model,
+  reverse-relation, private, and declared custom field names remain accepted;
+  declared custom fields still compile independently of model projection.
+
+- Roll back default-database writes when GraphQL execution returns errors
+  under `ATOMIC_MUTATIONS=True`, and mark Django `ATOMIC_REQUESTS` requests
+  for rollback on those errors or the established mutation error flag.
+  Rolled-back writes no longer advance the GraphQL response-cache version;
+  durable non-atomic writes still invalidate it. Structured native mutation
+  `ok: false` data remains distinct from a GraphQL execution error.
+
+- Limit each `@replace` result to 1,000,000 Unicode characters by default,
+  predicting Python's nonoverlapping replacement length before allocation.
+  Over-limit results now produce a GraphQL field error, including when no
+  replacement occurs; a result at the cap remains valid. Configure
+  `MAX_REPLACE_OUTPUT_LENGTH` with a positive integer or `None` to restore
+  uncapped legacy behavior. This is a per-result cap, not a query-wide quota,
+  and does not change other directives or the HTTP body limit.
+
+- Enforce the existing `MAX_REQUEST_BODY_SIZE` POST limit before the cache-active
+  view parses a GraphQL document or accesses parse, validation, or response
+  caches. Oversized requests keep their HTTP 413 response; the configured limit,
+  default, valid/cache-hit behavior, and multipart measurement remain unchanged.
+
+- Bound optimizer planning for valid repeated-fragment graphs to distinct
+  model, type, and relation-path contexts. Existing projections, prefetches,
+  annotation promotion, ordered plan/alias precedence, GraphQL results, and SQL
+  query counts remain unchanged.
+
+- Reject cyclic named-fragment graphs before cost/depth expansion. Direct
+  `analyze_cost()` now raises `GraphQLError` for a cyclic document rather than
+  returning a truncated cost, including cycles outside the selected operation;
+  validate first or catch the error. Acyclic costs and depth verdicts are unchanged.
+
+- Nested child payloads that carry an `id` no longer create a child when the
+  `id` does not resolve to a visible child. A hidden `id` (outside the child's
+  host or output scope) answered `<Model> with id N does not exist.` while a
+  nonexistent `id` silently created a new child, so a client could probe which
+  ids exist. Both now return the same error and write nothing, for reverse
+  `ForeignKey`, reverse `OneToOneField` and many-to-many nested payloads
+  (including models with a natural primary key). Payloads without an `id` still
+  create, and children the parent already owns still update. Clients that
+  relied on sending an unknown `id` together with child data to create a row
+  must omit the `id`.
+
+- Generated `update` and `delete` (`DjangoModelMutation` and `DjangoModelType`)
+  now also require the target row to be visible in the model's registered
+  output type: when that `DjangoObjectType` overrides `get_queryset`, a row it
+  hides on reads can no longer be edited or deleted by id (`postUpdate` and
+  `postDelete` returned `ok: true` for a hidden row). The host scope and the
+  output scope are intersected in one query, a hidden row answers exactly like
+  a nonexistent id. Nested child payloads that write fields of an existing
+  child (reverse FK, reverse OneToOne, M2M, or a forward relation carrying the
+  current target's id plus data) follow the same rule with the child's output
+  type; an id-only re-send of a forward current target is not re-scoped.
+  Types keeping the default hook add no query. Code that relied on writing rows its
+  public type hides must widen that type's `get_queryset` (or register a
+  broader type) for the schema that serves the write.
+
+### Fixes and changes
+
+- Fix: the raw `JSON` scalar no longer emits `NaN` or `Infinity` in its output.
+  A resolver or `JSONField` value that is or contains a non-finite float, at any
+  depth, is now a field error (`JSON cannot represent non-finite numbers`) with
+  the field set to `null`, so the HTTP, WebSocket and SSE payloads stay valid
+  JSON for strict parsers. Finite values and the `JSONString` scalar are
+  unchanged; this mirrors the existing input-side rejection.
 
 - Fix: a populated `DecimalRangeField` and a `DurationField` selected on a
   subscription event type no longer fail on every read. The declared types are
@@ -75,14 +399,6 @@
   `AssertionError`, now explicitly. No `assert` remains in the package, and the
   Bandit `B101` skip is removed so none can come back.
 
-- Fix: `Meta.only_fields` and `Meta.exclude_fields` are validated on the write
-  hosts too. `DjangoModelMutation`, `DjangoModelType`, `DjangoListObjectType`
-  and `DjangoInputObjectType` accepted a typo (`exclude_fields = ("nmae",)`) or
-  a bare string (`exclude_fields = "name"`) in silence, so the column the
-  developer meant to hide stayed writable. They now raise
-  `ImproperlyConfigured` at class creation with the same message
-  `DjangoObjectType` gives.
-
 - Fix: a `Decimal` value of `NaN`, `sNaN` or an infinity is rejected as invalid
   input. In a filter (`{amt: {exact: "Infinity"}}`) it reached the ORM and came
   back as Django's raw `“%(value)s” value must be a decimal number.` with the
@@ -109,21 +425,6 @@
   `format_graphql_error` removed the "Did you mean ...?" sentence with a regex
   whose cost grew with the square of the message length (2.5 s for 224 KB). It
   is now a linear scan with the same results.
-
-- Fix: the request body cap now runs before Django's CSRF check. A multipart
-  POST carrying a `csrftoken` cookie was parsed (and its files spooled to disk)
-  by that check before `MAX_REQUEST_BODY_SIZE` could answer 413. `dispatch` now
-  checks the cap first, so an oversized body is refused unparsed whether or not
-  the client holds the cookie. CSRF behavior is unchanged.
-
-- Fix: bound the total text that directives add to one response. Only a
-  per-field cap existed (`MAX_REPLACE_OUTPUT_LENGTH`), so many aliases and rows
-  each under the cap could still produce hundreds of megabytes. New setting
-  `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters per request,
-  `None` disables) charges every directive for the text it adds; once spent,
-  further directive uses become field errors. New opt-in setting
-  `COST_DIRECTIVE` (default `0`, so existing costs do not change) adds cost per
-  custom directive use so aliases x directives counts toward `MAX_QUERY_COST`.
 
 - Fix: cost analysis now reads the page-size argument by its wire name too.
   `COST_PAGINATION_ARGS` was compared literally, so the camelCase `pageSize`
@@ -223,74 +524,6 @@
   now classified by phase as validation errors: graphql-core's message is kept
   without the raw exception text (unless `DEBUG`), there is no ERROR log, and
   errors raised during execution keep their masking and log.
-
-- Apply the target output type's `get_queryset` to flat `GenericForeignKey`
-  targets in every schema. Without `PERMISSION_SCOPED_SCHEMA` the flat
-  `GenericForeignKeyType` still returned `appLabel`, `modelName` and `id` of a
-  target that its registered output type hid; it now resolves to `null`, like
-  the permission-pruned field already did, and the pruned and full schemas use
-  one rule. The check is batched in one `GenericPrefetch` for optimized and list
-  reads (query counts do not grow with the number of owners); a resolver
-  without it issues one membership query per target of a type that overrides
-  the hook. Targets of unregistered models, and types keeping the default
-  hook, are unchanged.
-
-- Apply a member type's `get_queryset` to typed `GenericForeignKey` union
-  targets. A `Meta.unions` union returned the target of any member in full even
-  when that member type's hook hid the row. A hidden target now resolves to
-  `null`, like a missing one. Optimized and list reads scope the targets in one
-  batched `GenericPrefetch` per request, stored under a dedicated attribute so a
-  cached unscoped target is never trusted, so query counts do not grow with the
-  number of owners; only the union's own member models are scoped, and a member
-  with a hook loads full rows instead of the narrowed `.only()` columns. A
-  resolver without that prefetch issues one membership query per target of a
-  type that overrides the hook. A sliced hook, or two scoped members sharing a
-  content type, resolves per row instead. Types keeping the default hook are
-  unchanged.
-
-- Require a child update host to adopt an existing reverse `OneToOneField`
-  orphan by ID. Naming the ID of a child whose nullable one-to-one key is null
-  in a parent update re-parented and rewrote that child with no host check and
-  no scope, because the adoption guard only covered reverse `ForeignKey`. It
-  now follows the same rule: a registered child `DjangoModelType` or
-  `DjangoModelMutation` serving update must exist, and its scope and
-  permissions apply. Children the parent already owns and new children are
-  unchanged.
-
-- Scope forward `OneToOneField` links like `ForeignKey` links. A generated
-  create or update could point a one-to-one field (scalar ID or nested id-only
-  payload) at a row hidden by the destination output type's `get_queryset`, and
-  a nonexistent ID answered differently, so it was also an existence oracle.
-  Hidden and nonexistent IDs now return the same `Invalid pk ... object does
-  not exist.` relation error. The ID membership check also runs one query per
-  relation instead of one per ID (200 tags cost 209 queries before), and the
-  nested M2M existence and already-linked checks are batched.
-
-- Make the depth and cost walkers iterative. `DepthLimitValidationRule` and the
-  cost estimator recursed once per fragment link and per nesting level, so an
-  acyclic chain of ~1000 fragments (~38 KB) raised `RecursionError` and answered
-  HTTP 500. They now use an explicit stack with the same verdicts, messages and
-  memoization. Documents that exceed graphql-core's own recursive parser or
-  validator (about 250 nested selection sets, several hundred chained
-  fragments) are answered as HTTP 400 `QUERY_TOO_DEEP` instead of 500, on the
-  HTTP view and the subscription transports; resolver errors are unaffected.
-  `DepthLimitValidationRule` also enforces a hard ceiling of 100 nested object
-  levels even when `MAX_QUERY_DEPTH` is unset or larger: Python's stack cannot
-  execute deeper documents (with data, requests fail with an internal error
-  from about 130 levels), and fragments hide depth from the parser. Deeper
-  documents get HTTP 400 `QUERY_TOO_DEEP` instead of an internal error.
-
-- Bound the queryset optimizer for fragments reached through distinct relation
-  paths. Memoizing by selection context only helped a fragment repeated in the
-  same context; a document such as `author { ...A }` / `coAuthors { results {
-  ...A } }` where each fragment reaches the next through four relations
-  describes 4**n distinct `select_related`/`prefetch_related` lookups, so a
-  ~1 KB anonymous request took more than 20 s of CPU on an empty database. The
-  new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
-  selection contexts each optimizer walker expands per request, including the
-  scoped to-one walker that ran a second exponential pass. Past the cap deeper
-  relations are not planned and load through the normal resolvers (results are
-  identical, scoped relations stay scoped); a DEBUG record names the walker.
 
 - Fix import-time failures of the one-public-output-type guard. A user
   `DjangoObjectType` declared after a mutation (or `DjangoModelType`, or list
@@ -508,21 +741,6 @@
   output. Deferred, missing, nonprojected, id-only relation, and lookup conditions remain
   conservative; create/update and manual notification behavior is unchanged.
 
-- Add independently opt-in SSE idle heartbeat comments (15-second setting)
-  and a shared Redis-backed concurrent stream cap for authenticated accounts
-  (five-stream setting). Both remain off by default. A full account receives
-  HTTP 429, unavailable admission HTTP 503, and a lost midstream lease a
-  generic SSE error and completion; anonymous, WebSocket, and authentication
-  behavior is unchanged. Redis lease expiry and failover are documented limits.
-
-- Add optional async `on_connect(scope, payload)` authentication to the
-  subscription WebSocket consumer. An authenticated callback result replaces
-  the socket user before ACK, schema resolution, and permission checks;
-  malformed payloads close with `4400`, denied credentials with `4403`, and a
-  stalled callback with `4408`. Without the hook, existing session identity
-  and ignored initialization payloads are unchanged. Projects provide their
-  own credential verifier; HTTP, SSE, and persistent sessions are unchanged.
-
 - Reject subscription WebSocket handshakes before acceptance when the client
   does not offer the exact `graphql-transport-ws` subprotocol. Accepted clients
   may offer it among alternatives. The server logs an actionable diagnostic;
@@ -538,78 +756,6 @@
   payloads, and custom resolver contracts are unchanged. Previously dropped
   equal events can now arrive; older truncated snapshots cannot recover lost
   precision.
-
-- Scope automatic declared and reverse M2M output lists with the destination
-  type's request-specific `get_queryset`. A visible parent retains its row,
-  while hidden linked targets leave `results` and the pre-pagination
-  `totalCount`; an empty or hidden-only relation returns `[]` and `0`.
-  Optimized reads use a scoped prefetch rather than trusting an unrelated
-  relation cache. Explicit resolvers, through-model access rules, custom
-  filters, and ordering are not changed.
-
-- Apply the destination type's request-specific `get_queryset` to automatic
-  forward and reverse OneToOne output reads. A visible parent keeps its row
-  while a hidden linked destination resolves to `null`; genuine absent
-  relations and the nullable output shape are unchanged. Scoped to-one reads
-  are batched for ordinary list traversal, including when queryset optimization
-  is disabled. Explicit resolvers and M2M output reads have separate rules.
-
-- Scope nested forward OneToOne destination-field filters to the destination
-  type's request-specific `get_queryset`. A visible profile cannot match a
-  hidden linked user's fields; real absent OneToOne NULL matches, unrelated
-  Boolean branches, and direct source-column ID lookups keep their existing
-  meanings. Reverse OneToOne filters already used the destination hook.
-  Automatic OneToOne output reads have the separate rule above; custom filters
-  and ordering are unchanged.
-
-- Scope forward and reverse many-to-many filters to each destination type's
-  request-specific `get_queryset`. A linked hidden target no longer satisfies
-  a nested field or target-ID predicate. One relation object retains one
-  visible target witness, separate `and` branches may use different targets,
-  and `not` complements the matching-parent set. Empty and absent-target
-  predicates keep their existing meanings. M2M output reads have the separate
-  rule above; through models, custom filter bodies and ordering are unchanged.
-
-- Scope public nested forward-FK filters to the destination type's
-  request-specific `get_queryset`. Hidden target rows no longer make a
-  visible source row match; each hop in a forward-FK chain is checked.
-  Real absent-FK NULL matches, unrelated Boolean branches, and direct source
-  FK-ID predicates retain their existing meanings. This does not scope
-  custom filter bodies or ordering. Forward OneToOne
-  and M2M filters have separate bounded rules.
-
-- Scope public reverse-FK filters to the child type's request-specific
-  `get_queryset`. One visible child must satisfy each grouped predicate;
-  separate `and` branches retain independent visible witnesses, and `not`
-  complements the matching-parent set. Direct reverse-child IDs are scoped,
-  unlike direct forward source FK IDs. Default and named output accessors now
-  resolve declarations using their ORM query names without reopening a
-  declared or pruned relation. M2M has the separate bounded rule above;
-  forward OneToOne has the separate bounded rule above.
-
-- Apply the destination type's `get_queryset` hook to automatic forward-FK
-  and reverse-FK output reads. Hidden nullable FK targets now resolve to
-  `null`; reverse-FK results, windows, and `totalCount` include only visible
-  rows. Optimized scoped FK reads stay batched, while disabling optimization
-  can add per-parent scope queries. Automatic OneToOne has the separate rule
-  above; M2M outputs have their own rule, while custom resolvers and other
-  joined filters remain outside this FK rule. Clients previously relying on expanded
-  hidden rows should review their destination hooks before upgrading.
-
-- Add a local, evidence-bounded disposition of the 100 original audit claims
-  in [the 4.0.0 audit report](docs/audit-4.0.0.md). It separates scoped fixes,
-  current contracts, recommendations, limited negative checks, and pending
-  policy decisions. This is not a release or a claim that all issues are closed.
-
-- Document current subscription, timezone, cache-cookie, partial-update and
-  pagination boundaries without changing runtime behavior. The guides now
-  distinguish automatic signals from manual broadcast, directive timezone
-  assumptions, browser cookie cache bypass, partial-input versus SQL saves,
-  and cursor versus offset/page NULL ordering.
-
-- Close test-owned temporary multipart uploads and ASGI request-body spools
-  after direct view dispatch, including exceptional exits. This changes test
-  fixture ownership only; HTTP behavior and upload limits are unchanged.
 
 - Match finite typed Decimal subscription `exact` filters by numeric value
   against the event-time JSON-safe snapshot. A filter value of `1.0` now
@@ -634,11 +780,6 @@
   own commit, disappear on rollback, and are not delayed by an unrelated
   default-database transaction. Missing-channel-layer warnings follow the
   same alias; this does not add cross-database atomicity.
-
-- Complete Google-style docstrings in tracked regression tests for metadata
-  errors, schema isolation, source properties, optimizer plans, and permission
-  caching. This is a test-documentation change only; library behavior is
-  unchanged. Local ignored profiling scripts are outside the clean checkout.
 
 - Warn when unsupported hand-authored input annotations such as numeric or mixed `Literal`,
   parameterized `dict` or `set`, and non-optional `Union` fall back to GraphQL
@@ -710,11 +851,6 @@
   nested relation joins now match direct member fragments, avoiding per-row
   queries without changing the schema or public API.
 
-- Fix order-dependent registry tests by restoring the cached default schema
-  pair after temporary test scopes, including nested and exceptional exits.
-  This changes only test isolation; library behavior and public APIs are
-  unchanged.
-
 - Keep output registrations independent of an unrelated thread's forked schema
   build. A projected node/list type no longer degrades a later list result to
   `[String]` under that overlap; same-thread fork isolation remains intact.
@@ -727,18 +863,6 @@
   projection across all field nodes merged under one root GraphQL response key.
   A relation selected only in a later root fragment no longer triggers
   per-row queries; schema and public settings remain unchanged.
-
-- Clarify the explicit-`None` pagination documentation: when no request size,
-  default, or maximum supplies a size, LimitOffset returns all rows, Page
-  returns `results: null`, and Cursor uses its final 20-row fallback. Ordinary
-  omitted constructor sizes still inherit the 100-row startup default; this
-  corrects an ambiguous API table without changing runtime or error behavior.
-
-- Correct the cache-key documentation: `fetch_cache_key(request)` hashes the
-  raw body even on a GET request that carries one, alongside framed GET
-  parameters. This is not a recommendation to send GET bodies; use query
-  parameters or POST JSON. Cache-key behavior and existing entries are
-  unchanged.
 
 - Preserve `null` and empty-list schema values for selected `__schema` and
   `__type` queries whose root fields are reached through inline or named
@@ -753,24 +877,12 @@
   the view is constructed. Other assertions and validation policies are
   unchanged.
 
-- Improve date-part test portability by removing exact runtime-version,
-  checkout-path, and working-directory assertions from the behavioral test.
-  A separate regression contract keeps those local proof checks external;
-  this does not change date-part filtering or expand the supported version
-  range.
-
 - Preserve completed results when a valid GraphQL batch reaches an operation-
   level HTTP 400 request error. Return an HTTP 400 array ending with that
   error, stop later operations, and leave prior successful mutations committed.
   Previously the error-only object hid earlier results. Malformed batch
   bodies and non-400 transport errors keep their existing envelopes;
   `ATOMIC_MUTATIONS` remains per operation.
-
-- Clarify that `ALLOW_INTROSPECTION=False` blocks `__schema` and `__type` only
-  when `DisableIntrospectionMiddleware` is installed in GraphQL `MIDDLEWARE`.
-  The default middleware chain is empty, so deployments relying on the setting
-  alone should explicitly install the middleware. This is a documentation
-  correction; the runtime defaults and introspection behavior are unchanged.
 
 - Reject unsupported async resolver, middleware, and executor results on the
   synchronous built-in HTTP views with a controlled HTTP 500 GraphQL JSON
@@ -795,29 +907,11 @@
   strings and empty containers are still removed recursively; the default
   `CLEAN_RESPONSE=False` and selected introspection responses are unchanged.
 
-- Replace unexpected resolver-exception details on built-in HTTP views when
-  `DEBUG=False` with safe `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`
-  diagnostics and an opaque `errorId` correlated with restricted server logs.
-  Clients must stop relying on raw exception text or custom extensions from
-  these failures. Deliberate `GraphQLError`, validation errors, existing
-  generated-mutation errors, `DEBUG=True`, and WebSocket/SSE formatting are
-  unchanged; custom `format_error` overrides remain application-owned.
-
 - Frame the default response-cache body and GET components before SHA-256
   hashing. Two different selected GET operations can no longer share a cache
   entry through ambiguous concatenation within one identity. Existing cached
   responses cold-miss and expire normally; the 64-hex digest shape and custom
   `fetch_cache_key(request)` override contract remain unchanged.
-
-- Reject a selected GraphQL operation before resolution when its real,
-  GraphQL-coerced request variables or defaults put it over `MAX_QUERY_COST`,
-  including document-validation cache hits. A variable page size that previously
-  passed the static fallback estimate may now return HTTP 400 / `QUERY_TOO_COMPLEX`.
-  Conservative static validation remains: a cheap variable cannot undo an
-  earlier fallback-based rejection. `MAX_PAGE_SIZE` is still optional, though
-  recommended for unbounded lists; the public cost model/API is unchanged.
-  A mutation refused before resolver execution does not invalidate a warmed
-  response cache; an earlier executed mutation in a non-atomic batch still does.
 
 - Make bounded model-backed LimitOffset and Page slices deterministic within ties by
   appending the primary key ascending after the existing ordering, unless the
@@ -895,15 +989,6 @@
   must omit the lookup. Other null lookups, custom filters, empty Boolean
   operands, and the generated input schema are unchanged.
 
-- Hide table, column, and constraint details from unclassified Django
-  `IntegrityError` failures in generated create/update/delete GraphQL fields,
-  including nested writes. Clients now receive the fixed top-level message
-  `A database constraint prevented this operation.` instead of raw database
-  text; the field remains `null`, with its GraphQL path and normal HTTP shape.
-  Nested and atomic sibling rollback remain intact. Mapped unique/FK field
-  errors stay structured, direct backend exceptions stay unchanged, and no
-  general constraint validation or upsert is added.
-
 - Validate supplied negative `PositiveIntegerField` and
   `PositiveSmallIntegerField` generated inputs before SQL, returning a
   structured field error without saving that mutation. Zero, positive values,
@@ -912,7 +997,6 @@
   earlier successful sibling root now commits even with `ATOMIC_MUTATIONS=True`;
   clients requiring all-or-nothing business operations must account for that
   migration. Unrelated execution errors still roll back.
-
 
 - Validate supplied nonempty Django `EmailField` values with Django's email
   syntax rules in generated create/update and nested inputs. Invalid values
@@ -923,12 +1007,6 @@
   values, not display labels. This does not enable `full_clean()`
   or change other Django field validators. Clients previously sending malformed
   nonempty addresses must correct them.
-
-- Replace Django collector details in generated delete `PROTECT`/`RESTRICT`
-  failures with a generic GraphQL execution error. Both mutation frontends keep
-  the existing field-null, HTTP and atomic rollback behavior; blocked deletes
-  do not become `ok: false` payloads. Clients relying on the old collector
-  message must migrate to the generic error and field path.
 
 - Honor an explicit `name=` on `DjangoInterfaceType` fields and matching
   declared implementor fields. Their SDL, introspection, and queries now use
@@ -967,36 +1045,6 @@
   transport error behavior are unchanged; coroutine-returning providers are
   not a new supported contract.
 
-- Redact the whole flat `GenericForeignKeyType` target to `null` in
-  permission-pruned schemas when the actual target model's read permission is
-  absent or its registered row hook excludes the row. The flat SDL, unpruned
-  schemas, and typed GFK unions are unchanged. Schema-variant and HTTP response
-  caches now include all grants only for schemas with the native flat fallback,
-  so target permission grants and revocations do not reuse stale responses.
-  Apps that relied on source-only permission for flat target metadata must
-  grant target read permission and review target row scopes.
-
-- Require a registered update-serving child write host to adopt an existing
-  nullable reverse-FK orphan by ID through a generated parent update. The
-  host's existing scope and permissions apply; without one the mutation
-  returns a structured error and rolls back. New children, already-owned
-  children, and the different-parent guard are unchanged. Applications that
-  intentionally adopted hostless or read-hidden orphans must register an
-  appropriate child update host and review their authorization policy.
-
-- Check generated create/update foreign-key and many-to-many ID links against
-  the request schema's destination `DjangoObjectType.get_queryset` when it is
-  overridden. Hidden and nonexistent target IDs now share the ordinary
-  structured invalid-pk error before persistence, including nested link
-  operations whose extra attributes are ignored. Actual child writes and
-  unscoped/default-hook paths retain their previous behavior and query
-  cost; child-write permissions, relation reads, and ORM filter joins are
-  unchanged. Apps that intentionally link read-hidden rows must migrate their
-  destination scope or link workflow. Destination scopes may use callable hooks,
-  duplicate-producing JOINs, ordered slices, or same-table proxies; membership
-  follows the actual returned queryset window. A queryset for a different
-  concrete table is rejected.
-
 - Reject ambiguous generated `choices` enum member names with
   `ImproperlyConfigured` instead of assigning positional suffixes that could
   change literal meaning when choices are reordered. Adjust affected choices
@@ -1012,38 +1060,12 @@
   Such a change needs a corresponding client/schema migration; no enum-name
   override was added.
 
-- Reject bare-string and unknown `DjangoObjectType.Meta.only_fields` or
-  `exclude_fields` selectors at class definition, before registry mutation.
-  Previously a typo could leave a sensitive model field published. Valid model,
-  reverse-relation, private, and declared custom field names remain accepted;
-  declared custom fields still compile independently of model projection.
-
 - Reject a second distinct public `DjangoObjectType` for the same exact Django
   model and `Registry` with `ImproperlyConfigured`, rather than silently
   replacing the type used by nested relations. Re-registering the same class
   remains idempotent; separate registries, input/mutation registrations, and
   non-registering internal forks are unchanged. Existing public/admin schema
   variants over one model must use separate registries.
-
-- Roll back default-database writes when GraphQL execution returns errors
-  under `ATOMIC_MUTATIONS=True`, and mark Django `ATOMIC_REQUESTS` requests
-  for rollback on those errors or the established mutation error flag.
-  Rolled-back writes no longer advance the GraphQL response-cache version;
-  durable non-atomic writes still invalidate it. Structured native mutation
-  `ok: false` data remains distinct from a GraphQL execution error.
-
-- Limit each `@replace` result to 1,000,000 Unicode characters by default,
-  predicting Python's nonoverlapping replacement length before allocation.
-  Over-limit results now produce a GraphQL field error, including when no
-  replacement occurs; a result at the cap remains valid. Configure
-  `MAX_REPLACE_OUTPUT_LENGTH` with a positive integer or `None` to restore
-  uncapped legacy behavior. This is a per-result cap, not a query-wide quota,
-  and does not change other directives or the HTTP body limit.
-
-- Enforce the existing `MAX_REQUEST_BODY_SIZE` POST limit before the cache-active
-  view parses a GraphQL document or accesses parse, validation, or response
-  caches. Oversized requests keep their HTTP 413 response; the configured limit,
-  default, valid/cache-hit behavior, and multipart measurement remain unchanged.
 
 - Change auto-derived `DecimalField` output from `Float` numbers to the
   existing `Decimal` scalar's exact JSON strings, including model objects
@@ -1054,6 +1076,7 @@
   explicitly declared `Float` field with a Decimal-to-float resolver retains
   the former numeric output at the cost of precision. This output scalar cannot
   recover digits already rounded by a database backend.
+
 - Map auto-derived `BigIntegerField` and `PositiveBigIntegerField` to the
   precise `BigInt` scalar in output, generated mutation inputs and automatic
   filters. Wire values are bounded decimal strings, including small values;
@@ -1063,32 +1086,9 @@
   string or integer values through `ID` input; numeric-choice fields keep their
   generated Enum input.
 
-- Make the converter integration test register its User relation target in a
-  test-local, allowlisted registry. The test now passes in isolation without
-  weakening its relation assertion or changing production relation behavior.
 - Previously restored populated auto-derived `DecimalField` output under
   graphql-core 3.3 through the existing `Float` field; the new default above
   supersedes that interim Float output without changing Decimal input parsing.
-- Bound optimizer planning for valid repeated-fragment graphs to distinct
-  model, type, and relation-path contexts. Existing projections, prefetches,
-  annotation promotion, ordered plan/alias precedence, GraphQL results, and SQL
-  query counts remain unchanged.
-- Reject cyclic named-fragment graphs before cost/depth expansion. Direct
-  `analyze_cost()` now raises `GraphQLError` for a cyclic document rather than
-  returning a truncated cost, including cycles outside the selected operation;
-  validate first or catch the error. Acyclic costs and depth verdicts are unchanged.
-- Validate only the eight named canonical benchmark results and copy only those
-  files into provenance-test fixtures. Ignored local diagnostic JSON no longer
-  causes unrelated validation failures; missing or invalid canonical results
-  still fail, with no timing or published-artifact changes.
-- Make the non-paginator resolver fixture own its partial on the field instance,
-  preserving bound-method identity and observing the paginator type-guard path
-  across Python versions without changing production pagination behavior.
-- Close SQLite connections deterministically in named comparison preflight and
-  seed-identity readers, including errors. Disposable benchmark-test writers
-  commit or roll back before close; historical results and timings are unchanged.
-
-### Behavior changes
 
 - Generated create and update (`DjangoModelMutation`, `DjangoModelType`, and
   nested child writes) now run Django's model field validation on every field
@@ -1104,30 +1104,91 @@
   `validate_unique()` and `validate_constraints()` are not run. Clients that
   relied on invalid values being stored must fix the data or relax the field's
   validators.
-- Nested child payloads that carry an `id` no longer create a child when the
-  `id` does not resolve to a visible child. A hidden `id` (outside the child's
-  host or output scope) answered `<Model> with id N does not exist.` while a
-  nonexistent `id` silently created a new child, so a client could probe which
-  ids exist. Both now return the same error and write nothing, for reverse
-  `ForeignKey`, reverse `OneToOneField` and many-to-many nested payloads
-  (including models with a natural primary key). Payloads without an `id` still
-  create, and children the parent already owns still update. Clients that
-  relied on sending an unknown `id` together with child data to create a row
-  must omit the `id`.
 
-- Generated `update` and `delete` (`DjangoModelMutation` and `DjangoModelType`)
-  now also require the target row to be visible in the model's registered
-  output type: when that `DjangoObjectType` overrides `get_queryset`, a row it
-  hides on reads can no longer be edited or deleted by id (`postUpdate` and
-  `postDelete` returned `ok: true` for a hidden row). The host scope and the
-  output scope are intersected in one query, a hidden row answers exactly like
-  a nonexistent id. Nested child payloads that write fields of an existing
-  child (reverse FK, reverse OneToOne, M2M, or a forward relation carrying the
-  current target's id plus data) follow the same rule with the child's output
-  type; an id-only re-send of a forward current target is not re-scoped.
-  Types keeping the default hook add no query. Code that relied on writing rows its
-  public type hides must widen that type's `get_queryset` (or register a
-  broader type) for the schema that serves the write.
+### Added
+
+- Add independently opt-in SSE idle heartbeat comments (15-second setting)
+  and a shared Redis-backed concurrent stream cap for authenticated accounts
+  (five-stream setting). Both remain off by default. A full account receives
+  HTTP 429, unavailable admission HTTP 503, and a lost midstream lease a
+  generic SSE error and completion; anonymous, WebSocket, and authentication
+  behavior is unchanged. Redis lease expiry and failover are documented limits.
+
+- Add optional async `on_connect(scope, payload)` authentication to the
+  subscription WebSocket consumer. An authenticated callback result replaces
+  the socket user before ACK, schema resolution, and permission checks;
+  malformed payloads close with `4400`, denied credentials with `4403`, and a
+  stalled callback with `4408`. Without the hook, existing session identity
+  and ignored initialization payloads are unchanged. Projects provide their
+  own credential verifier; HTTP, SSE, and persistent sessions are unchanged.
+
+### Docs and tests
+
+- Add a local, evidence-bounded disposition of the 100 original audit claims
+  in [the 4.0.0 audit report](docs/audit-4.0.0.md). It separates scoped fixes,
+  current contracts, recommendations, limited negative checks, and pending
+  policy decisions. This is not a release or a claim that all issues are closed.
+
+- Document current subscription, timezone, cache-cookie, partial-update and
+  pagination boundaries without changing runtime behavior. The guides now
+  distinguish automatic signals from manual broadcast, directive timezone
+  assumptions, browser cookie cache bypass, partial-input versus SQL saves,
+  and cursor versus offset/page NULL ordering.
+
+- Close test-owned temporary multipart uploads and ASGI request-body spools
+  after direct view dispatch, including exceptional exits. This changes test
+  fixture ownership only; HTTP behavior and upload limits are unchanged.
+
+- Complete Google-style docstrings in tracked regression tests for metadata
+  errors, schema isolation, source properties, optimizer plans, and permission
+  caching. This is a test-documentation change only; library behavior is
+  unchanged. Local ignored profiling scripts are outside the clean checkout.
+
+- Fix order-dependent registry tests by restoring the cached default schema
+  pair after temporary test scopes, including nested and exceptional exits.
+  This changes only test isolation; library behavior and public APIs are
+  unchanged.
+
+- Clarify the explicit-`None` pagination documentation: when no request size,
+  default, or maximum supplies a size, LimitOffset returns all rows, Page
+  returns `results: null`, and Cursor uses its final 20-row fallback. Ordinary
+  omitted constructor sizes still inherit the 100-row startup default; this
+  corrects an ambiguous API table without changing runtime or error behavior.
+
+- Correct the cache-key documentation: `fetch_cache_key(request)` hashes the
+  raw body even on a GET request that carries one, alongside framed GET
+  parameters. This is not a recommendation to send GET bodies; use query
+  parameters or POST JSON. Cache-key behavior and existing entries are
+  unchanged.
+
+- Improve date-part test portability by removing exact runtime-version,
+  checkout-path, and working-directory assertions from the behavioral test.
+  A separate regression contract keeps those local proof checks external;
+  this does not change date-part filtering or expand the supported version
+  range.
+
+- Clarify that `ALLOW_INTROSPECTION=False` blocks `__schema` and `__type` only
+  when `DisableIntrospectionMiddleware` is installed in GraphQL `MIDDLEWARE`.
+  The default middleware chain is empty, so deployments relying on the setting
+  alone should explicitly install the middleware. This is a documentation
+  correction; the runtime defaults and introspection behavior are unchanged.
+
+- Make the converter integration test register its User relation target in a
+  test-local, allowlisted registry. The test now passes in isolation without
+  weakening its relation assertion or changing production relation behavior.
+
+- Validate only the eight named canonical benchmark results and copy only those
+  files into provenance-test fixtures. Ignored local diagnostic JSON no longer
+  causes unrelated validation failures; missing or invalid canonical results
+  still fail, with no timing or published-artifact changes.
+
+- Make the non-paginator resolver fixture own its partial on the field instance,
+  preserving bound-method identity and observing the paginator type-guard path
+  across Python versions without changing production pagination behavior.
+
+- Close SQLite connections deterministically in named comparison preflight and
+  seed-identity readers, including errors. Disposable benchmark-test writers
+  commit or roll back before close; historical results and timings are unchanged.
 
 ## 4.0.0 — 2026-10-05
 

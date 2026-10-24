@@ -337,7 +337,7 @@ def test_report_is_navigable_and_release_notes_do_not_claim_release() -> None:
     assert "audit-4.0.0.md" in (ROOT / "zensical.yml").read_text(encoding="utf-8")
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
         text = (ROOT / relative).read_text(encoding="utf-8")
-        unreleased = text.split("## Unreleased\n", 1)[1].split("\n## ", 1)[0]
+        unreleased = text.split("## 4.1.0 — Unreleased\n", 1)[1].split("\n## ", 1)[0]
         assert "100 original audit claims" in unreleased
         assert "audit-4.0.0.md" in unreleased
         assert "not a release" in unreleased
