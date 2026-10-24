@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING
 from graphql import ExecutionResult, GraphQLError, validate
 from graphql import execution as graphql_execution
 
+from ...validation import run_validation
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterable, Callable
     from typing import Any
@@ -67,7 +69,7 @@ def _validate_subscription_document(
     options: dict[str, Any] = {"max_errors": max_errors}
     if _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS:
         options["hide_suggestions"] = hide_suggestions
-    return validate(schema, document, rules, **options)
+    return run_validation(validate, schema, document, rules, **options)
 
 
 async def _start_source_event_stream(

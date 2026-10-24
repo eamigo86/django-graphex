@@ -63,7 +63,7 @@ from .permissions import IsAuthenticated
 from .security import format_graphql_error, introspection_disabled
 from .settings import graphql_api_settings
 from .utils import clean_dict
-from .validation import DepthLimitValidationRule
+from .validation import DepthLimitValidationRule, run_validation
 
 _error_logger = logging.getLogger("django_graphex.internal_errors")
 _UNSUPPORTED_ASYNC_MESSAGE = (
@@ -608,6 +608,31 @@ def _rules_key(rules: Any) -> Any:
     )
 
 
+def _parse_or_depth_error(query: str) -> Any:
+    """Parse a query, answering parser stack exhaustion as a client error.
+
+    graphql-core's parser recurses once per selection-set level, so roughly
+    250 levels of inline nesting exhaust the default Python stack. The client
+    sent that document, so it is a depth error rather than an internal one.
+
+    Args:
+        query: The raw GraphQL query string.
+
+    Returns:
+        The parsed "DocumentNode".
+
+    Raises:
+        GraphQLError: With code "QUERY_TOO_DEEP" when the parser ran out of stack.
+    """
+    try:
+        return parse(query)
+    except RecursionError as exc:
+        raise GraphQLError(
+            "Query is nested too deeply to be parsed.",
+            extensions={"code": "QUERY_TOO_DEEP"},
+        ) from exc
+
+
 def cached_parse(query: str) -> Any:
     """Return the parsed "DocumentNode" for the query, memoized in a bounded LRU.
 
@@ -626,7 +651,7 @@ def cached_parse(query: str) -> Any:
     """
     maxsize = _document_cache_maxsize()
     if maxsize <= 0:
-        return parse(query)
+        return _parse_or_depth_error(query)
 
     with _PARSE_CACHE_LOCK:
         cached = _PARSE_CACHE.get(query)
@@ -636,7 +661,7 @@ def cached_parse(query: str) -> Any:
 
     # Parse OUTSIDE the lock (tokenizing can be relatively expensive); a benign
     # duplicate parse under concurrency just overwrites with an equivalent AST.
-    document = parse(query)
+    document = _parse_or_depth_error(query)
 
     with _PARSE_CACHE_LOCK:
         _PARSE_CACHE[query] = document
@@ -688,7 +713,9 @@ def cached_validate(
     maxsize = _document_cache_maxsize()
     if maxsize <= 0:
         return tuple(
-            validate(schema, document, rules, max_errors, **validation_options)
+            run_validation(
+                validate, schema, document, rules, max_errors, **validation_options
+            )
         )
 
     # Rules identity: a CONTENT token (the dotted name of every rule, in order),
@@ -722,7 +749,11 @@ def cached_validate(
                 return cached
 
     # Validate OUTSIDE the lock; store the result as a tuple.
-    errors = tuple(validate(schema, document, rules, max_errors, **validation_options))
+    errors = tuple(
+        run_validation(
+            validate, schema, document, rules, max_errors, **validation_options
+        )
+    )
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)

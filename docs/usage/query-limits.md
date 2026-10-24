@@ -299,6 +299,18 @@ costs `1 + 1×(51 + 0) = 52`.
 - **`variable_values`** — bound variables, so a variabled page size (`limit: $first`)
   is costed exactly instead of falling back to the `MAX_PAGE_SIZE` cap.
 
+### Very deep documents
+
+Both rules walk the document with an explicit stack, so a long chain of
+fragments or deep inline nesting cannot exhaust the Python stack inside them.
+graphql-core itself is still recursive: its parser fails at roughly 250 nested
+selection sets and its `NoFragmentCycles` rule at several hundred chained
+fragments (with the default recursion limit). The view answers those documents
+with an HTTP 400 and `extensions.code` `QUERY_TOO_DEEP` ("Query is nested too
+deeply to be parsed/validated") instead of an HTTP 500, whether or not
+`MAX_QUERY_DEPTH` is set. Only parsing and validation are guarded this way;
+`RecursionError` raised by a resolver is still a server error.
+
 ### Cyclic fragments and direct callers
 
 The cost and depth rules now inspect the named-fragment reference graph before
@@ -357,7 +369,7 @@ machine-readable `extensions.code`:
 
 | Code | Raised by |
 |------|-----------|
-| `QUERY_TOO_DEEP` | `DepthLimitValidationRule` |
+| `QUERY_TOO_DEEP` | `DepthLimitValidationRule`, and documents too deep for graphql-core's parser/validator |
 | `QUERY_TOO_COMPLEX` | `CostLimitValidationRule` |
 
 ```json

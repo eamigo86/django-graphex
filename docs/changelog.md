@@ -14,6 +14,15 @@ All notable changes to this library are documented here. The format is based on
 
 ## Unreleased
 
+- Make the depth and cost walkers iterative. `DepthLimitValidationRule` and the
+  cost estimator recursed once per fragment link and per nesting level, so an
+  acyclic chain of ~1000 fragments (~38 KB) raised `RecursionError` and answered
+  HTTP 500. They now use an explicit stack with the same verdicts, messages and
+  memoization. Documents that exceed graphql-core's own recursive parser or
+  validator (about 250 nested selection sets, several hundred chained
+  fragments) are answered as HTTP 400 `QUERY_TOO_DEEP` instead of 500, on the
+  HTTP view and the subscription transports; resolver errors are unaffected.
+
 - Bound the queryset optimizer for fragments reached through distinct relation
   paths. Memoizing by selection context only helped a fragment repeated in the
   same context; a document such as `author { ...A }` / `coAuthors { results {
