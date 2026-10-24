@@ -63,7 +63,15 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T33 | D2, D3, D5, D6 | Anchors fixed (docs build 0 warnings); M-S2 corrected; mutations guide present tense; per-database ATOMIC_MUTATIONS documented; Graphene wording removed; remediation reports EN/ES aligned (D2 done in T35) | D | [x] | `a509434`, `0864fe7`, `c4e411f`, `5d326d2`, `0215376`, `0f7e43c`; full 7179 passed |
 | T34 | G1-G7 | README/docs page corrected; `PostSubscription.subscription_scope` (anon: published only); update/delete behind `PrivateMutation`; password validators + generic duplicate error; working test commands; realistic cost suggestion pinned by test; G7 fixes (media in DEBUG, lock tracked, generic upload errors, BigInt/Decimal demo) | D | [x] | `746671d`..`82a0810` (11 commits); Playground 82/82 with and without migrations; parent re-ran on a copy: 82 passed |
 | T35 | D1, D2 | Version 4.1.0 (pyproject, both uv.lock, docs); CHANGELOG `## 4.1.0 — Unreleased` with compatibility policy + 27 behavior changes; UPGRADE-4.0.md restored to v4.0.0 content; new UPGRADE-4.1.md; release readiness 4.1.0 test | D | [x] | `f11d7e4`, `4b252a0`, `0589d05`; full 7166 passed, cov 97.61 %; docs build OK (3 pre-existing anchor warnings -> T33) |
-| T36 | Audit | Fresh independent audit of HEAD; fix confirmed new findings | D | [ ] | |
+| T36 | Audit | Fresh independent audit of `ef921ac` by 7 read-only auditors (schema, query, mutation, http, subs, docs, playground); findings in scratchpad `audit2-findings.md` | D | [x] | All prior findings verified FIXED except the residuals listed in T38-T45; 0 Critical, ~11 Medium, many Low |
+| T38 | Q-B1, Q-B2 | Optimizer budget: consistent truncation (never wrong data) and one budget per request | D | [ ] | |
+| T39 | M-B1..M-B7 | GFK hook scope to present content types; chunked membership; M2M host-hidden oracle; id-only resend no save; huge forward id | D | [ ] | |
+| T40 | Sc-B1..Sc-B8 | Factory-made type/input re-import key; `@round` tiny values; huge-exponent directives; directive budget per request | D | [ ] | |
+| T41 | H-B1..H-B9, S-B4, Q-B3, Q-B4 | Validation cache vs RecursionError; AST memory bound; JSON tuples; error classification; non-string query; setting types; transports parse overflow | D | [ ] | |
+| T42 | S-B1..S-B5, G2 note | Lease initial retry delay; Redis health check; fake-clock tests; float vs Decimal snapshot; subscription_scope intersects filters | D | [ ] | |
+| T43 | Q-B5, Q-B6 | `or` + sibling relation witnesses; cursor parity | D | [ ] | |
+| T44 | Pg-B1..Pg-B8 | Playground: media XSS, username validation, order-dependent tests, README values, tmp MEDIA_ROOT, wscat Origin | D | [ ] | |
+| T45 | Docs B1-B5 and per-area doc items | CHANGELOG behavior list, UPGRADE-4.1 gaps, links, Graphene wording, a docs consistency test | D | [ ] | |
 | T37 | Benchmark, D4, D7 | Rerun core33 benchmark; update why.md, README, benchmarks README | D | [ ] | |
 
 ## Acceptance criteria
@@ -130,6 +138,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T34 done. Existing Playground checkouts need `make reset` (new `Post.view_count`; migrations are gitignored there).
 
+- T36 audit done (2026-10-24). Strict docstring gate fixed in `1bf6771`.
+
 ## Next step
 
-T36: fresh independent audit (7 read-only auditors), then fixes, then T37 benchmark on a quiet machine.
+T38-T45 fixes, then T37 benchmark on a quiet machine, then final report.
