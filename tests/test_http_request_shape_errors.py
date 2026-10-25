@@ -9,7 +9,16 @@ from typing import Any
 
 import pytest
 from django.test import RequestFactory, override_settings
-from graphql import GraphQLField, GraphQLObjectType, GraphQLSchema, GraphQLString
+from graphql import (
+    GraphQLArgument,
+    GraphQLField,
+    GraphQLInputField,
+    GraphQLInputObjectType,
+    GraphQLList,
+    GraphQLObjectType,
+    GraphQLSchema,
+    GraphQLString,
+)
 
 from django_graphex.views import BaseGraphQLView, GraphQLView
 
@@ -190,3 +199,110 @@ def test_client_errors_and_field_errors_keep_their_status(
     assert view(_request("post", {"query": "{ a "})).status_code == 400
     assert view(_request("post", {"query": "{ nope }"})).status_code == 400
     assert view(_request("post", {"query": "{ a }"})).status_code == 200
+
+
+def _recursive_schema() -> Any:
+    """Build a schema with a self-referencing input object and a failing field.
+
+    Returns:
+        A schema-holder for the view.
+    """
+    node: Any = GraphQLInputObjectType(
+        "Node",
+        lambda: {
+            "all": GraphQLInputField(GraphQLList(node)),
+            "leaf": GraphQLInputField(GraphQLString),
+        },
+    )
+
+    def overflow(root: Any, info: Any, **kwargs: Any) -> str:
+        """Exhaust the stack from inside a resolver.
+
+        Args:
+            root: The root value.
+            info: The resolve info.
+            **kwargs: The field arguments.
+
+        Raises:
+            RecursionError: Always.
+        """
+        raise RecursionError
+
+    query = GraphQLObjectType(
+        "Query",
+        {
+            "q": GraphQLField(
+                GraphQLString,
+                args={"n": GraphQLArgument(node)},
+                resolve=lambda root, info, **kw: "ok",
+            ),
+            "boom": GraphQLField(GraphQLString, resolve=overflow),
+        },
+    )
+    return SimpleNamespace(graphql_schema=GraphQLSchema(query=query))
+
+
+def _nested_variables(depth: int) -> dict[str, Any]:
+    """Build variables nested ``depth`` levels deep.
+
+    Args:
+        depth: How many nested "all" lists to build.
+
+    Returns:
+        The variables mapping.
+    """
+    value: dict[str, Any] = {"leaf": "x"}
+    for _ in range(depth):
+        value = {"all": [value]}
+    return {"v": value}
+
+
+@pytest.mark.parametrize("view_class", _VIEWS)
+@pytest.mark.parametrize("depth", (900, 3000))
+@override_settings(DEBUG=False)
+def test_variables_too_deep_to_coerce_are_a_client_error(
+    view_class: type[BaseGraphQLView],
+    depth: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Variables that exhaust the stack answer 400 QUERY_TOO_DEEP, unlogged.
+
+    Args:
+        view_class: The view under test.
+        depth: How deeply the variables are nested.
+        caplog: The log capture fixture.
+    """
+    caplog.set_level(logging.DEBUG)
+    body = {
+        "query": "query($v: Node) { q(n: $v) }",
+        "variables": _nested_variables(depth),
+    }
+    response = view_class.as_view(schema=_recursive_schema())(_request("post", body))
+
+    assert response.status_code == 400
+    (error,) = json.loads(response.content)["errors"]
+    assert error["extensions"]["code"] == "QUERY_TOO_DEEP"
+    assert "errorId" not in error["extensions"]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.parametrize("view_class", _VIEWS)
+@override_settings(DEBUG=False)
+def test_recursion_error_in_a_resolver_stays_internal(
+    view_class: type[BaseGraphQLView], caplog: pytest.LogCaptureFixture
+) -> None:
+    """A RecursionError raised by a resolver is still masked, logged and HTTP 200.
+
+    Args:
+        view_class: The view under test.
+        caplog: The log capture fixture.
+    """
+    caplog.set_level(logging.DEBUG, logger="django_graphex.internal_errors")
+    response = view_class.as_view(schema=_recursive_schema())(
+        _request("post", {"query": "{ boom }"})
+    )
+
+    assert response.status_code == 200
+    (error,) = json.loads(response.content)["errors"]
+    assert error["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
+    assert [r for r in caplog.records if r.levelno == logging.ERROR]

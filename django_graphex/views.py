@@ -1963,6 +1963,21 @@ class BaseGraphQLView(View):
             )
         except _UnsupportedAsyncExecution:
             raise
+        except RecursionError:
+            # A RecursionError a resolver raises is wrapped by graphql-core with
+            # a field path and never reaches here. A bare one escaped before any
+            # field ran, which is variable coercion of a deeply nested value: the
+            # client's input, answered like an over-deep document.
+            return ExecutionResult(
+                errors=_mark_client_errors(
+                    [
+                        GraphQLError(
+                            "Variables are nested too deeply to be coerced.",
+                            extensions={"code": "QUERY_TOO_DEEP"},
+                        )
+                    ]
+                )
+            )
         except Exception as e:
             return ExecutionResult(errors=[e])
 

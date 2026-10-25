@@ -870,6 +870,8 @@ execute deeper documents. Deeper documents, and documents that exceed
 graphql-core's own parser or validator limits (about 250 nested selection sets,
 several hundred chained fragments), get HTTP 400 `QUERY_TOO_DEEP` instead of an
 internal error or HTTP 500, on the HTTP view and the subscription transports.
+Variables nested so deeply that coercing them exhausts the stack get the same
+400 `QUERY_TOO_DEEP` on the HTTP view.
 Documents within the ceiling are unaffected.
 
 ### Batches answer every item

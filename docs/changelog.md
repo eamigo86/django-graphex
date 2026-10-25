@@ -361,6 +361,13 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Answer variables too deep to coerce with HTTP 400 `QUERY_TOO_DEEP`. Roughly
+  600 nested `and`/`or` levels in variables raised a `RecursionError` during
+  coercion, answered as 400 `INTERNAL_SERVER_ERROR` with an ERROR traceback in
+  the log. A bare `RecursionError` that escapes before any field ran is now a
+  client error like an over-deep document; one raised by a resolver keeps its
+  path, mask and log.
+
 - Answer over-deep subscription documents with `QUERY_TOO_DEEP` on both
   transports. They parsed with plain `parse`, so SSE answered the plain-text 400
   `GraphQL syntax error: maximum recursion depth exceeded` and WebSocket sent
