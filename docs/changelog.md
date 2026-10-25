@@ -358,6 +358,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Validate `COST_DIRECTIVE`. A negative, fractional, boolean or non-number
+  value was silently truncated or clamped; it now raises
+  `ImproperlyConfigured` when the setting is read, like the other cost limits.
+  A directive on a scalar list field is costed once because it runs once on
+  the whole list; this is now documented and pinned by a test.
+
 - Fix the scope of the directive output budget. `MAX_DIRECTIVE_OUTPUT_TOTAL`
   was counted per execution, so a 10-item batch got ten times the budget; it is
   now per HTTP request (the GraphQL view binds one counter to the request, and

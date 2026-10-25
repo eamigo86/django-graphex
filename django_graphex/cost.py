@@ -181,6 +181,9 @@ class _CostAnalyzer:
                     field_type = get_named_type(field_def.type)
                     has_children = selection.selection_set is not None
                     own = self._own_cost(field_type, has_children)
+                    # A directive runs once on the field's whole value, so one
+                    # on a scalar list is costed once; only the enclosing object
+                    # lists multiply it (through the parent's multiplier).
                     own += self._directive_cost(selection)
                     if not has_children:
                         frame[2] += own

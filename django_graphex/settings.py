@@ -378,6 +378,13 @@ class _BaseAPISettings:
             raise ImproperlyConfigured(
                 f"{self.setting_name}['{attr}'] must be a positive integer or None."
             )
+        if attr == "COST_DIRECTIVE" and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise ImproperlyConfigured(
+                f"{self.setting_name}['COST_DIRECTIVE'] = {value!r} must be a "
+                "non-negative integer (0 makes directives free)."
+            )
         if attr in SETTING_CHOICES:
             _validate_choice(value, attr, self.setting_name)
         if attr.startswith("SSE_"):

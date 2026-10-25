@@ -318,7 +318,7 @@ DJANGO_GRAPHEX = {
 | `EXPOSE_QUERY_COST` | `False` | Add `extensions.cost` (`requestedCost` / `maxCost`) to responses. Combine with `MAX_QUERY_COST=None` for a non-blocking observation mode. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Cost multiplier for a list field whose page size is unknown (no literal/variable value and no `MAX_PAGE_SIZE` cap). |
 | `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names treated as a real list field's page size when costing a field, compared in snake_case form (`page_size` matches `pageSize`). |
-| `COST_DIRECTIVE` | `0` | Cost added for every custom directive use (`@replace`, `@center`, ...) on a field, multiplied by the enclosing lists like any other field cost, so aliases x directives is visible to `MAX_QUERY_COST`. `0` keeps directives free (existing totals unchanged). `@skip` and `@include` are never charged. A value such as `1` or `2` is a reasonable starting point; try it with `EXPOSE_QUERY_COST` first. |
+| `COST_DIRECTIVE` | `0` | Cost added for every custom directive use (`@replace`, `@center`, ...) on a field, multiplied by the enclosing lists like any other field cost, so aliases x directives is visible to `MAX_QUERY_COST`. `0` keeps directives free (existing totals unchanged); it must be a non-negative integer, anything else raises `ImproperlyConfigured` when the setting is read. A directive runs once on the whole value of its field, so one on a scalar list field is costed once; only the enclosing object lists multiply it. `@skip` and `@include` are never charged. A value such as `1` or `2` is a reasonable starting point; try it with `EXPOSE_QUERY_COST` first. |
 
 See [Query Optimization](query-optimization.md) and [Security](security.md) for the depth/cost guides.
 
