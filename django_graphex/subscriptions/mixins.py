@@ -61,27 +61,37 @@ def _matches_datetime_snapshot(snapshot: Any, expected: datetime) -> bool:
     return captured == expected
 
 
-def _matches_integer_snapshot(snapshot: Any, expected: Any) -> bool:
-    """Compare an integer snapshot to a finite Float or Decimal filter value.
+def _matches_numeric_snapshot(snapshot: Any, expected: Any) -> bool:
+    """Compare a numeric snapshot to a numeric filter value by value.
 
-    A FloatField or DecimalField can hold a plain int on an unrefreshed
-    instance, so the serialized snapshot is an int while the typed filter is a
-    float or Decimal. Python compares int with float and Decimal exactly.
+    Mirrors database equality: an int or Decimal compared with a float is first
+    rounded to the nearest float (what a float column stores), so
+    "2**53 + 1" equals "float(2**53)" and "Decimal('0.1')" equals "0.1". Int
+    and Decimal compare exactly. Booleans, non-finite values and integers
+    beyond the float range never match.
 
     Args:
         snapshot: The value captured when the notification was produced.
         expected: The parsed filter value.
 
     Returns:
-        Whether a non-bool int snapshot equals a finite float or Decimal.
+        Whether both are finite int, float or Decimal values of equal value.
     """
-    if type(snapshot) is not int:
+    kinds = (type(snapshot), type(expected))
+    if not all(kind in (int, float, Decimal) for kind in kinds):
         return False
-    if type(expected) is float:
-        return math.isfinite(expected) and snapshot == expected
-    return (
-        isinstance(expected, Decimal) and expected.is_finite() and snapshot == expected
-    )
+    for kind, value in zip(kinds, (snapshot, expected), strict=True):
+        # An int is always finite (and math.isfinite overflows on huge ones).
+        if kind is float and not math.isfinite(value):
+            return False
+        if kind is Decimal and not value.is_finite():
+            return False
+    if float in kinds:
+        try:
+            return float(snapshot) == float(expected)
+        except OverflowError:
+            return False
+    return bool(snapshot == expected)
 
 
 class _LosslessDateTimeJSONEncoder(DjangoJSONEncoder):
@@ -129,10 +139,10 @@ def split_filters(
     Plain-equality keys (no "__" lookup) whose field is present in the serialized
     "data" are compared in memory. Existing equal string forms still match
     (including 7 and "7"); a typed Decimal filter also matches a finite,
-    numerically equal JSON-safe string snapshot. Two actual finite floats also
-    use exact numeric equality, including opposite signed zeros. An int snapshot
-    (a Float or Decimal field holding a plain int) matches an equal finite float
-    or Decimal. A mismatch short-circuits the notification without consulting the current database row.
+    numerically equal JSON-safe string snapshot. Finite int, float and Decimal
+    values (never bool) match by value, including opposite signed zeros; a float
+    on either side rounds the other operand to the nearest float first, like a
+    float column. A mismatch short-circuits the notification without consulting the current database row.
 
     Args:
         data: The serialized instance mapping carried by the notification.
@@ -156,14 +166,7 @@ def split_filters(
                     isinstance(value, datetime)
                     and _matches_datetime_snapshot(data[key], value)
                 )
-                and not _matches_integer_snapshot(data[key], value)
-                and not (
-                    type(data[key]) is float
-                    and type(value) is float
-                    and math.isfinite(data[key])
-                    and math.isfinite(value)
-                    and data[key] == value
-                )
+                and not _matches_numeric_snapshot(data[key], value)
             ):
                 return None
         else:

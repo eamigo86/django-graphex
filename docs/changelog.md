@@ -364,6 +364,13 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Compare numeric subscription snapshots with typed exact filters by value. A
+  float snapshot on a DecimalField no longer dropped against `Decimal("1.50")`
+  while an integer matched, and `2**53 + 1` now matches `float(2**53)`. When a
+  float is on either side the other operand is rounded to the nearest float
+  first, like a float column; bool, NaN, Infinity and integers beyond the
+  float range still never match.
+
 - Honor the retry delay of the first in-stream SSE lease renewal. A failed
   first renewal waited the full 15 seconds instead of the documented five
   before the next attempt.

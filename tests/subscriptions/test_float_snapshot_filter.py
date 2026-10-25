@@ -230,7 +230,8 @@ def test_float_pair_only_changes_finite_exact_equality() -> None:
 def test_integer_snapshot_matches_float_and_decimal_filters_exactly() -> None:
     """Match an int snapshot to equal Float/Decimal filters.
 
-    Unequal values, non-finite filters and booleans never match.
+    An int is rounded to the nearest float like a float column does; unequal
+    values, non-finite filters and booleans never match.
     """
     cases: list[tuple[Any, Any, bool]] = [
         (1, 1.0, True),
@@ -238,7 +239,9 @@ def test_integer_snapshot_matches_float_and_decimal_filters_exactly() -> None:
         (1, float("inf"), False),
         (1, float("nan"), False),
         (2**70, float(2**70), True),
-        (2**70 + 1, float(2**70), False),
+        # A float column stores the int rounded to the nearest float.
+        (2**70 + 1, float(2**70), True),
+        (2**70 + 2**18, float(2**70), False),
         (1, Decimal("1"), True),
         (1, Decimal("1.0"), True),
         (1, Decimal("1.5"), False),

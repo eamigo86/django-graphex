@@ -875,9 +875,14 @@ Filters are evaluated **per connection at delivery time**:
   matches `exact: "2026-10-18T17:30:00.123456+05:30"` and delivers that
   captured DateTime through the existing output scalar. An older notification
   already truncated to milliseconds cannot regain its lost digits.
-- An integer snapshot (a `Float` or `Decimal` field saved with a plain int, so
-  the payload carries `1`) matches an equal finite `Float` or `Decimal` exact
-  filter (`1.0`, `"1"`). Booleans, NaN and Infinity never match it.
+- Numeric snapshots and typed filters compare by value whichever of `int`,
+  `float` or `Decimal` each side is: an integer or float snapshot (a `Float` or
+  `Decimal` field saved with a plain number, so the payload carries `1` or
+  `1.5`) matches `1.0` or `Decimal("1.50")`. When a float is on either side the
+  other operand is first rounded to the nearest float, which is what a float
+  column stores: `2**53 + 1` equals `float(2**53)` and `Decimal("0.1")` equals
+  `0.1`. Without a float the comparison is exact. Booleans, NaN, Infinity and
+  integers beyond the float range never match.
 - **The other three lookups** fall back to a single-row database check while
   the row exists. A deleted row cannot satisfy that check.
 - Combine them:
