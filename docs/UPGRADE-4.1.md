@@ -828,9 +828,15 @@ change existing costs.
 `@round`, `@floor`, `@ceil` and `@abs` compute on the exact `Decimal` or `int`
 instead of converting to `float` (`@round` on a Decimal used to return the
 binary expansion; `@abs` on a BigInt returned null with a coercion error).
-`@round` rounds half to even. `@number` and `@currency` return the raw value on
-these scalars, as they already do on `Int` and `Float`. Review clients that
-compared the old formatted values.
+`@round` rounds half to even and quantizes to exactly the requested precision
+(`0.0004` with `precision: 2` is `0.00`); with a precision of zero or below it
+returns an integral value (`0.0004` is `0`). A value already at or beyond the
+requested scale is unchanged. A value whose magnitude reaches the Decimal
+scalar's plain-notation bound (an exponent past 1,000, such as `1E+100000`) is
+already integral, so `@floor`, `@ceil` and `@round` return it unchanged and the
+scalar keeps its scientific form, in constant time. `@number` and `@currency`
+return the raw value on these scalars, as they already do on `Int` and `Float`.
+Review clients that compared the old formatted values.
 
 ## HTTP, limits and execution
 

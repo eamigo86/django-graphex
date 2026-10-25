@@ -14,6 +14,7 @@ from graphql import (
     get_named_type,
 )
 
+from ..core.scalars import _DECIMAL_MAX_PLAIN_PADDING, _plain_decimal
 from .base import BaseExtraGraphQLDirective
 
 if TYPE_CHECKING:
@@ -81,8 +82,49 @@ def _coerce(number: Any, info: GraphQLResolveInfo) -> Any:
     """
     if not _wants_string(info):
         return number
-    # Plain notation, as the Decimal scalar emits, rather than "1E+3".
-    return format(number, "f") if isinstance(number, decimal.Decimal) else str(number)
+    # Plain notation, as the Decimal scalar emits (scientific form past its
+    # padding bound), rather than "1E+3".
+    return (
+        _plain_decimal(number) if isinstance(number, decimal.Decimal) else str(number)
+    )
+
+
+def _integral(number: decimal.Decimal) -> int | decimal.Decimal:
+    """Turn an integral Decimal into an int unless that expansion is unbounded.
+
+    A Decimal such as 1E+100000 is already integral; expanding it to an int is
+    quadratic and the text of an int over 4300 digits is refused. Past the
+    plain-notation padding bound of the Decimal scalar the Decimal itself is
+    returned so the serializer keeps the scientific form in constant time.
+
+    Args:
+        number: A Decimal with no fractional part.
+
+    Returns:
+        An int, or the unchanged Decimal when its magnitude is beyond the bound.
+    """
+    if number.is_zero():
+        return 0
+    if number.adjusted() >= _DECIMAL_MAX_PLAIN_PADDING:
+        return number
+    return int(number)
+
+
+def _to_integral(number: Any, rounding: str) -> Any:
+    """Round to a whole number in the given mode, exactly for Decimal.
+
+    Args:
+        number: The value from _to_float.
+        rounding: A decimal rounding mode, applied to Decimal values only.
+
+    Returns:
+        A whole number: an int, or a Decimal past the plain-notation bound.
+    """
+    if isinstance(number, decimal.Decimal):
+        if number.as_tuple().exponent >= 0:  # type: ignore[operator]
+            return _integral(number)
+        return _integral(number.to_integral_value(rounding=rounding))
+    return math.floor(number) if rounding == decimal.ROUND_FLOOR else math.ceil(number)
 
 
 def _round(
@@ -98,16 +140,21 @@ def _round(
         An int when precision is zero or below, otherwise a value of the input type.
     """
     if isinstance(number, decimal.Decimal):
-        # Past the value's own magnitude the result is 0; past its scale, unchanged.
-        precision = max(precision, -(number.adjusted() + 2))
-        if precision >= -int(number.as_tuple().exponent):
-            rounded = number
-        else:
-            with decimal.localcontext() as ctx:
-                ctx.prec = len(number.as_tuple().digits) + 2
-                rounded = number.quantize(decimal.Decimal(1).scaleb(-precision))
-    else:
-        rounded = round(number, precision)
+        target = -precision
+        rounded = number
+        # A value already at or coarser than the target scale is unchanged.
+        if number.as_tuple().exponent < target:  # type: ignore[operator]
+            # Size the context to the result (plus one digit for a carry) so the
+            # quantize can neither overflow its precision nor round twice.
+            ctx = decimal.Context(
+                prec=max(number.adjusted() - target + 2, 1),
+                rounding=decimal.ROUND_HALF_EVEN,
+                Emax=decimal.MAX_EMAX,
+                Emin=decimal.MIN_EMIN,
+            )
+            rounded = number.quantize(decimal.Decimal((0, (1,), target)), context=ctx)
+        return _integral(rounded) if precision <= 0 else rounded
+    rounded = round(number, precision)
     return int(rounded) if precision <= 0 else rounded
 
 
@@ -149,7 +196,7 @@ class FloorGraphQLDirective(BaseExtraGraphQLDirective):
         number = _to_float(value, "@floor")
         if isinstance(number, float) and not math.isfinite(number):
             raise GraphQLError("@floor cannot operate on a non-finite value.")
-        return _coerce(math.floor(number), info)
+        return _coerce(_to_integral(number, decimal.ROUND_FLOOR), info)
 
 
 class CeilGraphQLDirective(BaseExtraGraphQLDirective):
@@ -184,7 +231,8 @@ class CeilGraphQLDirective(BaseExtraGraphQLDirective):
         """
         if value is None:
             return None
-        return _coerce(math.ceil(_to_float(value, "@ceil")), info)
+        number = _to_float(value, "@ceil")
+        return _coerce(_to_integral(number, decimal.ROUND_CEILING), info)
 
 
 class RoundGraphQLDirective(BaseExtraGraphQLDirective):

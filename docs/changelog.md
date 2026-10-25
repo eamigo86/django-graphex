@@ -358,6 +358,16 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Fix `@round` on `Decimal` values. The precision clamp turned a zero or
+  negative precision into a positive one (`0.0004` gave `0.00` instead of `0`,
+  `1E-30` with precision 5 gave 28 decimals). It now quantizes half to even to
+  exactly the requested precision in a context sized to the result, returns an
+  integral value for a precision of zero or below, and never raises
+  `InvalidOperation`. `@floor`, `@ceil` and `@round` no longer expand a value
+  with a huge exponent into a giant integer (quadratic time, or a `ValueError`
+  past 4300 digits): past the Decimal scalar's plain-notation bound the value
+  is already whole and is returned unchanged in constant time.
+
 - Fix the same-declaration rule of the one-public-output-type guard. Two types
   made by one factory function share module and qualified name, so they were
   taken for a re-executed declaration and the broader variant silently became

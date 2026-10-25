@@ -653,8 +653,10 @@ Perform mathematical operations on numbers:
     scalar) the math directives compute on the exact value, never on a `float`.
     `@floor` and `@ceil` return a whole number, `@abs` keeps the scale, and
     `@round` rounds half to even on the exact decimal digits (so `2.665` with
-    `precision: 2` is `2.66`). A precision beyond the stored scale leaves the
-    value unchanged. Results come back in the scalar's own string format.
+    `precision: 2` is `2.66`), quantizing to exactly the requested precision
+    and returning a whole number for a precision of zero or below. A precision
+    beyond the stored scale leaves the value unchanged, and so does a value
+    with a huge exponent (`1E+100000`), which is already whole. Results come back in the scalar's own string format.
     `@number` and `@currency` cannot produce text these scalars accept, so, as
     on `Int` and `Float` fields, they return the raw value unchanged; use a
     `String` field to format.
