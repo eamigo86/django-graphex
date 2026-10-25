@@ -1184,12 +1184,15 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # We store a *factory* callable rather than a pre-built expression so
         # the Subquery is freshly constructed per request when needed.  The
         # factory captures the FK-attname and filter-applied queryset; the
-        # caller (_apply_optimizations) supplies OuterRef('pk') at annotation time.
+        # caller (_apply_optimizations) supplies OuterRef(<FK target column>) at annotation time.
         # The base queryset snapshotted above (filters + hook applied, window
         # exprs not yet) is stored on the Prefetch so the annotation counts
         # EXACTLY the rows the window path pages over.
         pf._gqx_cnt_qs = _cnt_base_qs
         pf._gqx_cnt_fk_attname = fk_attname
+        # The child column holds the parent's FK TARGET value (the pk unless the
+        # FK uses to_field), so the count correlates on that parent column.
+        pf._gqx_cnt_parent_attname = fk_field.target_field.attname
         pf._gqx_cnt_attr = _GQX_CNT_ATTR_PREFIX + self.accessor
 
         return pf

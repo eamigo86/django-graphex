@@ -440,6 +440,11 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   `not`, `or` and destination-scoped relation filters returned the wrong parents
   whenever the parent pk and that column differ. They now match Django's
   `exclude()` and `filter()`.
+- Join nested paginated lists on the column the foreign key targets. The
+  `totalCount` of a window-sliced reverse-FK list correlated the child FK with the
+  parent `pk`, so with `to_field` it counted another parent's children (or none).
+  The count now uses the FK target column, and the narrowed parent query keeps that
+  column, which avoids one lazy column load per parent row.
 - Bound the cost of `@round` with a huge negative precision on an `Int` or `BigInt`.
   `round(n, -k)` built `10 ** k`, so `@round(precision: -10000000)` on `1` took
   seconds and `-2147483648` could exhaust memory. A whole number far below half of

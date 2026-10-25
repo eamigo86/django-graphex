@@ -1640,6 +1640,14 @@ def _collect_only_fields(
                         _seen=_seen,
                     )
             # prefetch branches use separate querysets -> not narrowed here.
+            # A reverse FK prefetch joins on the column the child FK targets
+            # (the pk unless the FK has to_field); without it each parent row
+            # would lazily load that column. A generic relation has no ".field".
+            _target = getattr(
+                getattr(related_field, "field", None), "target_field", None
+            )
+            if getattr(related_field, "one_to_many", False) and _target is not None:
+                _only.add(_prefix + _target.attname)
             continue
 
         concrete_attname = concrete_map.get(name, concrete_map.get(snake, None))
@@ -4606,6 +4614,7 @@ def _apply_optimizations(
     # Each window Prefetch that fired build_window_prefetch carries three attrs:
     #   _gqx_cnt_qs       — filtered (but un-windowed) child queryset
     #   _gqx_cnt_fk_attname — e.g. "author_id"
+    #   _gqx_cnt_parent_attname — parent column the FK targets, e.g. "id"
     #   _gqx_cnt_attr     — annotation key on the parent, e.g. "_gqx_cnt_posts"
     # We build a Subquery(Count) per nested-list and annotate the parent QS.
     # This is ONLY for top-level filtered_prefetches (window path only emits at
@@ -4616,6 +4625,8 @@ def _apply_optimizations(
         _cnt_qs = getattr(_pf, "_gqx_cnt_qs", None)
         _cnt_fk = getattr(_pf, "_gqx_cnt_fk_attname", None)
         _cnt_attr = getattr(_pf, "_gqx_cnt_attr", None)
+        # Parent column the child FK stores: the pk unless the FK has to_field.
+        _cnt_parent = getattr(_pf, "_gqx_cnt_parent_attname", "pk")
         if _cnt_qs is not None and _cnt_fk is not None and _cnt_attr is not None:
             from django.db.models import (
                 Count as _Count,
@@ -4628,7 +4639,7 @@ def _apply_optimizations(
             )
 
             _sq = _Subquery(
-                _cnt_qs.filter(**{_cnt_fk: _OuterRef("pk")})
+                _cnt_qs.filter(**{_cnt_fk: _OuterRef(_cnt_parent)})
                 .order_by()
                 .values(_cnt_fk)
                 .annotate(_n=_Count("pk"))
