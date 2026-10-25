@@ -389,6 +389,11 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Bound the cost of `@round` with a huge negative precision on an `Int` or `BigInt`.
+  `round(n, -k)` built `10 ** k`, so `@round(precision: -10000000)` on `1` took
+  seconds and `-2147483648` could exhaust memory. A whole number far below half of
+  `10 ** k` now answers `0` at once; every other result is unchanged and still
+  rounds half to even.
 - Refuse subscription operations over the HTTP views. A subscription POSTed to
   `/graphql/` resolved to `{"data": {"field": null}}` with HTTP 200, no error and
   no hint. `GraphQLView`, `BaseGraphQLView` and `AuthenticatedGraphQLView` now

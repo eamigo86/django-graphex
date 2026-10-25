@@ -154,6 +154,10 @@ def _round(
             )
             rounded = number.quantize(decimal.Decimal((0, (1,), target)), context=ctx)
         return _integral(rounded) if precision <= 0 else rounded
+    # A whole number far below half of 10 ** -precision rounds to 0; skip building
+    # that power. 10 ** k > 2 ** (3 * k) >= 2 ** (bit_length + 1) > 2 * |n|.
+    if isinstance(number, int) and -3 * precision > number.bit_length():
+        return 0
     rounded = round(number, precision)
     return int(rounded) if precision <= 0 else rounded
 
