@@ -353,6 +353,15 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Validate cursor boundaries with one rule on the database and the in-memory
+  path. The database path refused finite decimals above float range (`1e999`,
+  400-digit values) that the in-memory path accepted, and accepted a naive
+  datetime cursor (with a Django naive-datetime warning) that the in-memory
+  path refused. Both now use one coercion function: numbers must be finite
+  (checked on the parsed value, not through a float conversion; magnitudes
+  beyond ten to the 10,000th are refused), and a datetime or time must be
+  timezone-aware exactly when the column is. A parity matrix test pins it.
+
 - Give `or` operands over a to-many relation their own related rows, like `and`
   operands. `{ or: [{ tags: x }], tags: z }` returned nothing for a post tagged
   `x` and `z` because both criteria shared one join, while

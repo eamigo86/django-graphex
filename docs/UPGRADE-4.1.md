@@ -426,6 +426,13 @@ float, Decimal, UUID, date, datetime and time fields, and a non-finite float or
 Decimal boundary is refused on both paths. Clients should treat `Invalid cursor`
 as a client error and drop the cursor.
 
+Both paths apply one rule: a finite `Decimal` of any size up to ten to the
+10,000th is valid (the database path used to refuse values above float range,
+such as `1e999`), and a datetime or time cursor must carry a timezone exactly
+when the column does, so a naive datetime cursor is now refused on the
+database path too when `USE_TZ` is on. Cursors issued by the server are
+unchanged.
+
 ### Nullable ordering in offset and page results
 
 `LimitOffsetGraphqlPagination` and `PageGraphqlPagination` now place NULL last

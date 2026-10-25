@@ -14,8 +14,20 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist, ValidationError
-from django.db.models import DecimalField, F, FloatField, QuerySet
+from django.db.models import (
+    BooleanField,
+    DateField,
+    DateTimeField,
+    DecimalField,
+    F,
+    FloatField,
+    IntegerField,
+    QuerySet,
+    TimeField,
+    UUIDField,
+)
 from django.db.models.expressions import OrderBy
 from graphql import (
     GraphQLBoolean,
@@ -128,17 +140,109 @@ def _sort_key(value: Any) -> tuple[bool, Any]:
     return (value is None, value if value is not None else 0)
 
 
+# Largest decimal magnitude (power of ten) a cursor may carry. Far beyond any
+# real column, yet small enough that every database accepts it as a parameter,
+# so an absurd boundary is a client error and not a database error.
+_MAX_CURSOR_EXPONENT = 10_000
+
+
+def _coerce_cursor_component(raw: str, kind: type, aware: bool) -> Any:
+    """Coerce one cursor component to a column kind, the single cursor rule.
+
+    Both the database path (kind from the model field) and the in-memory path
+    (kind from a live row value) call this, so a boundary is accepted or
+    refused identically. Numbers must be finite (decided on the parsed value,
+    never through a float conversion, so a large finite Decimal is valid, up to
+    a magnitude of ten to the 10,000th);
+    datetimes and times must be timezone-aware exactly when the column is.
+
+    Args:
+        raw: The decoded cursor component.
+        kind: The Python type of the column value: bool, int, float, Decimal,
+            UUID, datetime, date or time.
+        aware: Whether datetime and time boundaries must carry a timezone.
+
+    Returns:
+        The boundary as a value of the column kind.
+
+    Raises:
+        ValueError: If the component cannot be converted, is not finite or
+            has the wrong timezone awareness.
+    """
+    try:
+        if kind is bool:
+            if raw not in ("True", "False"):
+                raise ValueError(raw)
+            return raw == "True"
+        if kind is int:
+            return int(raw)
+        if kind is float:
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError(raw)
+            return value
+        if kind is Decimal:
+            number = Decimal(raw)
+            if not number.is_finite() or abs(number.adjusted()) > _MAX_CURSOR_EXPONENT:
+                raise ValueError(raw)
+            return number
+        if kind is UUID:
+            return UUID(raw)
+        # Temporal kinds: str(value) is ISO 8601, so fromisoformat is the exact
+        # inverse. Order matters — datetime is a subclass of date. A naive/aware
+        # mismatch cannot be compared, so it is invalid too.
+        if kind is datetime.datetime:
+            moment = datetime.datetime.fromisoformat(raw)
+            if (moment.tzinfo is not None) is not aware:
+                raise ValueError(raw)
+            return moment
+        if kind is datetime.date:
+            return datetime.date.fromisoformat(raw)
+        if kind is datetime.time:
+            moment_time = datetime.time.fromisoformat(raw)
+            if (moment_time.tzinfo is not None) is not aware:
+                raise ValueError(raw)
+            return moment_time
+    except (TypeError, ArithmeticError) as exc:
+        raise ValueError(raw) from exc
+    return raw
+
+
+# Model field classes by cursor kind; the first match wins, so DateTimeField
+# precedes its base DateField.
+_FIELD_KINDS: tuple[tuple[type, tuple[type, ...]], ...] = (
+    (bool, (BooleanField,)),
+    (int, (IntegerField,)),
+    (float, (FloatField,)),
+    (Decimal, (DecimalField,)),
+    (UUID, (UUIDField,)),
+    (datetime.datetime, (DateTimeField,)),
+    (datetime.date, (DateField,)),
+    (datetime.time, (TimeField,)),
+)
+
+_CURSOR_KINDS: tuple[type, ...] = (
+    bool,
+    int,
+    float,
+    Decimal,
+    UUID,
+    datetime.datetime,
+    datetime.date,
+    datetime.time,
+)
+
+
 def _coerce_like(raw: Any, sample: Any) -> Any:
     """Coerce a cursor-decoded string to the runtime type of *sample*.
 
     Cursor components are serialised as strings inside the opaque token, so the
     in-memory keyset comparison must convert them back to the row's own value
     type (int, float, Decimal, UUID, date, etc.) before comparing — otherwise
-    "10" < "2" (lexical) is wrong and unlike types raise TypeError. This keeps the
-    in-memory path in parity with the DB path, whose filter coerces the same
-    string back to the field's runtime type and answers a tampered boundary with
-    "Invalid cursor". A boundary that cannot be converted to the sample type, or
-    that is not finite (NaN or infinity), is therefore an invalid cursor; samples
+    "10" < "2" (lexical) is wrong and unlike types raise TypeError. The rule is
+    the one the database path applies to the model field
+    ("_coerce_cursor_component"): a boundary that cannot be converted, is not
+    finite, or has the wrong timezone awareness is an invalid cursor. Samples
     of other types (for example strings) keep the raw string.
 
     Args:
@@ -155,44 +259,15 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
     """
     if sample is None or not isinstance(raw, str):
         return raw
+    # Subclasses count (a bool is an int); the first matching kind wins.
+    kind = next((k for k in _CURSOR_KINDS if isinstance(sample, k)), None)
+    if kind is None:
+        return raw
+    aware = getattr(sample, "tzinfo", None) is not None
     try:
-        if isinstance(sample, bool):
-            if raw not in ("True", "False"):
-                raise ValueError(raw)
-            return raw == "True"
-        if isinstance(sample, int):
-            return int(raw)
-        if isinstance(sample, float):
-            value = float(raw)
-            if not math.isfinite(value):
-                raise ValueError(raw)
-            return value
-        if isinstance(sample, Decimal):
-            number = Decimal(raw)
-            if not number.is_finite():
-                raise ValueError(raw)
-            return number
-        if isinstance(sample, UUID):
-            return UUID(raw)
-        # Temporal samples: str(value) is ISO 8601, so fromisoformat is the exact
-        # inverse. Order matters — datetime is a subclass of date, so it is
-        # checked first. A naive/aware mismatch cannot be compared, so it is
-        # invalid too.
-        if isinstance(sample, datetime.datetime):
-            moment = datetime.datetime.fromisoformat(raw)
-            if (moment.tzinfo is None) != (sample.tzinfo is None):
-                raise ValueError(raw)
-            return moment
-        if isinstance(sample, datetime.date):
-            return datetime.date.fromisoformat(raw)
-        if isinstance(sample, datetime.time):
-            moment_time = datetime.time.fromisoformat(raw)
-            if (moment_time.tzinfo is None) != (sample.tzinfo is None):
-                raise ValueError(raw)
-            return moment_time
-    except (TypeError, ValueError, ArithmeticError) as exc:
+        return _coerce_cursor_component(raw, kind, aware)
+    except ValueError as exc:
         raise GraphQLError("Invalid cursor") from exc
-    return raw
 
 
 def _normalize_ordering_term(term: str) -> str:
@@ -2004,7 +2079,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             #      produce a clean GraphQLError, not an unhandled HTTP 500.
             try:
                 value, pk = self.decode_cursor_parts(cursor)
-                self._require_finite(qs.model, field_name, value)
+                self._validate_boundary(qs.model, field_name, value)
                 if pk is None:
                     # Legacy value-only cursor: fall back to the plain value
                     # boundary (no pk tiebreak available). A NULL boundary value
@@ -2023,12 +2098,13 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         return qs[:page_size]
 
     @staticmethod
-    def _require_finite(model: Any, field_name: str, value: str | None) -> None:
-        """Reject a NaN or infinite boundary for a float or decimal column.
+    def _validate_boundary(model: Any, field_name: str, value: str | None) -> None:
+        """Apply the shared cursor rule to the ordering column's boundary.
 
-        The database accepts these values in a comparison and silently returns
-        a wrong page, while the in-memory path rejects them, so both paths share
-        this rule.
+        The in-memory path coerces the boundary with the same function
+        ("_coerce_cursor_component"), so both paths accept or refuse a given
+        boundary alike. Without it the database would silently accept values
+        such as NaN and return a wrong page, or a naive datetime.
 
         Args:
             model: The model whose column is the ordering field.
@@ -2036,7 +2112,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             value: The decoded boundary ordering value ("None" for NULL).
 
         Raises:
-            ValueError: If the boundary is not a finite number.
+            ValueError: If the boundary is not valid for the column.
         """
         if value is None:
             return
@@ -2044,10 +2120,10 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             field = model._meta.get_field(field_name)
         except FieldDoesNotExist:
             return
-        if isinstance(field, (FloatField, DecimalField)) and not math.isfinite(
-            float(value)
-        ):
-            raise ValueError(value)
+        kind = next((k for k, types in _FIELD_KINDS if isinstance(field, types)), None)
+        if kind is not None:
+            aware = bool(settings.USE_TZ) if kind is datetime.datetime else False
+            _coerce_cursor_component(value, kind, aware)
 
     @staticmethod
     def _legacy_value_predicate(field_name: str, descending: bool, value: Any) -> Any:
@@ -2216,7 +2292,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # decode_cursor_parts (malformed base64) or at filter() (type coercion).
             try:
                 value, pk = self.decode_cursor_parts(cursor)
-                self._require_finite(qs.model, field_name, value)
+                self._validate_boundary(qs.model, field_name, value)
                 if pk is None:
                     page_qs = page_qs.filter(
                         self._legacy_value_predicate(field_name, descending, value)

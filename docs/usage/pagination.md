@@ -1109,6 +1109,11 @@ following failures return `GraphQLError("Invalid cursor")`:
    whether the list is queryset-backed or already materialized in memory.
    Both `results` and `pageInfo` report the same error. Queryset-backed filters also retain their
    existing handling of Django validation failures.
+3. **Out-of-rule boundary** — one shared rule decides every boundary, on the
+   database and the in-memory path alike: a number must be finite (a large
+   finite `Decimal` such as `1e999` is valid, up to ten to the 10,000th), and
+   a datetime or time must carry a timezone exactly when the column does (with
+   `USE_TZ` on, a naive datetime cursor is invalid).
 
 For example, a base64-valid cursor encoding `not-a-float` against a
 FloatField-ordered materialized list previously produced a raw comparison
