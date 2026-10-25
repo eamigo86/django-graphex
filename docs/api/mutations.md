@@ -574,7 +574,7 @@ Standard error type used in mutation responses.
 from django_graphex.errors import ErrorType
 ```
 
-`ErrorType` is a native `ObjectType` (graphene-free) with two fields:
+`ErrorType` is a native `ObjectType` with two fields:
 
 | Field | GraphQL type | Description |
 |-------|-------------|-------------|

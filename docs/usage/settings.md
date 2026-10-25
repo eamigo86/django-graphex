@@ -36,6 +36,7 @@ DJANGO_GRAPHEX = {
 
     # --- Document cache (parse + validate) ---------------------------------- #
     "DOCUMENT_CACHE_MAXSIZE": 128,  # bounds the parse + per-schema validation LRUs (0 disables both)
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH": 65536,  # longest document (and AST token budget) the caches retain; None = no bound
 
     # --- Queryset optimization (N+1) --------------------------------------- #
     "OPTIMIZE_QUERYSET": True,

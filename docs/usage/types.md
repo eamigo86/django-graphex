@@ -781,7 +781,7 @@ hand-write `Field(<scalar>)`:
 
 !!! note "The `Custom*` date/time scalar names"
     The output/argument date/time scalars render as `CustomDate` /
-    `CustomDateTime` / `CustomTime`, matching the v1 (graphene-django) SDL for
+    `CustomDateTime` / `CustomTime`, matching the SDL of the 1.x series for
     drop-in schema parity. The plain `Date` / `DateTime` / `Time` names are
     reserved for the **filter-lookup** scalars — see
     [Accepted date/time input formats](#accepted-datetime-input-formats).
@@ -1921,7 +1921,7 @@ offset (`2024-01-15T10:30:00+00:00`) — **never** the shorthand `Z`.
 
 !!! note "Why `CustomDate` / `CustomDateTime` / `CustomTime`?"
     The output/argument scalars use these `Custom*` names for **SDL parity with
-    v1** (graphene-django), so a v2 schema is a drop-in match. The plain `Date` /
+    the 1.x series**, so a current schema is a drop-in match. The plain `Date` /
     `DateTime` / `Time` names are **not** free — they belong to the
     filter-lookup scalars (the `exact` / `gte` / … values inside a
     `<Model><Field>Lookups` input). Keeping the two families distinct is what
@@ -2061,7 +2061,7 @@ affected.
 
     **Which one do I use?** Reach for the default `JSONField()` (raw `JSON`)
     unless a client specifically expects a JSON **string** — e.g. it stores the
-    value verbatim, or you need wire parity with a legacy graphene-django schema
+    value verbatim, or you need wire parity with an older schema
     that used `JSONString`. In that case use `JSONField(as_str=True)`.
 
     The scalar singletons themselves are importable for use with `Field` /

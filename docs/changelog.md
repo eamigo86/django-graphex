@@ -40,22 +40,45 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 - An `or` operand holding a relation key next to a sibling relation key (or a negated operand) matches its own related row, like an `and` operand ([migration](UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
 - A `not` enclosing a to-many relation object is the exact complement of its same-row match; a double negation beside a sibling relation key uses its own related row ([migration](UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
 - `exact: null` selects NULL rows ([migration](UPGRADE-4.1.md#explicit-exact-null-selects-null-rows)).
-- Primary-key tie-break can reorder tied rows; tampered cursors answer `Invalid cursor` ([migration](UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
 - Numeric `DateField`/`DateTimeField` part filters take `Int` ([migration](UPGRADE-4.1.md#numeric-date-part-filters-take-int)).
 - Generated writes run all model field validators (`blank`, `choices`, `max_length`, `validators`) ([migration](UPGRADE-4.1.md#model-field-validators-run-on-generated-writes)).
 - `ATOMIC_MUTATIONS`/`ATOMIC_REQUESTS` roll back on GraphQL errors, on every database alias ([migration](UPGRADE-4.1.md#rollback-on-graphql-errors-on-every-alias)).
 - Generated update/delete and nested writes honor the output type `get_queryset` ([migration](UPGRADE-4.1.md#update-and-delete-honor-the-output-type-scope)).
 - Linked foreign-key, one-to-one and many-to-many ids must be visible; orphan adoption needs an update host ([migration](UPGRADE-4.1.md#linked-rows-must-be-visible)).
 - A nested child `id` that matches no visible child is an error instead of creating a child ([migration](UPGRADE-4.1.md#nested-child-ids-that-match-no-visible-child)).
-- Generic foreign key targets are scoped by their output type ([migration](UPGRADE-4.1.md#genericforeignkey-targets-are-scoped)).
-- Generated database error messages are generic ([migration](UPGRADE-4.1.md#database-error-messages-are-generic)).
-- Cost is checked before resolving and `pageSize` is costed; depth ceiling of 100 ([migration](UPGRADE-4.1.md#cost-is-checked-before-resolving-and-pagesize-is-costed)).
 - Batches answer every item and isolate items in savepoints ([migration](UPGRADE-4.1.md#batches-answer-every-item)).
 - `@replace` is capped at 1,000,000 characters; `MAX_DIRECTIVE_OUTPUT_TOTAL` bounds directive output ([migration](UPGRADE-4.1.md#output-caps-for-directives)).
 - `Decimal` rejects `NaN`/`Infinity`; `@round` rounds half to even on `Decimal` ([migration](UPGRADE-4.1.md#decimal-and-bigint-scalars-in-outputs-inputs-and-filters)).
 - Custom scalar coercion errors are client errors ([migration](UPGRADE-4.1.md#custom-scalar-errors-are-client-errors)).
 - Subscription WebSocket handshakes without `graphql-transport-ws` are rejected before accept ([migration](UPGRADE-4.1.md#websocket-subprotocol-is-required)).
-- Raw `JSON` output rejects non-finite numbers; `CLEAN_RESPONSE` keeps `0` and `false` ([migration](UPGRADE-4.1.md#numbers-in-json-output)).
+- Generated database error messages are generic ([migration](UPGRADE-4.1.md#database-error-messages-are-generic)).
+- Primary-key tie-break can reorder tied rows ([migration](UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
+- Cursors are validated by one rule on the database and in-memory paths: tampered cursors answer `Invalid cursor`, finite decimals above float range are valid, and a naive datetime cursor is refused when the column is timezone-aware ([migration](UPGRADE-4.1.md#tampered-and-unconvertible-cursors)).
+- `page: null` on a page-number list is the first page instead of an error ([migration](UPGRADE-4.1.md#explicit-page-null-is-the-first-page)).
+- Nullable columns order NULL last ascending and first descending in offset and page results ([migration](UPGRADE-4.1.md#nullable-ordering-in-offset-and-page-results)).
+- `Meta.name` is honored as the GraphQL name of an `InputType`, and two types made by one factory are distinct types, not a re-executed declaration ([migration](UPGRADE-4.1.md#one-public-output-type-per-model-and-registry)).
+- Automatic forward and reverse foreign-key output reads apply the destination `get_queryset`: a hidden author is `author: null`, reverse lists and `totalCount` hold only visible rows ([migration](UPGRADE-4.1.md#review-automatic-forward-and-reverse-fk-output-reads)).
+- Automatic OneToOne and many-to-many output reads apply the destination `get_queryset` ([migration](UPGRADE-4.1.md#review-automatic-onetoone-output-reads); [migration](UPGRADE-4.1.md#review-automatic-m2m-output-lists-and-counts)).
+- Filters that traverse a forward FK, forward OneToOne, reverse FK or M2M relation only match destinations the destination type's `get_queryset` shows ([migration](UPGRADE-4.1.md#review-filters-that-traverse-a-forward-fk); [migration](UPGRADE-4.1.md#review-filters-that-traverse-a-forward-onetoone); [migration](UPGRADE-4.1.md#review-filters-that-traverse-a-reverse-fk); [migration](UPGRADE-4.1.md#review-filters-that-traverse-an-m2m-relation)).
+- Generic foreign key targets (flat and typed unions) are scoped by their output type; only target types present on the page run their hook ([migration](UPGRADE-4.1.md#genericforeignkey-targets-are-scoped)).
+- Malformed model primary-key ids answer a field error with `extensions.code` `INVALID_ID` instead of `null` ([migration](UPGRADE-4.1.md#distinguish-malformed-ids-from-missing-objects)).
+- Library transformation directives declare only the `FIELD` location, and `@date`, `@number` and `@currency` keep `null` ([migration](UPGRADE-4.1.md#move-transformation-directives-from-fragments-to-fields); [migration](UPGRADE-4.1.md#review-null-values-under-numeric-formatting-directives); [migration](UPGRADE-4.1.md#review-nullable-fields-formatted-with-date)).
+- `@round`, `@floor`, `@ceil` and `@abs` compute exactly on `Decimal` and `BigInt` (`@round` rounds half to even) ([migration](UPGRADE-4.1.md#numeric-directives-on-decimal-and-bigint)).
+- `MAX_DIRECTIVE_OUTPUT_TOTAL` is one budget per HTTP request shared by every batch item; `COST_DIRECTIVE` is validated ([migration](UPGRADE-4.1.md#output-caps-for-directives)).
+- Exact `set[...]`, `dict[str, ...]`, `Union[int, str]`, `Literal` and nested-list input annotations compile to typed GraphQL inputs, which changes the SDL ([migration](UPGRADE-4.1.md#input-annotations)).
+- The enhanced `GraphQLView` answers an execution error through a non-null root field with HTTP 200 and `data: null` instead of HTTP 400 ([migration](UPGRADE-4.1.md#execution-errors-return-http-200)).
+- A `query` that is not a string and `variables` that are not an object (including `[]`) answer a clean HTTP 400; a masked internal error outside field execution answers HTTP 500 ([migration](UPGRADE-4.1.md#malformed-requests-and-server-faults)).
+- Unexpected resolver exceptions answer `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` with an `errorId` instead of raw text when `DEBUG=False`; custom scalar `ValueError`/`TypeError` are client errors ([migration](UPGRADE-4.1.md#custom-scalar-errors-are-client-errors)).
+- A subscription operation over the HTTP views answers HTTP 400 `SUBSCRIPTION_NOT_SUPPORTED` instead of `data: null` with HTTP 200 ([migration](UPGRADE-4.1.md#subscriptions-are-rejected-over-http)).
+- Synchronous views answer a controlled HTTP 500 for async resolver, middleware and executor results ([migration](UPGRADE-4.1.md#synchronous-views-reject-async-results)).
+- `MAX_UPLOAD_SIZE` limits each received multipart file, including unmapped parts ([migration](UPGRADE-4.1.md#multipart-upload-size-limit)).
+- Negative `MAX_BATCH_SIZE`, `MAX_REQUEST_BODY_SIZE` and `DOCUMENT_CACHE_MAXSIZE` raise, and the limits added in 4.1 accept only integers or `None` ([migration](UPGRADE-4.1.md#negative-operational-limits)).
+- The request body cap runs before Django's CSRF check; the response cache stores only HTTP 200 data responses and its default key changes ([migration](UPGRADE-4.1.md#request-body-and-upload-limits); [migration](UPGRADE-4.1.md#document-caches-skip-very-large-documents)).
+- Cost is checked before resolving and `pageSize` is costed; documents deeper than 100 object levels answer HTTP 400 `QUERY_TOO_DEEP` ([migration](UPGRADE-4.1.md#cost-is-checked-before-resolving-and-pagesize-is-costed); [migration](UPGRADE-4.1.md#structural-depth-ceiling)).
+- Raw `JSON` rejects non-finite numbers in output (any container) and input; `CLEAN_RESPONSE` keeps `0` and `false` ([migration](UPGRADE-4.1.md#numbers-in-json-output)).
+- `CLEAN_RESPONSE` keeps introspection nulls for fragment roots ([migration](UPGRADE-4.1.md#clean-responses-keep-introspection-nulls)).
+- `subscription_scope` is intersected with the client `filter`; numeric snapshots compare by value ([migration](UPGRADE-4.1.md#subscription_scope-intersects-the-client-filter); [migration](UPGRADE-4.1.md#best-effort-notifications-and-exact-filters)).
+- Automatic subscription notifications are best-effort and the drop log ends with `exception=<qualified chain>`; sync fan-out isolates each group; SSE leases tolerate renewal errors ([migration](UPGRADE-4.1.md#best-effort-notifications-and-exact-filters); [migration](UPGRADE-4.1.md#fan-out-isolation-and-sse-leases)).
 
 ### Added settings
 
@@ -175,9 +198,9 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   describes 4**n distinct `select_related`/`prefetch_related` lookups, so a
   ~1 KB anonymous request took more than 20 s of CPU on an empty database. The
   new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
-  selection contexts each optimizer walker expands per request, including the
+  selection contexts each optimizer walker expands per operation execution, including the
   scoped to-one walker that ran a second exponential pass. The budget is shared
-  by every root field of the request. Once spent, the root field is resolved
+  by every root field of the execution. Once spent, the root field is resolved
   without the optimizer plan, exactly like `OPTIMIZE_QUERYSET = False` (the
   data is identical and scoped relations stay scoped; a truncated plan is never
   kept because it could drop the ordering, limit or offset of nested lists); a
@@ -365,6 +388,14 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   broader type) for the schema that serves the write.
 
 ### Fixes and changes
+
+- Refuse subscription operations over the HTTP views. A subscription POSTed to
+  `/graphql/` resolved to `{"data": {"field": null}}` with HTTP 200, no error and
+  no hint. `GraphQLView`, `BaseGraphQLView` and `AuthenticatedGraphQLView` now
+  answer HTTP 400 with the error `Subscriptions are not supported over HTTP; use
+  the WebSocket or SSE transport.` and `extensions.code`
+  `SUBSCRIPTION_NOT_SUPPORTED`. Only the selected operation is judged, and each
+  subscription item of a batch gets its own error entry.
 
 - Make a `not` that encloses a to-many relation object the exact complement of
   that object's match. `{ not: { tags: { and: [z, x] } } }` excluded posts that

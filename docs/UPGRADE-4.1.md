@@ -39,10 +39,26 @@ near the bottom change results silently.
 3. **Writes:** model field validators, visibility of update/delete targets and
    linked rows, nested child ids, rollback on GraphQL errors. See
    [Mutations and writes](#mutations-and-writes).
-4. **Reads and limits:** cost and depth checks, pagination order, filters. See
-   [Pagination, ordering and filters](#pagination-ordering-and-filters) and
+4. **Reads and visibility:** automatic forward and reverse FK, OneToOne, M2M and
+   GenericForeignKey output reads and the filters that traverse them now apply the
+   destination type's `get_queryset`; malformed ids answer `INVALID_ID`. See
+   [Relations and output](#relations-and-output) and
+   [Pagination, ordering and filters](#pagination-ordering-and-filters).
+5. **Ordering and pagination:** NULL placement, primary-key ties, cursor
+   validation, `page: null`, `DEFAULT_PAGE_SIZE`.
+6. **Directives:** library transforms accept only field locations, `@date` and
+   `@number` keep `null`, numeric directives are exact. See
+   [Directives](#directives).
+7. **HTTP status and error handling:** execution errors answer HTTP 200 (see
+   [Execution errors return HTTP 200](#execution-errors-return-http-200)),
+   malformed bodies and server faults have their own status codes, subscriptions
+   over HTTP are refused, multipart files are capped one by one, async results
+   fail on the synchronous views, negative limits raise. See
    [HTTP, limits and execution](#http-limits-and-execution).
-5. **New settings** you may want to tune: see
+8. **Subscriptions:** `subscription_scope` is intersected with the client filter,
+   the WebSocket subprotocol is required, notifications are best-effort. See
+   [Subscriptions](#subscriptions).
+9. **New settings** you may want to tune: see
    [New settings](#new-settings).
 
 ## Schema and startup changes
@@ -93,7 +109,11 @@ names (`PublicAuthor` and `AdminAuthor`) are distinct types and raise. A user
 type declared after a mutation, `DjangoModelType` or list type for the same
 model replaces the generated placeholder. If you serve public and admin
 variants of one model, give each its own registry or set `skip_registry = True`
-on the secondary type:
+on the secondary type. `InputType` follows the same rule and now honors
+`Meta.name` as its GraphQL name (it was ignored before): code that set
+`Meta.name` on an `InputType` sees that name in the SDL, and factory-made inputs
+with different names stay registered side by side instead of the later one
+replacing the earlier.
 
 ```python
 class AdminArticleType(DjangoObjectType):
@@ -368,6 +388,13 @@ validation are unchanged. A negative page whose database `COUNT` fails now
 returns the generic error `Unable to calculate pagination count` instead of
 loading the whole queryset to recover the page.
 
+### Explicit page null is the first page
+
+`page: null` on a page-number list is treated as an omitted `page` (page 1)
+instead of failing with a raw comparison error. Clients that relied on that error
+should reject `null` before sending the request. The zero-page error and the
+negative-page behavior are unchanged.
+
 ### Explicit exact null selects NULL rows
 
 An explicitly supplied `exact: null` in a generated query filter now selects
@@ -469,7 +496,8 @@ Direct source FK-ID filters such as `author: { exact: 7 }` keep their existing
 contract; a hidden target ID may still match the source row. An omitted filter
 and real nullable-FK matches also keep their meanings. Forward OneToOne
 and M2M filters have their own bounded rules below; custom filter bodies,
-ordering, and OneToOne output reads are separate from this FK filter rule. See
+ordering, and OneToOne output reads are separate from this FK filter rule;
+automatic FK output reads have [their own rule](#review-automatic-forward-and-reverse-fk-output-reads). See
 [forward-FK filter scope](usage/filtering.md#forward-fk-filter-scope).
 
 ### Review filters that traverse a forward OneToOne
@@ -645,6 +673,21 @@ changes between checks and Django's link operation are not coordinated.
 
 ## Relations and output
 
+### Review automatic forward and reverse FK output reads
+
+An automatically published forward `ForeignKey` object field and reverse
+`ForeignKey` list now apply the destination type's request-specific
+`get_queryset`. A visible parent keeps its row while a hidden nullable target
+resolves to `null` (`post { author { name } }` becomes `author: null` when
+`AuthorType.get_queryset` hides that author); reverse lists, their windows and
+`totalCount` contain only visible rows. Optimized reads stay batched through a
+scoped prefetch; with `OPTIMIZE_QUERYSET=False` each parent can add a scope
+query. Review destination hooks before upgrading: a client that displayed
+authors, comments or other FK destinations your public type hides will stop
+seeing them. Explicit relation resolvers and custom filter bodies are unchanged;
+OneToOne and M2M output reads have the separate rules below. See
+[automatic output relation scope](usage/types.md#relation-scope-hatch).
+
 ### Review automatic OneToOne output reads
 
 An automatically published forward or reverse OneToOne object field now
@@ -655,8 +698,10 @@ the GraphQL field's nullability does not change. Review clients that previously
 expanded a hidden linked user or profile, and review the destination hooks
 before upgrading. Ordinary list reads batch scoped destinations; an automatic
 field on a custom-returned cached parent still checks its destination. Explicit
-relation resolvers and M2M output reads have separate rules. See
-[automatic output relation scope](usage/types.md#relation-scope-hatch).
+relation resolvers have separate rules; forward and reverse `ForeignKey` output
+reads follow [the same scope](#review-automatic-forward-and-reverse-fk-output-reads),
+and M2M output reads have [their own](#review-automatic-m2m-output-lists-and-counts).
+See [automatic output relation scope](usage/types.md#relation-scope-hatch).
 
 ### Review automatic M2M output lists and counts
 
@@ -701,8 +746,11 @@ schema and response caches include all grants for such schemas. Typed
 hidden target resolves to `null`, like a missing one. Targets of unregistered
 models and types that keep the default hook are unchanged. Optimized and list
 reads scope targets in one batched `GenericPrefetch`, so query counts do not grow
-with the number of owners. Grant target read permission and review target row
-scopes if you relied on source-only permission.
+with the number of owners. Only the `get_queryset` hooks of target types some
+owner on the page points to run, so a hook that raises for anonymous users no
+longer nulls an unrelated list; a hook that raises for a present target still
+fails the field. Grant target read permission and review target row scopes if you
+relied on source-only permission.
 
 ## Directives
 
@@ -954,6 +1002,30 @@ answer with `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` and an opaque
 `errorId` correlated with server logs; clients must not rely on raw exception
 text.
 
+### Malformed requests and server faults
+
+A `query` that is not a string (`{"query": 123}`) answers HTTP 400 `Must provide
+query string.`, and `variables` that are not a JSON object (`"variables": "[1]"`,
+`"variables": []`) answer HTTP 400 `Variables must be a JSON object.`, on GET,
+JSON, form and batch requests (a batch item fails alone, the others run). They
+used to answer 400 `INTERNAL_SERVER_ERROR` with a traceback in the server log.
+Conversely, a masked internal error that carries no field path, such as a
+failing `get_context`/`get_root_value` hook, now answers HTTP 500 instead of
+400. Syntax, validation and variable-coercion errors stay 400, and field errors
+stay inside HTTP 200. Client code that retried or alerted on `INTERNAL_SERVER_ERROR`
+400s for malformed bodies should treat them as ordinary client errors.
+
+### Subscriptions are rejected over HTTP
+
+A subscription operation sent to the HTTP views (`GraphQLView`, `BaseGraphQLView`
+and `AuthenticatedGraphQLView`) answers HTTP 400 with the error `Subscriptions
+are not supported over HTTP; use the WebSocket or SSE transport.` and
+`extensions.code` `SUBSCRIPTION_NOT_SUPPORTED`. Before, the response was HTTP 200
+with `{"data": {"field": null}}` and no hint. Only the operation selected by
+`operationName` is judged, and each subscription item of a batch gets its own
+error entry. Point subscription clients at the WebSocket or SSE endpoint; see
+[Subscriptions](usage/subscriptions.md).
+
 ### Synchronous views reject async results
 
 Unsupported async resolver, middleware and executor results on the synchronous
@@ -976,7 +1048,11 @@ or body-size middleware ahead of CSRF.
 The raw `JSON` scalar no longer emits `NaN` or `Infinity` in output: a resolver or
 `JSONField` value that is or contains a non-finite float, at any depth, is a
 field error (`JSON cannot represent non-finite numbers`) with the field `null`.
-Finite values and `JSONString` are unchanged. With `CLEAN_RESPONSE=True`, numeric
+Every container the encoder emits is checked (mappings including `OrderedDict`,
+tuples, lists, sets), not only `dict` and `list`. Raw `JSON` inputs reject
+non-finite numbers too, including nested variable values, and an optional
+variable omitted inside a list literal keeps the positions of the other
+elements. Finite values and `JSONString` are unchanged. With `CLEAN_RESPONSE=True`, numeric
 zero and `false` are preserved in ordinary responses (they used to be dropped);
 nulls, empty strings and empty containers are still removed.
 
@@ -989,7 +1065,12 @@ the setting's existing uncapped behavior. Zero retains its distinct meaning:
 no batch operations, no request-body bytes, or disabled document caches,
 respectively. Defaults and positive values are unchanged. Validation occurs
 when the setting is read; it is not a new startup system check or a general
-type validator.
+type validator. The settings added in 4.1 are stricter about type:
+`DOCUMENT_CACHE_MAX_QUERY_LENGTH`, `OPTIMIZER_WORK_BUDGET` and
+`MAX_DIRECTIVE_OUTPUT_TOTAL` raise `ImproperlyConfigured` unless the value is an
+integer or `None` (`"65536"` and `True` are rejected), and `COST_DIRECTIVE`
+raises for a negative, fractional, boolean or non-number value instead of being
+truncated.
 
 ### Multipart upload size limit
 
@@ -1065,12 +1146,44 @@ Automatic model-signal subscription notifications are best-effort: an ordinary
 notification error logs metadata only and drops the event without failing a
 successful save or generated mutation. Explicit manual broadcasts stay strict.
 Handle delivery explicitly if you depended on automatic delivery exceptions.
-Subscription `exact` filters on `Float` and `Decimal` fields now match an equal
-integer snapshot value, and a `DecimalRangeField` bound or `DurationField`
+Subscription `exact` filters on `Float` and `Decimal` fields compare numeric
+snapshots by value like a database column: an integer snapshot matches an equal
+float or Decimal, a float snapshot matches `Decimal("1.50")`, and
+`2**53 + 1` matches `float(2**53)` (when a float is on either side the other
+operand is rounded to the nearest float first). Booleans, NaN, infinities and
+integers beyond the float range still never match. Also, a `DecimalRangeField` bound or `DurationField`
 selected on an event type is delivered as a `Float` (total seconds for
 durations) instead of failing on every read. That last change is a fix, not a
 behavior change: those fields raised on every read before, so no working client
 depends on the old result, and the SDL is unchanged.
+
+### subscription_scope intersects the client filter
+
+`subscription_scope` used to replace a client `filter` on the same key. It now
+intersects with it: an event is delivered only when it matches both. A client
+asking for `filter: {status: {exact: DRAFT}}` under a scope of `PUBLISHED` used to
+receive the published rows it had filtered out; it now receives nothing (a value
+that contradicts the scope on the same key joins no group). Subscriptions without
+a scope are unchanged. See [Subscriptions](usage/subscriptions.md).
+
+### Fan-out isolation and SSE leases
+
+Automatic fan-out on the synchronous path (WSGI, Celery, management commands)
+sends to each channel-layer group independently, like the ASGI path: one failing
+group no longer prevents the others from receiving the event. The drop log line
+now ends with `exception=<qualified chain>` (the dotted class names of the
+exception and its causes, for example `redis.exceptions.ConnectionError`) instead
+of only the bare class name; it still never contains exception messages, group
+names or event data, so update log alerts that matched the old text.
+
+With the Redis-backed per-account SSE stream cap, streams of one process share a
+single Redis client per URL, with a health check on idle connections and TCP
+keepalive, and lease admission retries once after a connection error, so a stale
+pooled connection no longer answers the first stream with HTTP 503. A failed
+lease renewal, including the first one, is retried after five seconds while the
+last confirmed renewal is less than 40 seconds old (45-second lease minus a
+five-second margin); a renewal Redis answers with "not owned", or errors lasting
+longer than that, still end the stream.
 
 ## New settings
 
