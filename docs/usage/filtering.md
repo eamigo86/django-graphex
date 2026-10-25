@@ -540,6 +540,15 @@ or inside `and` / `or`.
 | `not: { or: [x, y] }` | No related row matches x or y. |
 | `not: { not: x }` | Some related row matches x. |
 
+An `or` operand that holds a relation key follows the same rule as an `and`
+operand **one level up**, beside a sibling relation key or a negated operand:
+each relation branch matches its own related row. On a post,
+`{ or: [{ tags: x }], tags: z }` matches a post that has an `x` tag **and** a
+(possibly different) `z` tag, exactly like `{ and: [{ tags: x }], tags: z }`;
+and `{ or: [{ tags: x }, { not: { tags: z } }] }` tests "has x" and "has no z"
+independently. Keep both criteria inside one relation object (`tags: { ... }`)
+when one tag must satisfy them.
+
 The rule applies at every to-many relation object, including one nested in
 another (`comments: { tags: { not: ... } }`), and a `not` that **encloses** a
 whole relation object (`not: { tags: x }`) is the complement of the parent set

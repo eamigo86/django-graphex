@@ -25,6 +25,7 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 - Interface fields: only fields the interface declares use the explicit wire name ([migration](docs/UPGRADE-4.1.md#interface-field-wire-names)).
 - Mutable input defaults are copied per request; zero-argument factories run per input ([migration](docs/UPGRADE-4.1.md#mutable-defaults-are-copied)).
 - `not` inside a to-many relation filter means NOT EXISTS; separate `and` branches use separate rows ([migration](docs/UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
+- An `or` operand holding a relation key next to a sibling relation key (or a negated operand) matches its own related row, like an `and` operand ([migration](docs/UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
 - `exact: null` selects NULL rows ([migration](docs/UPGRADE-4.1.md#explicit-exact-null-selects-null-rows)).
 - Primary-key tie-break can reorder tied rows; tampered cursors answer `Invalid cursor` ([migration](docs/UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
 - Numeric `DateField`/`DateTimeField` part filters take `Int` ([migration](docs/UPGRADE-4.1.md#numeric-date-part-filters-take-int)).
@@ -351,6 +352,14 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   broader type) for the schema that serves the write.
 
 ### Fixes and changes
+
+- Give `or` operands over a to-many relation their own related rows, like `and`
+  operands. `{ or: [{ tags: x }], tags: z }` returned nothing for a post tagged
+  `x` and `z` because both criteria shared one join, while
+  `{ and: [{ tags: x }], tags: z }` matched it; an `or` of a relation operand
+  and a negated one had the same flaw. Each such operand now compiles to its
+  own `EXISTS`. A seeded randomized test checks and/or/not/relation mixes
+  against a plain-Python oracle.
 
 - `subscription_scope` now intersects with the client `filter` instead of
   replacing it. A subscriber asking for `filter: {status: {exact: DRAFT}}`

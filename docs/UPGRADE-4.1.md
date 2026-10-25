@@ -402,6 +402,14 @@ return one; group criteria inside one relation object to require the same row.
 Deeply nested `and` chains over to-many relations compile to sibling `EXISTS`
 and no longer fail on SQLite with `Expression tree is too large`.
 
+The same rule now applies to an `or` operand that holds a relation key. On a
+post, `{ or: [{ tags: x }], tags: z }` used to test both criteria on one shared
+tag row and returned nothing for a post tagged `x` and `z`; it now matches that
+post, like `{ and: [{ tags: x }], tags: z }`. An `or` of a relation operand and
+a negated one (`{ or: [{ tags: x }, { not: { tags: z } }] }`) tests "has x" and
+"has no z" independently. Results change only for these shapes; `or` operands
+without a sibling relation key or a `not` are unchanged.
+
 ### Numeric date-part filters take Int
 
 Explicitly declared numeric `DateField` and `DateTimeField` part filters

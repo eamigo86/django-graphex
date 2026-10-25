@@ -436,6 +436,17 @@ def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
         elif key == "or":
             if any(_has_independent_many_and(child, model) for child in value):
                 return True
+            # An "or" over a to-many relation shares one join with a sibling
+            # relation key, or with a negated operand; each needs its own
+            # witness, as an "and" operand has.
+            if any(to_q(child, model, _combinator="or")[1] for child in value):
+                siblings = {
+                    k: v for k, v in node.items() if k not in ("and", "or", "not")
+                }
+                if to_q(siblings, model)[1] or any(
+                    _has_inner_not(child, model, True) for child in value
+                ):
+                    return True
         elif key == "not" and _has_independent_many_and(value, model):
             return True
         else:
@@ -520,6 +531,12 @@ def _independent_many_q(
             has_any = False
             for child in value:
                 child_q = _independent_many_q(child, queryset, "or", scope)
+                # Like an "and" operand, an operand over a to-many relation
+                # owns its related rows; sibling keys at this level never
+                # share its join.
+                if child_q and to_q(child, queryset.model, _combinator="or")[1]:
+                    branch = queryset.filter(pk=OuterRef("pk")).filter(child_q)
+                    child_q = Q(Exists(branch))
                 combined = child_q if not has_any else (combined | child_q)
                 has_any = True
             if has_any:
