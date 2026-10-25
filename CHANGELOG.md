@@ -387,8 +387,9 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   as their execution. They were found in a 1024-entry LRU keyed by variable and
   root identity, so a still-running (for example async) execution lost its
   counter after 1024 other executions and restarted from zero. State is now keyed
-  weakly by the graphql-core executor; subscription events keep the bounded table
-  so each event still restarts its counter.
+  weakly by the graphql-core executor. The events of one subscription share their
+  stream's executor, so that entry also remembers the current event's root value
+  and starts a fresh counter for the next one.
 - Share the directive output budget across a batch when `get_context` returns a
   dict. `bind_request_budget` swallowed the `TypeError` of a context without an
   instance `__dict__`, so each item got its own budget; a mutable mapping now

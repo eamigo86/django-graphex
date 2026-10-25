@@ -4,11 +4,13 @@ Two scopes exist, and they differ on purpose:
 
 * "per execution": one GraphQL operation execution (a subscription event is its
   own execution). The state lives in a weak table keyed by the graphql-core
-  executor of the execution, so it lasts exactly as long as the execution. A
-  subscription event and an info without such an executor use a bounded table
-  keyed by the identity of the variable values and root value instead. This is
-  what the optimizer work budget uses, and the fallback of the directive output
-  budget.
+  executor of the execution, so it lasts exactly as long as the execution. The
+  events of one subscription share their stream's executor but run one after
+  the other, so that entry also remembers the root value of the current event
+  and starts a fresh state when another one arrives. An info without an
+  executor uses a bounded table keyed by the identity of the variable values
+  and root value instead. This is what the optimizer work budget uses, and the
+  fallback of the directive output budget.
 * "per request": every execution of one HTTP request, so all items of a batch
   share one budget. The view binds a RequestBudget to the request
   context; the directive output budget prefers it when it is present.
@@ -27,10 +29,9 @@ from graphql import OperationType
 #: Private attribute on a context holding its request-wide budget.
 REQUEST_BUDGET_ATTR = "_graphex_request_budget"
 
-#: Most subscription events (and executor-less infos) tracked by identity; the
-#: least recently used entry is dropped beyond this. An entry is only dropped
-#: after more than this many other executions charged while it was still
-#: running, which is far above any realistic concurrency; it restarts once.
+#: Most executor-less infos (test doubles) tracked by identity; the least
+#: recently used entry is dropped beyond this. Real executions never use this
+#: table, so nothing can evict one that is still running.
 EXECUTION_TABLE_SIZE = 1024
 
 
@@ -56,10 +57,12 @@ class ExecutionStates:
 
     An execution is identified by its graphql-core executor, held weakly so the
     state dies with it and nothing can evict a live one. A subscription event
-    shares the executor of its source stream, and an info without an executor
-    (a test double) has none; both fall back to a bounded table keyed by the
-    variable values and the root value. Its entries hold both objects, so an
-    identity can only match while its execution is alive.
+    shares the executor of its source stream; the events of a stream run
+    sequentially, so the entry also holds the root value of the current event
+    and a different root value starts a fresh state. An info without an
+    executor (a test double) falls back to a bounded table keyed by the variable
+    values and the root value. Its entries hold both objects, so an identity can
+    only match while its execution is alive.
     """
 
     def __init__(self, size: int = EXECUTION_TABLE_SIZE) -> None:
@@ -96,18 +99,18 @@ class ExecutionStates:
         Returns:
             The execution's state object.
         """
-        if not is_subscription(info):
-            executor = getattr(
-                getattr(getattr(info, "async_helpers", None), "track", None),
-                "__self__",
-                None,
-            )
+        executor = getattr(
+            getattr(getattr(info, "async_helpers", None), "track", None),
+            "__self__",
+            None,
+        )
+        if executor is not None:
+            root = getattr(info, "root_value", None)
             try:
-                state = self._by_executor.get(executor)
-                if state is None and executor is not None:
-                    state = self._by_executor[executor] = factory()
-                if state is not None:
-                    return state
+                entry = self._by_executor.get(executor)
+                if entry is None or (is_subscription(info) and entry[0] is not root):
+                    entry = self._by_executor[executor] = [root, factory()]
+                return entry[1]
             except TypeError:  # not hashable or not weak-referenceable
                 pass
         variables = getattr(info, "variable_values", None)

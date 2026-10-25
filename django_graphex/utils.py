@@ -1234,8 +1234,10 @@ def _request_work(info: GraphQLResolveInfo) -> dict[str, Any]:
     The state lives in a module table keyed by the graphql-core executor of the
     execution, so it lasts exactly as long as the execution and does not depend
     on what kind of context the application passes (a dict, None or a mock all
-    work). A subscription event, or an info without an executor, uses a bounded
-    table keyed by the identity of the variable values and root value.
+    work). The events of a subscription share their stream's executor, so the
+    entry also tracks the current event's root value and restarts per event. An
+    info without an executor uses a bounded table keyed by the identity of the
+    variable values and root value.
 
     Args:
         info: Resolve information of any root field of the execution.

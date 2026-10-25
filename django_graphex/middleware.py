@@ -56,7 +56,9 @@ def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     else (a subscription event, a transport, a direct "execute" call) is its own
     scope: the counter is kept per execution in a table keyed by the
     graphql-core executor, so it lasts as long as the execution. Subscription
-    events share the executor of their source stream and fall back to a bounded
+    events share the executor of their source stream and run one after the
+    other, so the entry also tracks the current event's root value and restarts
+    when a new one arrives. An info without an executor falls back to a bounded
     table keyed by the identity of the variable values and root value. Entries
     hold both objects, so an identity can only match while its execution is
     alive. Events share their variable values but each has its own root value,

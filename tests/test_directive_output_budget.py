@@ -364,6 +364,7 @@ def test_execution_table_stays_bounded() -> None:
 
     The module table drops its least recently used entries past a fixed size.
     """
+    import gc
     from types import SimpleNamespace
 
     from django_graphex import middleware
@@ -372,6 +373,7 @@ def test_execution_table_stays_bounded() -> None:
     for _ in range(EXECUTION_TABLE_SIZE + 20):
         info = SimpleNamespace(variable_values={}, root_value=None, context=None)
         middleware._charge(info, 1, "replace")  # type: ignore[arg-type]
+    gc.collect()  # entries of finished executions leave the weak table
     assert len(middleware._EXECUTIONS) <= EXECUTION_TABLE_SIZE
 
 
@@ -880,3 +882,79 @@ def test_real_subscription_events_each_get_their_own_counter() -> None:
     results = asyncio.run(go())
     assert len(results) == 3
     assert not any(result.errors for result in results)
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_live_subscription_event_keeps_its_counter_across_other_events() -> None:
+    """A subscription event still running is not reset by other streams' events.
+
+    Event one grows 99 characters, then waits while more than the fallback table
+    size of events of another subscription complete; its next 99 must exceed 150.
+    """
+    import asyncio
+
+    from graphql import subscribe
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def second(*_: Any) -> str:
+        started.set()
+        await release.wait()
+        return "x"
+
+    async def main_source(*_: Any) -> Any:
+        yield {"n": 1}
+
+    async def filler_source(*_: Any) -> Any:
+        for index in range(_FILLERS):
+            yield {"n": index}
+
+    item = GraphQLObjectType(
+        "Item",
+        {
+            "one": GraphQLField(GraphQLString, resolve=lambda *_: "x"),
+            "two": GraphQLField(GraphQLString, resolve=second),
+            "plain": GraphQLField(GraphQLString, resolve=lambda *_: "x"),
+        },
+    )
+    schema = GraphQLSchema(
+        query=_QUERY,
+        subscription=GraphQLObjectType(
+            "S",
+            {
+                "main": GraphQLField(
+                    item, subscribe=main_source, resolve=lambda value, _i: value
+                ),
+                "filler": GraphQLField(
+                    item, subscribe=filler_source, resolve=lambda value, _i: value
+                ),
+            },
+        ),
+        directives=[*specified_directives, *all_directives],
+    )
+
+    async def go() -> Any:
+        middleware = [GraphQLDirectiveMiddleware()]
+        main = subscribe(
+            schema,
+            parse(
+                "subscription { main { one @center(width: 100) two @center(width: 100) } }"
+            ),
+            middleware=middleware,
+        )
+        task = asyncio.ensure_future(main.__anext__())
+        await started.wait()
+        async for result in subscribe(
+            schema,
+            parse("subscription { filler { plain @center(width: 100) } }"),
+            middleware=middleware,
+        ):
+            assert not result.errors
+        release.set()
+        return await task
+
+    result = asyncio.run(go())
+    assert result.data is not None
+    assert result.data["main"]["two"] is None
+    assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in result.errors[0].message
