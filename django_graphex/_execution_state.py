@@ -12,8 +12,11 @@ Two scopes exist, and they differ on purpose:
   and root value instead. This is what the optimizer work budget uses, and the
   fallback of the directive output budget.
 * "per request": every execution of one HTTP request, so all items of a batch
-  share one budget. The view binds a RequestBudget to the request
-  context; the directive output budget prefers it when it is present.
+  share one budget. The view opens a request_budget_scope around the whole
+  request; the budget travels in a context variable, so the user's context
+  value is never touched and any context type works. The directive output
+  budget prefers it when it is present (and the execution is not a
+  subscription event).
 """
 
 from __future__ import annotations
@@ -21,13 +24,17 @@ from __future__ import annotations
 import threading
 import weakref
 from collections import OrderedDict
-from collections.abc import MutableMapping
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Callable
 
 from graphql import OperationType
 
-#: Private attribute on a context holding its request-wide budget.
-REQUEST_BUDGET_ATTR = "_graphex_request_budget"
+#: Request-wide budget of the HTTP request being served in this context.
+_REQUEST_BUDGET: ContextVar[RequestBudget | None] = ContextVar(
+    "graphex_request_budget", default=None
+)
 
 #: Most executor-less infos (test doubles) tracked by identity; the least
 #: recently used entry is dropped beyond this. Real executions never use this
@@ -125,54 +132,32 @@ class ExecutionStates:
         return entry[2]
 
 
-def request_budget_of(context: Any) -> RequestBudget | None:
-    """Return the request budget bound to a context, if any.
+@contextmanager
+def request_budget_scope() -> Iterator[RequestBudget]:
+    """Share one fresh budget across everything run inside the block.
 
-    The lookup reads the instance "__dict__" directly: "getattr" would trust a
-    context whose "__getattr__" invents values (a mock). A mutable mapping (a
-    dict context) carries the budget under the same private key; None has
-    nothing to read.
+    The budget is carried by a context variable, never by the user's context
+    value, so any context type (and a context object shared between requests)
+    works and concurrent requests stay apart. The variable is reset on exit.
 
-    Args:
-        context: The execution context value.
+    Yields:
+        The budget of this scope.
+    """
+    budget = RequestBudget()
+    token = _REQUEST_BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _REQUEST_BUDGET.reset(token)
+
+
+def current_request_budget() -> RequestBudget | None:
+    """Return the budget of the enclosing request scope, if any.
 
     Returns:
-        The bound budget, or None.
+        The budget set by "request_budget_scope", or None outside one.
     """
-    try:
-        carrier = vars(context)
-    except TypeError:
-        if not isinstance(context, MutableMapping):
-            return None
-        carrier = context
-    found = carrier.get(REQUEST_BUDGET_ATTR)
-    return found if isinstance(found, RequestBudget) else None
-
-
-def bind_request_budget(request: Any, context: Any) -> None:
-    """Share one budget across every execution of an HTTP request.
-
-    The budget lives on the request; a context that is a different object (a
-    custom "get_context") is bound to the same budget. A mutable mapping
-    carries it under the private key; None, an immutable mapping or a
-    "__slots__" object keeps the per-execution budget.
-
-    Args:
-        request: The incoming HTTP request.
-        context: The execution context built for one execution of the request.
-    """
-    try:
-        shared = request_budget_of(request) or RequestBudget()
-        vars(request)[REQUEST_BUDGET_ATTR] = shared
-        if context is request:
-            return
-        try:
-            vars(context)[REQUEST_BUDGET_ATTR] = shared
-        except TypeError:
-            if isinstance(context, MutableMapping):
-                context[REQUEST_BUDGET_ATTR] = shared
-    except TypeError:
-        return
+    return _REQUEST_BUDGET.get()
 
 
 def is_subscription(info: Any) -> bool:

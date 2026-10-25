@@ -59,7 +59,7 @@ from graphql.pyutils import is_awaitable, is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
-from ._execution_state import bind_request_budget
+from ._execution_state import request_budget_scope
 from .core._flat_gfk_scope import signature_grants
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
@@ -1402,7 +1402,9 @@ class BaseGraphQLView(View):
             self._enforce_request_body_size(request)
         except HttpError as e:
             return self._http_error_response(request, e)
-        return self._dispatch_with_csrf_cookie(request, *args, **kwargs)
+        # Every item of a batch draws from one directive output budget.
+        with request_budget_scope():
+            return self._dispatch_with_csrf_cookie(request, *args, **kwargs)
 
     def _http_error_response(self, request: Any, error: HttpError) -> HttpResponse:
         """Serialize an HttpError into the GraphQL error envelope.
@@ -1853,8 +1855,6 @@ class BaseGraphQLView(View):
             )
 
         context = self.get_context(request)
-        # Every item of a batch draws from one directive output budget.
-        bind_request_budget(request, context)
         try:
             execute_options = {
                 "root_value": self.get_root_value(request),

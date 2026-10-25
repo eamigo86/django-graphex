@@ -12,8 +12,8 @@ from graphql.type.directives import GraphQLIncludeDirective, GraphQLSkipDirectiv
 from ._execution_state import (
     ExecutionStates,
     RequestBudget,
+    current_request_budget,
     is_subscription,
-    request_budget_of,
 )
 from .registry import get_global_registry
 from .settings import graphql_api_settings
@@ -51,8 +51,9 @@ def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     """Charge text grown by a directive against the output budget.
 
     The counter never lives in anything the client controls. An execution run
-    by the GraphQL view shares the budget of its whole HTTP request, so every
-    item of a batch draws from the same "MAX_DIRECTIVE_OUTPUT_TOTAL". Anything
+    by the GraphQL view shares the budget of its whole HTTP request (a context
+    variable the view sets around the request, whatever the context type), so
+    every item of a batch draws from the same "MAX_DIRECTIVE_OUTPUT_TOTAL". Anything
     else (a subscription event, a transport, a direct "execute" call) is its own
     scope: the counter is kept per execution in a table keyed by the
     graphql-core executor, so it lasts as long as the execution. Subscription
@@ -76,7 +77,7 @@ def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     maximum = graphql_api_settings.MAX_DIRECTIVE_OUTPUT_TOTAL
     if maximum is None:
         return
-    shared = None if is_subscription(info) else request_budget_of(info.context)
+    shared = None if is_subscription(info) else current_request_budget()
     with _EXECUTIONS.lock:
         if shared is None:
             counter = _EXECUTIONS.get(info, RequestBudget)

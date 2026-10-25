@@ -64,7 +64,7 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 - Malformed model primary-key ids answer a field error with `extensions.code` `INVALID_ID` instead of `null` ([migration](UPGRADE-4.1.md#distinguish-malformed-ids-from-missing-objects)).
 - Library transformation directives declare only the `FIELD` location, and `@date`, `@number` and `@currency` keep `null` ([migration](UPGRADE-4.1.md#move-transformation-directives-from-fragments-to-fields); [migration](UPGRADE-4.1.md#review-null-values-under-numeric-formatting-directives); [migration](UPGRADE-4.1.md#review-nullable-fields-formatted-with-date)).
 - `@round`, `@floor`, `@ceil` and `@abs` compute exactly on `Decimal` and `BigInt` (`@round` rounds half to even) ([migration](UPGRADE-4.1.md#numeric-directives-on-decimal-and-bigint)).
-- `MAX_DIRECTIVE_OUTPUT_TOTAL` is one budget per HTTP request shared by every batch item, also when `get_context` returns a dict or another mutable mapping; `COST_DIRECTIVE` is validated ([migration](UPGRADE-4.1.md#output-caps-for-directives)).
+- `MAX_DIRECTIVE_OUTPUT_TOTAL` is one budget per HTTP request shared by every batch item, whatever `get_context` returns; `COST_DIRECTIVE` is validated ([migration](UPGRADE-4.1.md#output-caps-for-directives)).
 - Exact `set[...]`, `dict[str, ...]`, `Union[int, str]`, `Literal` and nested-list input annotations compile to typed GraphQL inputs, which changes the SDL ([migration](UPGRADE-4.1.md#input-annotations)).
 - The enhanced `GraphQLView` answers an execution error through a non-null root field with HTTP 200 and `data: null` instead of HTTP 400 ([migration](UPGRADE-4.1.md#execution-errors-return-http-200)).
 - A `query` that is not a string and `variables` that are not an object (including `[]`) answer a clean HTTP 400; a masked internal error outside field execution answers HTTP 500 ([migration](UPGRADE-4.1.md#malformed-requests-and-server-faults)).
@@ -423,10 +423,14 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   weakly by the graphql-core executor. The events of one subscription share their
   stream's executor, so that entry also remembers the current event's root value
   and starts a fresh counter for the next one.
-- Share the directive output budget across a batch when `get_context` returns a
-  dict. `bind_request_budget` swallowed the `TypeError` of a context without an
-  instance `__dict__`, so each item got its own budget; a mutable mapping now
-  carries it under the private key `_graphex_request_budget`.
+- Share the directive output budget across a batch for every context type, and
+  keep concurrent requests apart. The budget was written onto the request and the
+  user's context, so a dict or `__slots__` context never shared it, and a context
+  object returned for every request (a module-level dict or singleton) let one
+  request overwrite the counter of another. The view now sets a context variable
+  around the whole HTTP request and the directive middleware reads it; nothing is
+  written to the context any more. A subscription event and an execution the view
+  did not start keep their own per-execution counter.
 - Make the cursor parity matrix independent of the database pk sequence. A decimal
   boundary such as `1e-999` compared as zero on SQLite but exactly in memory, so
   the pages differed whenever row pks were not `1..5`; both paths now refuse a
@@ -574,12 +578,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 - Fix the scope of the directive output budget. `MAX_DIRECTIVE_OUTPUT_TOTAL`
   was counted per execution, so a 10-item batch got ten times the budget; it is
-  now per HTTP request (the GraphQL view binds one counter to the request, and
-  every batch item draws from it). A subscription event keeps its own budget.
+  now per HTTP request (the GraphQL view carries one counter in a context
+  variable, and every batch item draws from it). A subscription event keeps its own budget.
   Executions the view does not start use a per-execution counter in one bounded
   table that no longer evicts live counters at 64 concurrent executions (limit
-  1,024), and the counter is read from the context's own `__dict__`, so a
-  context whose `__getattr__` invents values (a mock) can no longer disable it.
+  1,024), and the request counter is never read from the context, so a context
+  whose `__getattr__` invents values (a mock) can no longer disable it.
   The optimizer work budget shares the same table and stays per execution
   (each batch item plans its own selection); it also no longer depends on the
   context type.

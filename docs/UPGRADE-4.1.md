@@ -897,12 +897,10 @@ replacement, is a GraphQL field error, and a result at the cap stays valid. New
 `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters per HTTP request,
 `None` disables) charges every directive for the text it adds; once spent,
 further directive uses become field errors. The budget is shared by every item
-of a batch (the GraphQL view binds one counter to the request), restarts for
-each subscription event, and is per execution for anything the view does not run
-(a direct `execute` call, a transport) or a context that cannot carry the
-counter (`None`, an immutable mapping, `__slots__`). A `get_context` that
-returns a dict or another mutable mapping carries the counter under the private
-key `_graphex_request_budget`, so batch items still share it. Many aliases and rows each under the
+of a batch (the GraphQL view carries one counter in a context variable for the
+whole HTTP request, whatever `get_context` returns, and never writes to the context),
+restarts for each subscription event, and is per execution for anything the view does
+not run (a direct `execute` call, a transport). Many aliases and rows each under the
 per-field cap can no longer produce hundreds of megabytes. Raise either setting
 or set it to `None` if you legitimately transform very large text. The opt-in
 `COST_DIRECTIVE` setting (default `0`) adds cost per custom directive use, so

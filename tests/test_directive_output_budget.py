@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -568,80 +569,286 @@ def _post_two_items(view_class: Any) -> list[dict[str, Any]]:
     return json.loads(response.content)  # type: ignore[no-any-return]
 
 
-def _dict_context_view() -> Any:
-    """Build a view class whose context is a plain dict.
+def _context_view(make_context: Any) -> Any:
+    """Build a view class whose context comes from the given factory.
+
+    Args:
+        make_context: Called with the request; returns the execution context.
 
     Returns:
-        A GraphQLView subclass with a dict get_context.
+        A GraphQLView subclass with that get_context.
     """
     from django_graphex.views import GraphQLView
 
-    class DictContextView(GraphQLView):
-        """View handing resolvers a dict instead of the request."""
+    class ContextView(GraphQLView):
+        """View handing resolvers the factory's context."""
 
         def get_context(self, request: Any) -> Any:
-            """Return a dict context.
+            """Return the factory's context.
 
             Args:
                 request: The incoming HTTP request.
 
             Returns:
-                A new dict holding the request.
+                The context value.
             """
-            return {"request": request}
+            return make_context(request)
 
-    return DictContextView
+    return ContextView
 
 
-@pytest.mark.parametrize("dict_context", [False, True])
-def test_batch_shares_the_budget_for_any_mutable_context(dict_context: bool) -> None:
-    """Two items growing 99 characters each cannot both fit a budget of 100.
+class _Slotted:
+    """Context object that cannot take any attribute."""
 
-    The default request context and a dict context both carry the counter.
+    __slots__ = ("request",)
+
+
+_SINGLETON: dict[str, Any] = {}
+
+
+def _slotted(request: Any) -> _Slotted:
+    """Build a __slots__ context.
 
     Args:
-        dict_context: Whether the view hands resolvers a dict context.
-    """
-    from django_graphex.views import GraphQLView
+        request: The incoming HTTP request.
 
-    view = _dict_context_view() if dict_context else GraphQLView
-    first, second = _post_two_items(view)
+    Returns:
+        A new slotted context.
+    """
+    context = _Slotted()
+    context.request = request
+    return context
+
+
+@pytest.mark.parametrize(
+    "make_context",
+    [
+        lambda request: request,
+        lambda request: {"request": request},
+        lambda request: None,
+        _slotted,
+        lambda request: _SINGLETON,
+        lambda request: MappingProxyType({}),
+    ],
+    ids=["request", "dict", "none", "slots", "singleton", "immutable"],
+)
+def test_batch_shares_the_budget_for_any_context(make_context: Any) -> None:
+    """Two items growing 99 characters each cannot both fit a budget of 100.
+
+    The budget no longer lives on the context, so its type does not matter.
+
+    Args:
+        make_context: Builds the view's context from the request.
+    """
+    first, second = _post_two_items(_context_view(make_context))
     assert not first.get("errors")
     assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in second["errors"][0]["message"]
 
 
-def test_reused_dict_context_gets_a_fresh_budget_per_request() -> None:
-    """The same dict bound for a new request starts from zero again.
+def test_the_view_never_writes_to_the_context() -> None:
+    """A context object comes out of a request exactly as it went in.
 
-    Each request binds a new budget object over the reused dict.
+    The budget travels in a context variable, not in the context.
     """
-    from types import SimpleNamespace
-
-    from django_graphex._execution_state import bind_request_budget, request_budget_of
-
-    context: dict[str, Any] = {}
-    seen = []
-    for _ in range(2):
-        request = SimpleNamespace()
-        bind_request_budget(request, context)
-        budget = request_budget_of(context)
-        assert budget is request_budget_of(request)
-        seen.append(budget)
-    assert seen[0] is not seen[1]
+    context: dict[str, Any] = {"kept": 1}
+    _post_two_items(_context_view(lambda request: context))
+    assert context == {"kept": 1}
 
 
-def test_immutable_mapping_context_stays_per_execution() -> None:
-    """A mapping that cannot take the counter is not bound.
+def test_shared_context_object_keeps_requests_apart() -> None:
+    """A singleton context cannot mix the budgets of two concurrent requests.
 
-    The execution then keeps its per-execution budget.
+    Request A charges 99 characters, then waits inside its second field while
+    request B runs to completion; A's second charge must still be refused and
+    B must be charged nothing of A.
     """
-    from types import MappingProxyType, SimpleNamespace
+    import json
+    import threading
+    from types import ModuleType
 
-    from django_graphex._execution_state import bind_request_budget, request_budget_of
+    from django.test import Client
+    from django.urls import path
 
-    context = MappingProxyType({})
-    bind_request_budget(SimpleNamespace(), context)
-    assert request_budget_of(context) is None
+    shared: dict[str, Any] = {}
+    b_done, a_waiting = threading.Event(), threading.Event()
+
+    def wait(*_args: Any) -> str:
+        """Block request A until request B has finished.
+
+        Returns:
+            A short string.
+        """
+        a_waiting.set()
+        assert b_done.wait(10)
+        return "x"
+
+    schema = SimpleNamespace(
+        graphql_schema=GraphQLSchema(
+            query=GraphQLObjectType(
+                "Q",
+                {
+                    "a": GraphQLField(GraphQLString, resolve=lambda *_: "x"),
+                    "w": GraphQLField(GraphQLString, resolve=wait),
+                },
+            ),
+            directives=[*specified_directives, *all_directives],
+        )
+    )
+    view = _context_view(lambda request: shared)
+    urls = ModuleType("budget_shared_urls")
+    urls.urlpatterns = [path("g/", view.as_view(schema=schema))]  # type: ignore[attr-defined]
+    answers: dict[str, Any] = {}
+    settings_override = {
+        "MAX_DIRECTIVE_OUTPUT_TOTAL": 150,
+        "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
+    }
+
+    def post(query: str) -> Any:
+        """POST one query.
+
+        Args:
+            query: The GraphQL document.
+
+        Returns:
+            The decoded answer.
+        """
+        response = Client().post(
+            "/g/", data=json.dumps({"query": query}), content_type="application/json"
+        )
+        return json.loads(response.content)
+
+    with override_settings(DJANGO_GRAPHEX=settings_override, ROOT_URLCONF=urls):
+        first = threading.Thread(
+            target=lambda: answers.update(
+                a=post("{ one: a @center(width: 100) two: w @center(width: 100) }")
+            )
+        )
+        first.start()
+        assert a_waiting.wait(10)
+        answers["b"] = post("{ __typename }")
+        b_done.set()
+        first.join(10)
+    assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in answers["a"]["errors"][0]["message"]
+    assert not answers["b"].get("errors")
+
+
+def test_request_budget_does_not_outlive_the_view() -> None:
+    """The context variable is unset once the view returns, even on error.
+
+    Raises:
+        RuntimeError: Expected from the failing view, asserted by the test.
+    """
+    from django.test import RequestFactory
+
+    from django_graphex._execution_state import current_request_budget
+    from django_graphex.views import GraphQLView
+
+    view = GraphQLView.as_view(schema=_budget_schema())
+    request = RequestFactory().post(
+        "/g/", data='{"query": "{ a }"}', content_type="application/json"
+    )
+    view(request)
+    assert current_request_budget() is None
+
+    class Boom(GraphQLView):
+        """View whose body parsing raises something unexpected."""
+
+        def parse_body(self, request: Any) -> Any:
+            """Raise.
+
+            Args:
+                request: The incoming HTTP request.
+
+            Raises:
+                RuntimeError: Always.
+            """
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        Boom.as_view(schema=_budget_schema())(request)
+    assert current_request_budget() is None
+
+
+def _budget_schema() -> Any:
+    """Build a one-field schema for view-level tests.
+
+    Returns:
+        An object exposing graphql_schema.
+    """
+    return SimpleNamespace(
+        graphql_schema=GraphQLSchema(
+            query=GraphQLObjectType(
+                "Q", {"a": GraphQLField(GraphQLString, resolve=lambda *_: "x")}
+            ),
+            directives=[*specified_directives, *all_directives],
+        )
+    )
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_direct_execution_stays_per_execution() -> None:
+    """An execution the view did not start counts alone.
+
+    Each direct execution has its own counter, so none is ever refused here.
+    """
+    schema = _budget_schema().graphql_schema
+    for _ in range(3):
+        result = graphql_sync(
+            schema,
+            "{ a @center(width: 100) }",
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+        assert not result.errors
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_request_budget_reaches_gathered_resolvers() -> None:
+    """Resolvers awaited through asyncio.gather draw from the same budget.
+
+    Tasks copy the context, so the variable is visible in each of them.
+    """
+    import asyncio
+
+    from graphql import graphql
+
+    from django_graphex._execution_state import request_budget_scope
+
+    async def slow(*_args: Any) -> str:
+        """Yield to the loop, then return a short string.
+
+        Returns:
+            A short string.
+        """
+        await asyncio.sleep(0)
+        return "x"
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType("Q", {"a": GraphQLField(GraphQLString, resolve=slow)}),
+        directives=[*specified_directives, *all_directives],
+    )
+
+    async def run() -> list[Any]:
+        """Run two executions concurrently inside one request scope.
+
+        Returns:
+            The two execution results.
+        """
+        with request_budget_scope():
+            return list(
+                await asyncio.gather(
+                    *(
+                        graphql(
+                            schema,
+                            "{ a @center(width: 100) }",
+                            middleware=[GraphQLDirectiveMiddleware()],
+                        )
+                        for _ in range(2)
+                    )
+                )
+            )
+
+    results = asyncio.run(run())
+    assert sum(bool(r.errors) for r in results) == 1
 
 
 def test_a_single_request_item_is_unchanged() -> None:
@@ -658,29 +865,25 @@ def test_a_single_request_item_is_unchanged() -> None:
 def test_subscription_events_restart_even_with_a_request_budget() -> None:
     """A subscription event ignores the request budget and has its own.
 
-    Events of a long-lived request context would otherwise accumulate.
+    Events of a long-lived request would otherwise accumulate.
     """
-    from types import SimpleNamespace
-
     from graphql import OperationType
 
-    from django_graphex._execution_state import RequestBudget, bind_request_budget
+    from django_graphex._execution_state import request_budget_scope
     from django_graphex.middleware import _charge
 
-    request = SimpleNamespace()
-    bind_request_budget(request, request)
-    assert isinstance(vars(request)["_graphex_request_budget"], RequestBudget)
     subscription = SimpleNamespace(operation=OperationType.SUBSCRIPTION)
     shared: dict[str, Any] = {}
-    for _ in range(3):
-        info = SimpleNamespace(
-            variable_values=shared,
-            root_value={},
-            context=request,
-            operation=subscription,
-        )
-        _charge(info, 8, "replace")  # type: ignore[arg-type]
-    assert vars(request)["_graphex_request_budget"].used == 0
+    with request_budget_scope() as budget:
+        for _ in range(3):
+            info = SimpleNamespace(
+                variable_values=shared,
+                root_value={},
+                context=None,
+                operation=subscription,
+            )
+            _charge(info, 8, "replace")  # type: ignore[arg-type]
+    assert budget.used == 0
 
 
 _FILLERS = 1100
