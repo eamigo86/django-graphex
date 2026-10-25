@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import secrets
 from bisect import bisect_left
 from typing import TYPE_CHECKING, Any, Callable
 
+from django.conf import settings as django_settings
+from django.db import DatabaseError
 from graphql import GraphQLError
 
 from .settings import graphql_api_settings
@@ -18,7 +22,10 @@ __all__ = (
     "AuthenticatedFieldsMiddleware",
     "introspection_disabled",
     "format_graphql_error",
+    "format_client_error",
 )
+
+error_logger = logging.getLogger("django_graphex.internal_errors")
 
 #: GraphQL meta-fields that perform schema introspection.
 _INTROSPECTION_FIELDS = ("__schema", "__type")
@@ -367,3 +374,173 @@ def format_graphql_error(error: Any, middleware: Any = None) -> dict:
     # Group 1 is the rule's own message, so the result is never empty.
     formatted["message"] = _strip_suggestion(str(formatted.get("message", "")))
     return formatted
+
+
+#: Attribute set on errors raised before execution starts (parse, validate and
+#: variable coercion). Those are client input errors even when graphql-core
+#: wraps a custom scalar's raw ValueError/TypeError as the original error.
+CLIENT_ERROR_ATTR = "_graphex_client_error"
+
+
+def mark_client_errors(errors: Any) -> Any:
+    """Flag pre-execution errors as client errors by phase.
+
+    Args:
+        errors: The errors produced while parsing or validating the document.
+
+    Returns:
+        The same errors, for chaining.
+    """
+    for error in errors or ():
+        if isinstance(error, GraphQLError):
+            setattr(error, CLIENT_ERROR_ATTR, True)
+    return errors
+
+
+def mark_request_errors(result: Any) -> Any:
+    """Flag the path-less errors of an execution result as client errors.
+
+    Variable-coercion and operation-selection failures are reported by
+    graphql-core before any field runs, so they carry no path; every error
+    raised by a resolver or serializer carries one.
+
+    Args:
+        result: The execution result.
+
+    Returns:
+        The same result.
+    """
+    for error in getattr(result, "errors", None) or ():
+        if isinstance(error, GraphQLError) and error.path is None:
+            setattr(error, CLIENT_ERROR_ATTR, True)
+    return result
+
+
+def is_client_input(error: Any, cause: BaseException) -> bool:
+    """Return whether an error flagged by phase is invalid client input.
+
+    Args:
+        error: The error being classified.
+        cause: Its unexpected cause, from "internal_error_cause".
+
+    Returns:
+        True for a pre-execution error whose cause is a ValueError or TypeError.
+    """
+    return bool(getattr(error, CLIENT_ERROR_ATTR, False)) and isinstance(
+        cause, (ValueError, TypeError)
+    )
+
+
+def scrub_cause_text(message: str, cause: BaseException) -> str:
+    """Remove a raw exception's text from a graphql-core coercion message.
+
+    Args:
+        message: The graphql-core message.
+        cause: The unexpected exception behind it.
+
+    Returns:
+        The message without the exception text.
+    """
+    text = str(cause)
+    if not text:
+        return message
+    marker = f", but encountered error '{text}'"
+    if marker in message:
+        return message.replace(marker, "")
+    return message.replace(text, "invalid value")
+
+
+def internal_error_cause(error: Any) -> BaseException | None:
+    """Find an unexpected cause behind GraphQL wrappers, if one exists.
+
+    A deliberately raised GraphQLError (including one wrapped by execution)
+    remains public. A non-GraphQL original error is internal even when an
+    outer GraphQLError supplies a seemingly safe message or extensions.
+
+    Args:
+        error: The error passed to a client-facing formatter.
+
+    Returns:
+        The unexpected cause, or None for an intentionally public error.
+    """
+    if not isinstance(error, GraphQLError):
+        return error if isinstance(error, BaseException) else None
+
+    current: Any = error
+    seen: set[int] = set()
+    while isinstance(current, GraphQLError):
+        if id(current) in seen:
+            return error
+        seen.add(id(current))
+        current = current.original_error
+    if current is None:
+        return None
+    return current if isinstance(current, BaseException) else error
+
+
+def format_client_error(
+    error: Any, middleware: Any = None, transport: str = "HTTP"
+) -> dict[str, Any]:
+    """Format one error for a client, masking unexpected internal failures.
+
+    The single formatter the HTTP view and both subscription transports share,
+    so the three surfaces cannot drift. With "DEBUG" off, an unexpected
+    exception gets an allowlisted message and code plus an opaque ID correlated
+    with an internal traceback. Deliberate GraphQLError, validation, and client
+    input errors stay public.
+
+    Args:
+        error: The error (or exception) to format.
+        middleware: The chain the surface runs, forwarded to
+            "format_graphql_error".
+        transport: Name of the surface, written into the internal log message.
+
+    Returns:
+        The error mapping suitable for a response "errors" list or a frame.
+    """
+    formatted = format_graphql_error(error, middleware)
+    if django_settings.DEBUG:
+        return formatted
+
+    cause = internal_error_cause(error)
+    if cause is None:
+        return formatted
+    if is_client_input(error, cause):
+        # Invalid client input (parse, validate, variable coercion): keep the
+        # validation contract, but never echo the raw exception text. Only
+        # ValueError and TypeError mean "invalid input"; any other exception a
+        # scalar raises (a database outage, say) is a server fault and falls
+        # through to the internal-error mask below.
+        formatted["message"] = scrub_cause_text(formatted["message"], cause)
+        return formatted
+
+    if isinstance(cause, DatabaseError):
+        code = "DATA_ACCESS_ERROR"
+        message = "Unable to complete the data operation."
+    else:
+        code = "INTERNAL_SERVER_ERROR"
+        message = "An internal error occurred."
+    error_id = secrets.token_hex(16)
+    try:
+        error_logger.error(
+            "GraphQL %s internal error %s (%s)",
+            transport,
+            error_id,
+            code,
+            exc_info=(
+                type(cause),
+                cause,
+                cause.__traceback__ or error.__traceback__,
+            ),
+        )
+    except Exception:  # nosec B110 — logging must never fail the caller
+        # A failing application logger must not change GraphQL execution,
+        # rollback, or the safe response. The ID is then uncorrelated.
+        pass
+
+    safe: dict[str, Any] = {"message": message}
+    for key in ("locations", "path"):
+        if key in formatted:
+            safe[key] = formatted[key]
+    safe["extensions"] = {"code": code, "errorId": error_id}
+    return safe

@@ -20,10 +20,8 @@ import contextlib
 import hashlib
 import inspect
 import json
-import logging
 import os
 import re
-import secrets
 import sys
 import threading
 import weakref
@@ -33,12 +31,10 @@ from functools import wraps
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
-from django.conf import settings as django_settings
 from django.core.cache import caches
 from django.core.exceptions import ImproperlyConfigured
 from django.db import (
     DEFAULT_DB_ALIAS,
-    DatabaseError,
     connections,
     transaction,
 )
@@ -68,56 +64,49 @@ from .core._flat_gfk_scope import signature_grants
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .security import format_graphql_error, introspection_disabled
+from .security import (
+    CLIENT_ERROR_ATTR,
+    error_logger,
+    format_client_error,
+    format_graphql_error,
+    internal_error_cause,
+    introspection_disabled,
+    is_client_input,
+    mark_client_errors,
+    mark_request_errors,
+    scrub_cause_text,
+)
 from .settings import graphql_api_settings
 from .utils import clean_dict
 from .validation import DepthLimitValidationRule, StackDepthError, run_validation
 
-_error_logger = logging.getLogger("django_graphex.internal_errors")
 _UNSUPPORTED_ASYNC_MESSAGE = (
     "Async execution is not supported by this HTTP view. "
     "Use synchronous resolvers and middleware."
 )
 
 
-#: Attribute set on errors raised before execution starts (parse, validate and
-#: variable coercion). Those are client input errors even when graphql-core
-#: wraps a custom scalar's raw ValueError/TypeError as the original error.
-_CLIENT_ERROR_ATTR = "_graphex_client_error"
+_CLIENT_ERROR_ATTR = CLIENT_ERROR_ATTR
+_mark_client_errors = mark_client_errors
+_mark_request_errors = mark_request_errors
+_is_client_input = is_client_input
+_scrub_cause_text = scrub_cause_text
+_error_logger = error_logger
 
 
-def _mark_client_errors(errors: Any) -> Any:
-    """Flag pre-execution errors as client errors by phase.
-
-    Args:
-        errors: The errors produced while parsing or validating the document.
-
-    Returns:
-        The same errors, for chaining.
-    """
-    for error in errors or ():
-        if isinstance(error, GraphQLError):
-            setattr(error, _CLIENT_ERROR_ATTR, True)
-    return errors
-
-
-def _mark_request_errors(result: Any) -> Any:
-    """Flag the path-less errors of an execution result as client errors.
-
-    Variable-coercion and operation-selection failures are reported by
-    graphql-core before any field runs, so they carry no path; every error
-    raised by a resolver or serializer carries one.
+def _internal_error_cause(error: Any) -> BaseException | None:
+    """Find an unexpected cause behind GraphQL wrappers, if one exists.
 
     Args:
-        result: The execution result.
+        error: The error passed to the HTTP formatter.
 
     Returns:
-        The same result.
+        The unexpected cause, or None for an intentionally public error
+        (including an HttpError).
     """
-    for error in getattr(result, "errors", None) or ():
-        if isinstance(error, GraphQLError) and error.path is None:
-            setattr(error, _CLIENT_ERROR_ATTR, True)
-    return result
+    if isinstance(error, HttpError):
+        return None
+    return internal_error_cause(error)
 
 
 def _request_error_status(errors: Any) -> int:
@@ -140,70 +129,6 @@ def _request_error_status(errors: Any) -> int:
         if cause is not None and not _is_client_input(error, cause):
             return 500
     return 400
-
-
-def _is_client_input(error: Any, cause: BaseException) -> bool:
-    """Return whether an error flagged by phase is invalid client input.
-
-    Args:
-        error: The error being classified.
-        cause: Its unexpected cause, from "_internal_error_cause".
-
-    Returns:
-        True for a pre-execution error whose cause is a ValueError or TypeError.
-    """
-    return bool(getattr(error, _CLIENT_ERROR_ATTR, False)) and isinstance(
-        cause, (ValueError, TypeError)
-    )
-
-
-def _scrub_cause_text(message: str, cause: BaseException) -> str:
-    """Remove a raw exception's text from a graphql-core coercion message.
-
-    Args:
-        message: The graphql-core message.
-        cause: The unexpected exception behind it.
-
-    Returns:
-        The message without the exception text.
-    """
-    text = str(cause)
-    if not text:
-        return message
-    marker = f", but encountered error '{text}'"
-    if marker in message:
-        return message.replace(marker, "")
-    return message.replace(text, "invalid value")
-
-
-def _internal_error_cause(error: Any) -> BaseException | None:
-    """Find an unexpected cause behind GraphQL wrappers, if one exists.
-
-    A deliberately raised GraphQLError (including one wrapped by execution)
-    remains public. A non-GraphQL original error is internal even when an
-    outer GraphQLError supplies a seemingly safe message or extensions.
-
-    Args:
-        error: The error passed to the HTTP formatter.
-
-    Returns:
-        The unexpected cause, or None for an intentionally public error.
-    """
-    if isinstance(error, HttpError):
-        return None
-    if not isinstance(error, GraphQLError):
-        return error if isinstance(error, BaseException) else None
-
-    current: Any = error
-    seen: set[int] = set()
-    while isinstance(current, GraphQLError):
-        if id(current) in seen:
-            return error
-        seen.add(id(current))
-        current = current.original_error
-    if current is None:
-        return None
-    return current if isinstance(current, BaseException) else error
 
 
 _EXECUTION_BACKEND_KEYWORD = (
@@ -2101,51 +2026,9 @@ class BaseGraphQLView(View):
         Returns:
             The error mapping suitable for the response "errors" list.
         """
-        formatted = format_graphql_error(error, self.get_middleware(request))
-        if django_settings.DEBUG:
-            return formatted
-
-        cause = _internal_error_cause(error)
-        if cause is None:
-            return formatted
-        if _is_client_input(error, cause):
-            # Invalid client input (parse, validate, variable coercion): keep the
-            # validation contract, but never echo the raw exception text. Only
-            # ValueError and TypeError mean "invalid input"; any other exception a
-            # scalar raises (a database outage, say) is a server fault and falls
-            # through to the internal-error mask below.
-            formatted["message"] = _scrub_cause_text(formatted["message"], cause)
-            return formatted
-
-        if isinstance(cause, DatabaseError):
-            code = "DATA_ACCESS_ERROR"
-            message = "Unable to complete the data operation."
-        else:
-            code = "INTERNAL_SERVER_ERROR"
-            message = "An internal error occurred."
-        error_id = secrets.token_hex(16)
-        try:
-            _error_logger.error(
-                "GraphQL HTTP internal error %s (%s)",
-                error_id,
-                code,
-                exc_info=(
-                    type(cause),
-                    cause,
-                    cause.__traceback__ or error.__traceback__,
-                ),
-            )
-        except Exception:  # nosec B110 — logging must never fail the caller
-            # A failing application logger must not change GraphQL execution,
-            # rollback, or the safe response. The ID is then uncorrelated.
-            pass
-
-        safe: dict[str, Any] = {"message": message}
-        for key in ("locations", "path"):
-            if key in formatted:
-                safe[key] = formatted[key]
-        safe["extensions"] = {"code": code, "errorId": error_id}
-        return safe
+        if isinstance(error, HttpError):
+            return format_graphql_error(error, self.get_middleware(request))
+        return format_client_error(error, self.get_middleware(request), "HTTP")
 
     @staticmethod
     def get_content_type(request: Any) -> str:

@@ -83,7 +83,11 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
-from ...security import format_graphql_error, introspection_disabled
+from ...security import (
+    format_client_error,
+    introspection_disabled,
+    mark_client_errors,
+)
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
@@ -388,6 +392,16 @@ def subscription_ws_consumer(
                 await super().receive(
                     text_data=text_data, bytes_data=bytes_data, **kwargs
                 )
+            except (ValueError, TypeError, RecursionError):
+                # Undecodable JSON, a non-hashable id, a frame nested past the
+                # decoder's stack: every one is client input that any client
+                # can send, so it is not an ERROR with a traceback.
+                logger.debug(
+                    "Malformed graphql-transport-ws frame; closing with %s.",
+                    _CODE_BAD_REQUEST,
+                    exc_info=True,
+                )
+                await self._close(_CODE_BAD_REQUEST)
             except Exception:  # noqa: BLE001 - a bad frame must not kill the socket
                 logger.exception(
                     "Malformed graphql-transport-ws frame; closing with %s.",
@@ -697,7 +711,9 @@ def subscription_ws_consumer(
                 document = _parse_subscription_document(query)
             except GraphQLError as exc:  # parse error → error frame (no source)
                 if _is_too_deep(exc):
-                    await self._send_error(op_id, [format_graphql_error(exc)])
+                    await self._send_error(
+                        op_id, [format_client_error(exc, None, "WebSocket")]
+                    )
                 else:
                     await self._send_error(op_id, [{"message": f"Syntax error: {exc}"}])
                 return
@@ -764,7 +780,11 @@ def subscription_ws_consumer(
             )
             if validation_errors:
                 await self._send_error(
-                    op_id, [format_graphql_error(e) for e in validation_errors]
+                    op_id,
+                    [
+                        format_client_error(e, None, "WebSocket")
+                        for e in mark_client_errors(validation_errors)
+                    ],
                 )
                 return
 
@@ -787,14 +807,16 @@ def subscription_ws_consumer(
                 # still be framed for this operation. Otherwise an escaping
                 # exception could kill this task and strand other subscriptions
                 # multiplexed on the same socket.
-                await self._send_error(op_id, [format_graphql_error(exc)])
+                await self._send_error(
+                    op_id, [format_client_error(exc, None, "WebSocket")]
+                )
                 return
 
             if isinstance(source_or_result, ExecutionResult):
                 errors = source_or_result.errors or []
                 await self._send_error(
                     op_id,
-                    [format_graphql_error(e) for e in errors]
+                    [format_client_error(e, None, "WebSocket") for e in errors]
                     or [{"message": "Subscription could not be started."}],
                 )
                 return
@@ -921,7 +943,9 @@ def subscription_ws_consumer(
             if result.data is not None:
                 payload["data"] = result.data
             if result.errors:
-                payload["errors"] = [format_graphql_error(e) for e in result.errors]
+                payload["errors"] = [
+                    format_client_error(e, None, "WebSocket") for e in result.errors
+                ]
             await self.send_json({"id": op_id, "type": "next", "payload": payload})
 
         async def _send_error(self, op_id: str, errors: list[Any]) -> None:

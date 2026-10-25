@@ -653,6 +653,14 @@ Error surfacing splits at the moment the stream is committed:
   `200 text/event-stream` response as a single `next` frame carrying
   `{"errors": [...]}` followed by the `complete` frame — never an HTTP 4xx,
   because a status code cannot change once the streaming response has begun.
+- **Masked errors** — with `DEBUG=False`, an unexpected exception from the
+  `subscribe` resolver or an event resolver is framed with the allowlisted
+  message, `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`, its `path` and an
+  `errorId`, exactly as the HTTP views do (see
+  [Production execution errors](views.md#production-execution-errors)); one
+  ERROR record with the traceback is logged on `django_graphex.internal_errors`.
+  A deliberate `GraphQLError` keeps its message and `DEBUG=True` keeps the raw
+  text.
 - **Optional account cap** — a full authenticated-account limit returns plain
   **HTTP 429** before source startup; an unavailable admission backend returns
   **HTTP 503** before returning a streaming response, including when ownership
@@ -777,7 +785,10 @@ the init timeout, `4409` duplicate operation `id`, `4429` a second
 `connection_init`. `4400` covers **any** frame the consumer cannot dispatch —
 including a body that is not valid JSON and a non-string `id` — and the close
 tears down every live operation on that socket first, so a malformed frame can
-never leave a task or a joined group behind.
+never leave a task or a joined group behind. Because any client can send such a
+frame, it is logged at DEBUG, not as an ERROR with a traceback. Errors in
+`error` and `next` frames are masked in production like the HTTP views' (see
+[Production execution errors](views.md#production-execution-errors)).
 
 A failure that happens **after** delivery started is not a close and not an
 `error` frame: it arrives as `{"type": "next", "payload": {"errors": [...]}}`

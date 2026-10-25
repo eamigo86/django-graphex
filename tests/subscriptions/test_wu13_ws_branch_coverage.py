@@ -30,6 +30,7 @@ Native-gated (the WS transport is native-only post-WU11).
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -550,7 +551,9 @@ async def test_subscribe_resolver_raises_sends_error_frame(  # noqa: DOC005
     err = await communicator.receive_json_from(timeout=2)
     assert err["type"] == "error"
     assert err["id"] == "raise"
-    assert "authorize denied" in err["payload"][0]["message"]
+    # An unexpected exception is masked like the HTTP view does.
+    assert "authorize denied" not in json.dumps(err["payload"])
+    assert err["payload"][0]["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
 
     await communicator.disconnect()
 

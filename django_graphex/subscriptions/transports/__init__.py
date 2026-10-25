@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from graphql import ExecutionResult, GraphQLError, validate
 from graphql import execution as graphql_execution
 
+from ...security import mark_client_errors, mark_request_errors
 from ...validation import run_validation
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -134,16 +135,21 @@ async def _start_source_event_stream(
         hide_suggestions: Whether native variable errors omit schema hints.
 
     Returns:
-        The source stream or an execution result containing startup errors.
-
-    Raises:
-        TypeError: When client variables are not a dictionary.
+        The source stream or an execution result containing startup errors, which
+        include client variables that are not a dictionary.
     """
     if variable_values is not None and not isinstance(variable_values, dict):
-        raise TypeError(
-            "Variable values must be provided as a dictionary"
-            " with variable names as keys. Perhaps look to see"
-            " if an unparsed JSON string was provided."
+        return ExecutionResult(
+            data=None,
+            errors=mark_client_errors(
+                [
+                    GraphQLError(
+                        "Variable values must be provided as a dictionary"
+                        " with variable names as keys. Perhaps look to see"
+                        " if an unparsed JSON string was provided."
+                    )
+                ]
+            ),
         )
 
     # "Executor" exists in every supported graphql-core (>=3.3.0, <3.4), so the
@@ -174,18 +180,24 @@ async def _start_source_event_stream(
             # "source_factory", and stays an internal error.
             return ExecutionResult(
                 data=None,
-                errors=[
-                    GraphQLError(
-                        "Variables are nested too deeply to be coerced.",
-                        extensions={"code": "QUERY_TOO_DEEP"},
-                    )
-                ],
+                errors=mark_client_errors(
+                    [
+                        GraphQLError(
+                            "Variables are nested too deeply to be coerced.",
+                            extensions={"code": "QUERY_TOO_DEEP"},
+                        )
+                    ]
+                ),
             )
         if isinstance(executor, list):
-            return ExecutionResult(data=None, errors=executor)
+            return ExecutionResult(data=None, errors=mark_client_errors(executor))
         result = source_factory(executor)
 
-    return await result if isawaitable(result) else result
+    result = await result if isawaitable(result) else result
+    # Path-less errors come from before any resolver ran: client input.
+    return (
+        mark_request_errors(result) if isinstance(result, ExecutionResult) else result
+    )
 
 
 def operation_selection_error(

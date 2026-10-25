@@ -1011,6 +1011,21 @@ answer with `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` and an opaque
 `errorId` correlated with server logs; clients must not rely on raw exception
 text.
 
+### Subscription errors are masked like HTTP errors
+
+With `DEBUG=False`, the SSE and WebSocket transports now use the HTTP view's
+masking. An unexpected exception raised by a `subscribe` resolver or by an event
+resolver (a `RuntimeError`, a `FieldError`, a `DatabaseError`) is sent as
+`An internal error occurred.` (`INTERNAL_SERVER_ERROR`) or `Unable to complete
+the data operation.` (`DATA_ACCESS_ERROR`), keeps `locations` and `path`, carries
+an opaque `extensions.errorId`, and logs one ERROR record with the traceback on
+`django_graphex.internal_errors`. Before, the raw exception text reached the
+client. Deliberate `GraphQLError`, validation, coercion and other client-input
+errors keep their messages, and `DEBUG=True` keeps the raw text. Raise
+`GraphQLError` for a message that is safe to show. A WebSocket frame that cannot
+be decoded still closes with `4400` but is no longer logged as an ERROR with a
+traceback.
+
 ### Malformed requests and server faults
 
 A `query` that is not a string (`{"query": 123}`) answers HTTP 400 `Must provide

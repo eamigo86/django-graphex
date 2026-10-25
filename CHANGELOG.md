@@ -56,7 +56,7 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 - Exact `set[...]`, `dict[str, ...]`, `Union[int, str]`, `Literal` and nested-list input annotations compile to typed GraphQL inputs, which changes the SDL ([migration](docs/UPGRADE-4.1.md#input-annotations)).
 - The enhanced `GraphQLView` answers an execution error through a non-null root field with HTTP 200 and `data: null` instead of HTTP 400 ([migration](docs/UPGRADE-4.1.md#execution-errors-return-http-200)).
 - A `query` that is not a string and `variables` that are not an object (including `[]`) answer a clean HTTP 400; a masked internal error outside field execution answers HTTP 500 ([migration](docs/UPGRADE-4.1.md#malformed-requests-and-server-faults)).
-- Unexpected resolver exceptions answer `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` with an `errorId` instead of raw text when `DEBUG=False`; custom scalar `ValueError`/`TypeError` are client errors ([migration](docs/UPGRADE-4.1.md#custom-scalar-errors-are-client-errors)).
+- Unexpected resolver exceptions answer `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` with an `errorId` instead of raw text when `DEBUG=False`, also over SSE and WebSocket ([migration](docs/UPGRADE-4.1.md#subscription-errors-are-masked-like-http-errors)); custom scalar `ValueError`/`TypeError` are client errors ([migration](docs/UPGRADE-4.1.md#custom-scalar-errors-are-client-errors)).
 - A subscription operation over the HTTP views answers HTTP 400 `SUBSCRIPTION_NOT_SUPPORTED` instead of `data: null` with HTTP 200 ([migration](docs/UPGRADE-4.1.md#subscriptions-are-rejected-over-http)).
 - Synchronous views answer a controlled HTTP 500 for async resolver, middleware and executor results ([migration](docs/UPGRADE-4.1.md#synchronous-views-reject-async-results)).
 - `MAX_UPLOAD_SIZE` limits each received multipart file, including unmapped parts ([migration](docs/UPGRADE-4.1.md#multipart-upload-size-limit)).
@@ -377,6 +377,13 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Mask unexpected exceptions over SSE and WebSocket like the HTTP view. A
+  `subscribe` or event resolver raising `RuntimeError("password=...")` sent that
+  text to the client. The classification and masking now live in one function,
+  `security.format_client_error`, used by the HTTP view and both transports at
+  every point they format an error; the log message names the transport. An
+  undecodable WebSocket frame still closes `4400` but is logged at DEBUG, not as
+  an ERROR traceback.
 - Answer variables too deep to coerce over subscriptions with `QUERY_TOO_DEEP`.
   The transports build the executor, which coerces the variables, outside any
   guard, so SSE let a bare `RecursionError` escape and WebSocket sent its raw

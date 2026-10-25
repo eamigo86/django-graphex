@@ -79,8 +79,8 @@ server integration error, not an ordinary client validation error.
 
 ### Production execution errors
 
-With Django `DEBUG=False`, the default formatter on all three HTTP views
-replaces **unexpected resolver exceptions** with a safe category and an opaque
+With Django `DEBUG=False`, the default formatter on all three HTTP views, and
+the SSE and WebSocket subscription transports, replaces **unexpected resolver exceptions** with a safe category and an opaque
 `errorId`. For example, a `django.db.DatabaseError` produces:
 
 ```json
@@ -105,6 +105,15 @@ its traceback can contain sensitive exception text. The library does not add
 request bodies, variables, headers, cookies, or credentials to this log record.
 If a logging handler fails, the HTTP response stays safe, but that particular
 ID may have no matching log record.
+
+The subscription transports use the same classification and masking function.
+An unexpected exception from a `subscribe` resolver or from an event resolver
+is framed (`error` frame or `next` payload on WebSocket, a `next` event on SSE)
+with the same message, `code`, `locations`, `path` and `errorId`, and logs one
+ERROR record with the traceback on `django_graphex.internal_errors` whose
+message names the transport (`SSE` or `WebSocket`) instead of `HTTP`. Deliberate
+`GraphQLError`, validation and client-input errors keep their messages, and
+`DEBUG=True` keeps the raw text.
 
 Only `DatabaseError` and subclasses use `DATA_ACCESS_ERROR`; other unexpected
 exceptions use `INTERNAL_SERVER_ERROR` and `An internal error occurred.`

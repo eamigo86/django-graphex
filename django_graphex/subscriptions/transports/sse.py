@@ -70,7 +70,11 @@ from graphql import (
 )
 from graphql.utilities import get_operation_ast
 
-from ...security import format_graphql_error, introspection_disabled
+from ...security import (
+    format_client_error,
+    introspection_disabled,
+    mark_client_errors,
+)
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
@@ -303,7 +307,9 @@ def _frame_next(result: ExecutionResult) -> bytes:
     if result.data is not None:
         payload["data"] = result.data
     if result.errors:
-        payload["errors"] = [format_graphql_error(error) for error in result.errors]
+        payload["errors"] = [
+            format_client_error(error, None, "SSE") for error in result.errors
+        ]
     body = json.dumps(payload)
     return f"event: next\ndata: {body}\n\n".encode("utf-8")
 
@@ -498,7 +504,7 @@ def subscription_sse_view(
             if _is_too_deep(exc):
                 # Same envelope and code the HTTP view answers for this document.
                 return HttpResponse(
-                    json.dumps({"errors": [format_graphql_error(exc)]}),
+                    json.dumps({"errors": [format_client_error(exc, None, "SSE")]}),
                     status=400,
                     content_type="application/json",
                 )
@@ -563,7 +569,9 @@ def subscription_sse_view(
                 hide_suggestions=hide_suggestions,
             )
             if validation_errors:
-                pre_stream_result = ExecutionResult(data=None, errors=validation_errors)
+                pre_stream_result = ExecutionResult(
+                    data=None, errors=mark_client_errors(validation_errors)
+                )
             else:
                 # Account admission is BEFORE the native subscribe entry and its
                 # group join. Anonymous callers never use a principal/IP bucket.
