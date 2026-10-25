@@ -21,7 +21,9 @@ def _supersedes(cls: Any, existing: Any) -> bool:
     True when "existing" is a library-generated placeholder (the auto output
     type a mutation or DjangoModelType registered before the user's own type
     was declared), or when both are the same declaration executed again
-    (same module and qualified name: reload, re-import, notebook re-run).
+    (same module, qualified name AND public GraphQL name: reload, re-import,
+    notebook re-run). Variants made by one factory function share module and
+    qualified name but carry different public names; they are distinct types.
 
     Args:
         cls: the incoming output type.
@@ -35,9 +37,10 @@ def _supersedes(cls: Any, existing: Any) -> bool:
         "GenericType",
     ):
         return True
-    return (cls.__module__, cls.__qualname__) == (
+    return (cls.__module__, cls.__qualname__, cls._meta.name) == (
         existing.__module__,
         existing.__qualname__,
+        existing._meta.name,
     )
 
 

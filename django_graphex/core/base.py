@@ -973,13 +973,21 @@ class InputType(ObjectType):
         identical to before S6a.
         """
         super().__init_subclass__(**kwargs)
-        # A re-executed module redefines the same declaration: drop the stale
-        # entry so compile_all_inputs() does not see a duplicate input name.
-        _gdx_input_registry[:] = [
-            c
-            for c in _gdx_input_registry
-            if (c.__module__, c.__qualname__) != (cls.__module__, cls.__qualname__)
-        ]
+        # An explicit Meta.name (the driver already consumed Meta and defaulted
+        # it to the class name) is the public GraphQL name; None means "the
+        # class name", resolved at compile time.
+        meta_name = getattr(getattr(cls, "_meta", None), "name", None)
+        cls._gdx_gql_name = meta_name if meta_name != cls.__name__ else None  # type: ignore[attr-defined]
+
+        # A re-executed module redefines the same declaration (module, qualified
+        # name AND public name): drop the stale entry so compile_all_inputs()
+        # does not see a duplicate input name. Factory variants with different
+        # public names are distinct inputs and both stay registered.
+        def _key(c: Any) -> tuple[Any, ...]:
+            return (c.__module__, c.__qualname__, c._gdx_gql_name or c.__name__)
+
+        key = _key(cls)
+        _gdx_input_registry[:] = [c for c in _gdx_input_registry if _key(c) != key]
         _gdx_input_registry.append(cls)
 
         # Attach an empty _meta (graphql_input_type populated by compile_all_inputs)
@@ -1028,8 +1036,8 @@ def compile_all_inputs() -> None:
     # PASS 2: compile_input_type for all (detect duplicates)
     seen_names: dict[str, type] = {}
     for cls in _gdx_input_registry:
-        # GraphQL type name defaults to the class name
-        gql_name = cls.__name__
+        # GraphQL type name defaults to the class name (Meta.name overrides)
+        gql_name = cls._gdx_gql_name or cls.__name__  # type: ignore[attr-defined]
         if gql_name in seen_names:
             raise ImproperlyConfigured(
                 f"compile_all_inputs: duplicate GraphQL input type name "

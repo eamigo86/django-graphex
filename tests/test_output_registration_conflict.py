@@ -472,3 +472,63 @@ def test_redefining_a_model_free_input_keeps_one_registry_entry() -> None:
         assert _gdx_input_registry.count(second) == 1
     finally:
         _gdx_input_registry[:] = before
+
+
+def test_factory_variants_with_different_names_are_distinct_types() -> None:
+    """Two types from ONE factory but with different public names conflict.
+
+    Sharing module and qualname is not enough to be "the same declaration":
+    the public GraphQL name must match too, otherwise the broader variant would
+    silently become the canonical type of the model.
+
+    Raises:
+        ImproperlyConfigured: Asserted for the second variant.
+    """
+    local_registry = Registry()
+
+    def make(public_name: str, exclude: tuple) -> type:
+        class AuthorVariant(DjangoObjectType):
+            class Meta:
+                model = Author
+                registry = local_registry
+                name = public_name
+                exclude_fields = exclude
+
+        return AuthorVariant
+
+    public = make("PublicAuthor", ("bio",))
+    with pytest.raises(ImproperlyConfigured, match="already has public output type"):
+        make("AdminAuthor", ())
+    assert local_registry.get_type_for_model(Author) is public
+
+
+def test_factory_inputs_with_different_names_both_stay_registered() -> None:
+    """Factory-made inputs with different Meta.name are two separate inputs.
+
+    A re-declaration of the same name still replaces its stale entry.
+    """
+    from django_graphex.core import InputType
+    from django_graphex.core.base import _gdx_input_registry
+
+    before = list(_gdx_input_registry)
+
+    def make(public_name: str) -> type:
+        class Filt(InputType):
+            class Meta:
+                name = public_name
+
+            value: str = ""
+
+        return Filt
+
+    try:
+        first = make("FiltA")
+        second = make("FiltB")
+        assert first in _gdx_input_registry
+        assert second in _gdx_input_registry
+        again = make("FiltA")
+        assert first not in _gdx_input_registry
+        assert again in _gdx_input_registry
+        assert second in _gdx_input_registry
+    finally:
+        _gdx_input_registry[:] = before

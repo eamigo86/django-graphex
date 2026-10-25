@@ -85,7 +85,11 @@ Declaring a second distinct public `DjangoObjectType` for the same Django model
 in the same `Registry` now raises `ImproperlyConfigured` at class creation; 4.0
 silently replaced the type used by nested relations. Re-registering the same
 class stays idempotent, and re-executing the same declaration (module reload,
-notebook, benchmark harness) replaces the stale type instead of raising. A user
+notebook, benchmark harness) replaces the stale type instead of raising. "Same
+declaration" means the same module, the same qualified name and the same public
+GraphQL name (`Meta.name`, default the class name). Two types built by one
+factory function share module and qualified name, so variants with different
+names (`PublicAuthor` and `AdminAuthor`) are distinct types and raise. A user
 type declared after a mutation, `DjangoModelType` or list type for the same
 model replaces the generated placeholder. If you serve public and admin
 variants of one model, give each its own registry or set `skip_registry = True`

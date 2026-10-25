@@ -358,6 +358,15 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Fix the same-declaration rule of the one-public-output-type guard. Two types
+  made by one factory function share module and qualified name, so they were
+  taken for a re-executed declaration and the broader variant silently became
+  the canonical type of the model. A type now replaces a stale one only when
+  module, qualified name and public GraphQL name all match; factory variants
+  with different names raise like any two distinct types. `InputType` honors
+  `Meta.name` as its GraphQL name and keeps factory-made inputs with different
+  names registered instead of dropping the earlier one.
+
 - Fix: nested and plain id links are checked in chunks below the database's
   bound-parameter limit, so a list of 32,767 or more ids no longer fails with
   `too many SQL variables` on SQLite. An id beyond the database integer range
