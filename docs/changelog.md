@@ -432,8 +432,9 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   object returned for every request (a module-level dict or singleton) let one
   request overwrite the counter of another. The view now sets a context variable
   around the whole HTTP request and the directive middleware reads it; nothing is
-  written to the context any more. A subscription event and an execution the view
-  did not start keep their own per-execution counter.
+  written to the context any more. A subscription event and an execution started
+  outside a view request keep their own per-execution counter; one nested inside
+  a request (a resolver calling `graphql_sync`) shares that request's budget.
 - Compare a `DecimalField` cursor finer than the column exactly on both paths. A
   boundary such as `1e-999` compared as zero on SQLite but exactly in memory, so
   the pages differed whenever row pks were not `1..5`. The database path now
