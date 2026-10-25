@@ -111,7 +111,10 @@ before the registry changes. An unknown name or a bare string
 `DjangoInputObjectType` now apply the same check as `DjangoObjectType`; before,
 a typo silently left the column you meant to hide published or writable. Valid
 model, reverse-relation, private and declared custom field names are still
-accepted. Fix the name or the tuple.
+accepted. The selectors `pk` and a foreign key's attname (`author_id`) are
+not field names either: 4.0 silently ignored them, so the column stayed
+published or writable, and they now raise as well. Name the field (`id`,
+`author`) instead. Fix the name or the tuple.
 
 ### Ambiguous and colliding choices enums
 
@@ -1035,7 +1038,9 @@ Handle delivery explicitly if you depended on automatic delivery exceptions.
 Subscription `exact` filters on `Float` and `Decimal` fields now match an equal
 integer snapshot value, and a `DecimalRangeField` bound or `DurationField`
 selected on an event type is delivered as a `Float` (total seconds for
-durations) instead of failing on every read.
+durations) instead of failing on every read. That last change is a fix, not a
+behavior change: those fields raised on every read before, so no working client
+depends on the old result, and the SDL is unchanged.
 
 ## New settings
 
