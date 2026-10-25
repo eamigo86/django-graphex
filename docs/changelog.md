@@ -389,6 +389,11 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Correlate reverse-FK filters on the column the foreign key targets. A child FK
+  with `to_field` pointing at a non-pk column was compared with the parent `pk`, so
+  `not`, `or` and destination-scoped relation filters returned the wrong parents
+  whenever the parent pk and that column differ. They now match Django's
+  `exclude()` and `filter()`.
 - Bound the cost of `@round` with a huge negative precision on an `Int` or `BigInt`.
   `round(n, -k)` built `10 ** k`, so `@round(precision: -10000000)` on `1` took
   seconds and `-2147483648` could exhaust memory. A whole number far below half of

@@ -209,7 +209,9 @@ class _ForwardFkFilterScope:
             )
         if not _is_pk_lookups(value) and _has_independent_many_and(value, related):
             child_q = _independent_many_q(value, visible, scope=child_scope)
-        linked = visible.filter(**{field.field.attname: OuterRef(f"{prefix}pk")})
+        # Correlate on the column the FK targets, which is not always the pk.
+        target = field.field.target_field.attname
+        linked = visible.filter(**{field.field.attname: OuterRef(f"{prefix}{target}")})
         matching = Q(Exists(linked.filter(child_q)))
         if _matches_missing_child(child_q):
             matching |= ~Q(Exists(linked))
@@ -735,7 +737,8 @@ def many_not_filter(
         )
         link = {f"{back}__pk": OuterRef(f"{prefix}pk")}
     elif isinstance(field, ManyToOneRel) and not hasattr(field.field, "ct_field"):
-        link = {field.field.attname: OuterRef(f"{prefix}pk")}
+        target = field.field.target_field.attname
+        link = {field.field.attname: OuterRef(f"{prefix}{target}")}
     else:
         return Q()
     related = field.related_model
