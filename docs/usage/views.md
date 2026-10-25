@@ -484,3 +484,12 @@ whole-body guard or impose an ingress/memory limit.
 
 GraphQL subscriptions are served by a dedicated view (over Channels) — see the
 [Subscriptions guide](subscriptions.md).
+
+The HTTP views do not run subscriptions. A subscription operation POSTed to
+`/graphql/` is refused with HTTP 400 and one error whose message is
+`Subscriptions are not supported over HTTP; use the WebSocket or SSE transport.`
+and whose `extensions.code` is `SUBSCRIPTION_NOT_SUPPORTED` (before 4.1 the
+response was HTTP 200 with the subscription field `null` and no error). Only the
+selected operation is judged, so a document that holds a subscription next to a
+query still runs the query. In a batch each subscription item gets its own error
+entry and the other items run; the response status is the highest entry status.

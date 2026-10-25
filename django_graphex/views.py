@@ -1,8 +1,8 @@
 """GraphQL views: a vendored base view plus the enhanced and authenticated views.
 
-- "BaseGraphQLView" — a self-contained fork of graphene-django's "GraphQLView"
-  (GET/POST, batch, variable parsing, schema/document validation, atomic
-  mutations) so the package does not depend on the unmaintained "graphene-django".
+- "BaseGraphQLView" — the self-contained base view, forked from graphene-django's
+  "GraphQLView" (GET/POST, batch, variable parsing, schema/document validation,
+  atomic mutations) so the package has no runtime dependency on it.
   GraphiQL is served from a self-contained CDN page by default, overridable with a
   custom Django template via "graphiql_template" (for offline / strict-CSP setups).
 - "GraphQLView" — adds response caching, query depth/cost validation rules and the
@@ -310,8 +310,8 @@ def csrf_header_missing(request: Any, content_type: str) -> bool:
     )
 
 
-#: Self-contained GraphiQL page (CDN). Avoids depending on graphene-django's
-#: bundled template + static assets. Override per view with ``graphiql_template``.
+#: Self-contained GraphiQL page (CDN). Avoids depending on bundled
+#: template and static assets. Override per view with ``graphiql_template``.
 #:
 #: CDN asset versions are PINNED to specific patch versions and protected by
 #: Subresource Integrity (SRI) hashes (sha384) so a CDN compromise or
@@ -1039,13 +1039,13 @@ def clear_document_caches() -> None:
 
 
 class BaseGraphQLView(View):
-    """Django view that executes GraphQL queries (forked, graphene-django-free).
+    """Django view that executes GraphQL queries.
 
-    A self-contained fork of graphene-django's "GraphQLView" covering GET/POST,
-    batch requests, variable parsing, schema/document validation and atomic
-    mutations, with GraphiQL served from a built-in CDN page. Reads its defaults
-    from the "DJANGO_GRAPHEX" setting. Subclasses layer on caching, cost rules
-    and endpoint-level authorization.
+    A self-contained view (forked from graphene-django's "GraphQLView") covering
+    GET/POST, batch requests, variable parsing, schema/document validation and
+    atomic mutations, with GraphiQL served from a built-in CDN page. Reads its
+    defaults from the "DJANGO_GRAPHEX" setting. Subclasses layer on caching, cost
+    rules and endpoint-level authorization.
     """
 
     graphiql = False
@@ -1891,6 +1891,24 @@ class BaseGraphQLView(View):
                     "Can only perform a {} operation from a POST request.".format(
                         operation_ast.operation.value
                     ),
+                )
+            )
+
+        if (
+            operation_ast is not None
+            and operation_ast.operation == OperationType.SUBSCRIPTION
+        ):
+            # A subscription needs a long-lived transport; over plain HTTP it
+            # would resolve to null with no hint.
+            return ExecutionResult(
+                errors=_mark_client_errors(
+                    [
+                        GraphQLError(
+                            "Subscriptions are not supported over HTTP; use the "
+                            "WebSocket or SSE transport.",
+                            extensions={"code": "SUBSCRIPTION_NOT_SUPPORTED"},
+                        )
+                    ]
                 )
             )
 
