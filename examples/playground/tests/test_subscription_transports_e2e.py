@@ -83,12 +83,14 @@ def _fresh_channel_layer():
     from channels.layers import get_channel_layer
 
     layer = get_channel_layer()
-    # InMemoryChannelLayer keeps per-group channel sets + per-channel queues.
-    if hasattr(layer, "groups"):
-        layer.groups.clear()
-    if hasattr(layer, "receive_buffer"):
-        layer.receive_buffer.clear()
+    # InMemoryChannelLayer keeps per-group channel sets + per-channel queues. A
+    # test that stops reading leaves frames queued on its channel, so flush both
+    # before AND after the test: nothing may outlive the test that caused it.
+    layer.groups.clear()
+    layer.channels.clear()
     yield layer
+    layer.groups.clear()
+    layer.channels.clear()
 
 
 async def _await_started_group(ws_module, communicator, op_id, *, timeout=3.0):
