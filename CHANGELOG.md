@@ -346,6 +346,11 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Stop caching the stack-depth verdict. A validation `RecursionError` answers
+  `QUERY_TOO_DEEP`, but that outcome depends on how deep the calling thread
+  already was, not on the document; it was stored in the validation cache and
+  then served to every later caller of the same query. It is no longer cached.
+
 - Validate `COST_DIRECTIVE`. A negative, fractional, boolean or non-number
   value was silently truncated or clamped; it now raises
   `ImproperlyConfigured` when the setting is read, like the other cost limits.

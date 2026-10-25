@@ -47,7 +47,15 @@ if TYPE_CHECKING:
 #: measured execution failure point.
 _MAX_STRUCTURAL_DEPTH = 100
 
-__all__ = ("DepthLimitValidationRule", "run_validation")
+__all__ = ("DepthLimitValidationRule", "StackDepthError", "run_validation")
+
+
+class StackDepthError(GraphQLError):
+    """Mark a depth error caused by the caller's stack, not by the document.
+
+    Whether validation runs out of stack depends on how deep the calling
+    thread already is, so this verdict must never be memoized per document.
+    """
 
 
 def run_validation(
@@ -74,7 +82,7 @@ def run_validation(
         return list(validate_fn(*args, **kwargs))
     except RecursionError:
         return [
-            GraphQLError(
+            StackDepthError(
                 "Query is nested too deeply to be validated.",
                 extensions={"code": "QUERY_TOO_DEEP"},
             )

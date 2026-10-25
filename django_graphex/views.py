@@ -71,7 +71,7 @@ from .permissions import IsAuthenticated
 from .security import format_graphql_error, introspection_disabled
 from .settings import graphql_api_settings
 from .utils import clean_dict
-from .validation import DepthLimitValidationRule, run_validation
+from .validation import DepthLimitValidationRule, StackDepthError, run_validation
 
 _error_logger = logging.getLogger("django_graphex.internal_errors")
 _UNSUPPORTED_ASYNC_MESSAGE = (
@@ -889,6 +889,9 @@ def cached_validate(
             validate, schema, document, rules, max_errors, **validation_options
         )
     )
+    if any(isinstance(error, StackDepthError) for error in errors):
+        # The verdict reflects this caller's stack depth, not the document.
+        return errors
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
