@@ -1988,18 +1988,23 @@ class BaseGraphQLView(View):
             A "(query, variables, operation_name, id)" tuple.
 
         Raises:
-            HttpError: When the "variables" value is a string that is not valid
-                JSON.
+            HttpError: When "query" is present but not a string, when the
+                "variables" value is a string that is not valid JSON, or when
+                "variables" is not a JSON object.
         """
         query = request.GET.get("query") or data.get("query")
         variables = request.GET.get("variables") or data.get("variables")
         id = request.GET.get("id") or data.get("id")
 
+        if query and not isinstance(query, str):
+            raise HttpError(HttpResponseBadRequest("Must provide query string."))
         if variables and isinstance(variables, str):
             try:
                 variables = json.loads(variables)
             except Exception:
                 raise HttpError(HttpResponseBadRequest("Variables are invalid JSON."))
+        if variables not in (None, "") and not isinstance(variables, dict):
+            raise HttpError(HttpResponseBadRequest("Variables must be a JSON object."))
 
         operation_name = request.GET.get("operationName") or data.get("operationName")
         if operation_name == "null":

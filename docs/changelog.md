@@ -361,6 +361,14 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Answer malformed request shapes as clean 400s. A `query` that is not a string
+  (`{"query": 123}`, `{"query": ["a"]}`) or `variables` that are not a JSON
+  object (`"variables": "[1]"`, `[1]`) answered 400 `INTERNAL_SERVER_ERROR` with
+  an `errorId` and an ERROR traceback in the log, which let any client flood the
+  log. They now answer `Must provide query string.` or `Variables must be a
+  JSON object.` with HTTP 400 and no ERROR log, on GET, JSON, form and batch
+  requests (a batch item fails alone).
+
 - Keep coercion-time server faults internal. A scalar that raised any exception
   while coercing variables or literals (a database outage inside an id-lookup
   scalar, say) was answered as a silent client error with no log. Only
