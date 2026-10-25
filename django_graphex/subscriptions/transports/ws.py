@@ -77,9 +77,9 @@ from weakref import WeakValueDictionary
 from asgiref.sync import sync_to_async
 from graphql import (
     ExecutionResult,
+    GraphQLError,
     OperationType,
     create_source_event_stream,
-    parse,
 )
 from graphql.utilities import get_operation_ast
 
@@ -87,6 +87,8 @@ from ...security import format_graphql_error, introspection_disabled
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
+    _is_too_deep,
+    _parse_subscription_document,
     _start_source_event_stream,
     _validate_subscription_document,
     operation_selection_error,
@@ -692,9 +694,12 @@ def subscription_ws_consumer(
                 return
 
             try:
-                document = parse(query)
-            except Exception as exc:  # parse error → error frame (no source)
-                await self._send_error(op_id, [{"message": f"Syntax error: {exc}"}])
+                document = _parse_subscription_document(query)
+            except GraphQLError as exc:  # parse error → error frame (no source)
+                if _is_too_deep(exc):
+                    await self._send_error(op_id, [format_graphql_error(exc)])
+                else:
+                    await self._send_error(op_id, [{"message": f"Syntax error: {exc}"}])
                 return
 
             operation_ast = get_operation_ast(document, payload.get("operationName"))

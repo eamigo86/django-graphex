@@ -64,9 +64,9 @@ from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from graphql import (
     ExecutionResult,
+    GraphQLError,
     OperationType,
     create_source_event_stream,
-    parse,
 )
 from graphql.utilities import get_operation_ast
 
@@ -74,6 +74,8 @@ from ...security import format_graphql_error, introspection_disabled
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
+    _is_too_deep,
+    _parse_subscription_document,
     _start_source_event_stream,
     _validate_subscription_document,
     operation_selection_error,
@@ -491,8 +493,15 @@ def subscription_sse_view(
             return HttpResponseBadRequest("No GraphQL query provided.")
 
         try:
-            document = parse(query)
-        except Exception as exc:  # PRE-200: a syntax error is an HTTP 4xx.
+            document = _parse_subscription_document(query)
+        except GraphQLError as exc:  # PRE-200: a syntax error is an HTTP 4xx.
+            if _is_too_deep(exc):
+                # Same envelope and code the HTTP view answers for this document.
+                return HttpResponse(
+                    json.dumps({"errors": [format_graphql_error(exc)]}),
+                    status=400,
+                    content_type="application/json",
+                )
             return HttpResponseBadRequest(f"GraphQL syntax error: {exc}")
 
         operation_ast = get_operation_ast(document, body["operationName"])
@@ -531,8 +540,6 @@ def subscription_sse_view(
         # philosophy) so nothing about the server's schema shape leaks. Delivered
         # in-stream (the 200 stream is committed below), never a source.
         if conn_schema.subscription_type is None:
-            from graphql import GraphQLError
-
             pre_stream_result = ExecutionResult(
                 data=None,
                 errors=[GraphQLError(_SUBSCRIPTION_DENIED_MESSAGE)],

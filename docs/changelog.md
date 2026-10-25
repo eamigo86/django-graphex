@@ -361,6 +361,15 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Answer over-deep subscription documents with `QUERY_TOO_DEEP` on both
+  transports. They parsed with plain `parse`, so SSE answered the plain-text 400
+  `GraphQL syntax error: maximum recursion depth exceeded` and WebSocket sent
+  `Syntax error: <raw exception>`, neither with a code. Both now share the HTTP
+  view's parse wrapper: SSE answers a JSON 400 with `extensions.code`
+  `QUERY_TOO_DEEP`, WebSocket sends an `error` frame with the same code, and
+  neither echoes raw exception text (a non-string `query` gets a generic
+  message).
+
 - Include the GET `pretty` parameter in the default response-cache key. The view
   pretty-prints the body when `?pretty=` is set, but the key ignored it, so a
   pretty-printed cached response could be served to a compact request (and the

@@ -46,6 +46,46 @@ _EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS = bool(
 )
 
 
+def _parse_subscription_document(query: Any) -> "DocumentNode":
+    """Parse a subscription document the way the HTTP view does.
+
+    Stack exhaustion becomes a GraphQLError with code "QUERY_TOO_DEEP", and any
+    other non-GraphQL failure (for example a non-string query) becomes a
+    generic one, so no raw exception text reaches a client.
+
+    Args:
+        query: The "query" value sent by the client.
+
+    Returns:
+        The parsed "DocumentNode".
+
+    Raises:
+        GraphQLError: When the document cannot be parsed.
+    """
+    # Imported here: "views" reads DJANGO_GRAPHEX while it is being imported, and
+    # this package must stay importable before Django settings are configured.
+    from ...views import _parse_or_depth_error
+
+    try:
+        return _parse_or_depth_error(query)
+    except GraphQLError:
+        raise
+    except Exception as exc:
+        raise GraphQLError("Invalid GraphQL query.") from exc
+
+
+def _is_too_deep(error: GraphQLError) -> bool:
+    """Return whether a parse error is the stack-depth client error.
+
+    Args:
+        error: The error raised by "_parse_subscription_document".
+
+    Returns:
+        True when its code is "QUERY_TOO_DEEP".
+    """
+    return (error.extensions or {}).get("code") == "QUERY_TOO_DEEP"
+
+
 def _validate_subscription_document(
     schema: "GraphQLSchema",
     document: "DocumentNode",
