@@ -65,7 +65,8 @@ def test_private_capture_excludes_relations_containers_nonfinite_and_custom_back
     [
         ("id_only", {}, "tenant-a", "tenant-a", False, False, True),
         ("id_only", {"text": "tenant-a"}, None, "tenant-a", False, False, True),
-        ("id_only", {"text": "tenant-a"}, "tenant-b", "tenant-a", False, False, True),
+        # The client filter narrows the scope: a contradiction delivers nothing.
+        ("id_only", {"text": "tenant-a"}, "tenant-b", "tenant-a", False, False, False),
         ("id_only", {"text": "tenant-a"}, None, "tenant-b", False, False, False),
         ("id_only", {"text": "tenant-a"}, None, "tenant-a", True, False, False),
         ("id_only", {}, None, "tenant-a", False, False, True),

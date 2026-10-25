@@ -364,6 +364,13 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- `subscription_scope` now intersects with the client `filter` instead of
+  replacing it. A subscriber asking for `filter: {status: {exact: DRAFT}}`
+  under a scope of `PUBLISHED` used to receive the published rows it had
+  filtered out; an event is now delivered only when it matches both. A client
+  value that contradicts the scope on the same key joins no group and delivers
+  nothing. Subscriptions without a scope are unchanged.
+
 - Compare numeric subscription snapshots with typed exact filters by value. A
   float snapshot on a DecimalField no longer dropped against `Decimal("1.50")`
   while an integer matched, and `2**53 + 1` now matches `float(2**53)`. When a

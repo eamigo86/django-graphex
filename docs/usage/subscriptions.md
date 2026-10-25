@@ -369,8 +369,12 @@ The generated subscription honors the type's authorization and scoping:
   is the transport's own context object, and it exposes **both** `info.user` and
   `info.context.user` — the second is the spelling a resolver uses, so hook code
   reads the same either way. It is evaluated at subscribe time and
-  enforced **per event at delivery**, merged over the client `filter` with
-  server precedence — the client can neither widen nor drop it. Equality scopes
+  enforced **per event at delivery**, combined with the client `filter` by
+  **AND**: an event is delivered only when it matches both. The client can
+  narrow the scope but never widen or drop it, and a client value that
+  contradicts the scope on the same key (scope `status: PUBLISHED`, client
+  `filter: {status: {exact: DRAFT}}`) delivers nothing instead of silently
+  falling back to the scope. Equality scopes
   on a serialized field (like `owner`) are decided **in memory**, so there is no
   per-event query.
 

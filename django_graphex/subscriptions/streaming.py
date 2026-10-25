@@ -17,8 +17,8 @@ Two public entry points:
     Runs the KEPT subscription hooks BEFORE the source is created, so a DENY in
     "authorize" short-circuits BEFORE any "group_add" (design section 3):
     "authorize" -> "validate_filters" -> "scope" -> "filters = client union
-    scope" (scope WINS on conflict) -> compute index + group names (the action
-    arg picks the join set: "('create','update','delete')" for "all_actions"
+    scope" (both must match; a contradiction delivers nothing) -> compute index
+    + group names (the action arg picks the join set: "('create','update','delete')" for "all_actions"
     else "(action,)" — never hardcodes three, the #1420 guard) -> construct
     "ChannelLayerSource" -> "start()" (join groups) -> wire "source.db_verify"
     to the spec's single-row ".exists()" narrowing AFTER setting
@@ -120,7 +120,8 @@ class SubscriptionSpec:
         authorize: "authorize(context, **kwargs) -> None" — runs BEFORE the source
             is created; raise to DENY (short-circuits before any "group_add").
         scope: "scope(context, **kwargs) -> Mapping | None" — server-forced
-            filters merged with client filters at SERVER precedence (scope wins).
+            filters; the subscriber receives only events matching both the scope and
+            its own client filters.
         group_name: "group_name(action, *, id=None, index=None) -> str" — builds
             the Channels group name (matches the producer's "_group_name" by
             construction). Reuses the kept "Subscription._group_name".
@@ -450,7 +451,9 @@ async def native_subscribe(
       1. "authorize(context, **kwargs)" — raise to DENY (NO source, NO join).
       2. "_validate_client_filters" — reject filter keys on undeclared fields.
       3. "scope(context, **kwargs)" — server-forced filters.
-      4. "filters = {**client, **scope}" — scope WINS on conflict.
+      4. "filters = {**client, **scope}" — both must match; a client value that
+         contradicts the scope on the same key means nothing is ever delivered
+         (no group is joined).
       5. compute the index (SCOPE-ONLY parity with the kept "_subscribe" hook:
          a value-scoped group is joined only when the SERVER scope supplies every
          index field — never from a client value) and the group names; the
@@ -500,8 +503,17 @@ async def native_subscribe(
     )
     scope = dict(scope) if scope else {}
 
-    # (4) Merge — scope WINS on conflict (server precedence).
+    # (4) Merge — the scope and the client filter must BOTH match (AND). One key
+    # holds one value, so a key both give with different values (same lookup,
+    # equal string forms count as equal) can never be satisfied by any row: the
+    # source then joins no group and delivers nothing. The scope value is kept
+    # in the mapping so the effective filters still show the server constraint.
     merged: dict[str, Any] = {**client_filters, **scope}
+    contradiction = any(
+        key in client_filters
+        and not (client_filters[key] == value or str(client_filters[key]) == str(value))
+        for key, value in scope.items()
+    )
 
     # (5) Index routing: SCOPE-ONLY parity with the kept ``Subscription._subscribe``
     # hook (subscription.py: ``all(field in scope for field in index_fields)``).
@@ -525,7 +537,11 @@ async def native_subscribe(
     group_name = spec.group_name
     if group_name is None:  # pragma: no cover - spec must provide a namer
         raise ValueError("SubscriptionSpec.group_name must be provided")
-    groups = [group_name(act, id=obj_id, index=index) for act in _actions_for(action)]
+    groups = (
+        []
+        if contradiction
+        else [group_name(act, id=obj_id, index=index) for act in _actions_for(action)]
+    )
 
     # (6) Construct + start the source (the ONLY group_add happens here, AFTER
     # all hooks have run — deny never reaches this point).

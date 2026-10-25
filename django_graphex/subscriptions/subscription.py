@@ -461,10 +461,12 @@ class Subscription(NativeObjectType):
 
         Hook meant to be overridden (or injected by "DjangoModelType").
         The returned mapping (Django ORM lookup -> value, e.g.
-        "{'owner': info.context.user.pk}") is merged into the subscriber's
-        filters with SERVER PRECEDENCE, so it cannot be widened or removed by
-        the client, and is enforced per event at delivery time. The default
-        returns "None" (no scoping).
+        "{'owner': info.context.user.pk}") is combined with the subscriber's
+        filters by AND: an event is delivered only if it matches both, so the
+        client can narrow the scope but never widen or remove it. A client
+        value that contradicts the scope on the same key delivers nothing. It is
+        enforced per event at delivery time. The default returns "None" (no
+        scoping).
 
         Args:
             info: GraphQL resolve info for the subscribe request.

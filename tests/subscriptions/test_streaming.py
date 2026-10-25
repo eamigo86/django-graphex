@@ -371,24 +371,70 @@ async def test_authorize_runs_before_source_construction(  # noqa: DOC005
 # ---------------------------------------------------------------------------
 
 
-async def test_scope_wins_over_conflicting_client_filter() -> None:
-    """subscription_scope must override a conflicting client filter (server wins).
+async def test_scope_and_client_filter_must_both_match() -> None:
+    """A client filter narrows the scope; it never replaces it.
 
-    Contract: this test ships broken if a client-supplied filter value beats
-    the server-side scope instead of being overridden by it.
+    Contract: this test ships broken if a client filter on the scope's own key
+    silently loses to the scope (the subscriber then receives rows it did not
+    ask for) or if the scope stops applying.
     """
     layer = _RecordingLayer()
+    spec = _spec(scope=lambda _ctx, **_kw: {"owner_id": 5})
 
-    def _scope(context: Any, **kw: Any) -> dict[str, int]:
-        return {"owner_id": 5}
+    # Same value on the same key: one constraint, the subscription is live.
+    source = await _start_source(spec, layer, filters={"owner_id": 5, "name": "x"})
+    try:
+        assert source.filters == {"name": "x", "owner_id": 5}
+        assert source.joined_groups == ["app.demo-create"]
+    finally:
+        await source.aclose()
 
-    spec = _spec(scope=_scope)
+    # Equal string forms are equal, like the in-memory comparison.
+    source = await _start_source(spec, layer, filters={"owner_id": "5"})
+    try:
+        assert source.joined_groups == ["app.demo-create"]
+    finally:
+        await source.aclose()
+
+
+async def test_contradicting_client_filter_delivers_nothing() -> None:
+    """A client filter that contradicts the scope can never match: no groups.
+
+    Contract: this test ships broken if the subscriber receives scope rows the
+    client filtered out, receives rows outside the scope, or joins a group.
+    """
+    layer = _RecordingLayer()
+    spec = _spec(scope=lambda _ctx, **_kw: {"owner_id": 5})
     source = await _start_source(
-        spec, layer, action="create", filters={"owner_id": 99, "name": "x"}
+        spec, layer, action="all_actions", filters={"owner_id": 99}
     )
     try:
-        # Client said owner_id=99; the server scope (owner_id=5) WINS.
-        assert source.filters == {"name": "x", "owner_id": 5}
+        assert source.joined_groups == []
+        assert layer.group_add_calls == []
+        delivery = drive_subscription(source, spec)
+        await layer.group_send(
+            "app.demo-create", _notify("app.demo-create", {"id": 1, "owner_id": 5})
+        )
+        await layer.group_send(
+            "app.demo-create", _notify("app.demo-create", {"id": 2, "owner_id": 99})
+        )
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(delivery.__anext__(), timeout=0.1)
+    finally:
+        await source.aclose()
+
+
+async def test_without_scope_the_client_filter_is_unchanged() -> None:
+    """With no scope the client filter alone decides, as before.
+
+    Contract: this test ships broken if a scope-less subscription loses its
+    groups or filters.
+    """
+    layer = _RecordingLayer()
+    source = await _start_source(_spec(), layer, filters={"owner_id": 99})
+    try:
+        assert source.filters == {"owner_id": 99}
+        assert source.joined_groups == ["app.demo-create"]
     finally:
         await source.aclose()
 
