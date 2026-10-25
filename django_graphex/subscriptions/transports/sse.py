@@ -669,17 +669,18 @@ def subscription_sse_view(
                 try:
                     if heartbeat_enabled or lease is not None:
                         loop = asyncio.get_running_loop()
+                        first_delay = _RENEW_INTERVAL
                         if lease is not None:
                             # The response body can be consumed long after
                             # startup. Confirm ownership before any data read.
-                            await _renew_lease(lease, loop)
+                            first_delay = await _renew_lease(lease, loop)
                         next_heartbeat = (
                             loop.time() + heartbeat_interval
                             if heartbeat_enabled
                             else float("inf")
                         )
                         next_renew = (
-                            loop.time() + _RENEW_INTERVAL
+                            loop.time() + first_delay
                             if lease is not None
                             else float("inf")
                         )

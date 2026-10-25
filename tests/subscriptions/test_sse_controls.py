@@ -863,3 +863,48 @@ async def test_streams_share_one_client_per_redis_url(
         await lease.close()
     assert closed == []
     assert not redis.slots
+
+
+@pytest.mark.asyncio
+@override_settings(DJANGO_GRAPHEX=_RENEWAL_SETTINGS)
+async def test_initial_renewal_retry_delay_is_honored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed first in-stream renewal retries after the returned delay.
+
+    Args:
+        monkeypatch: Replaces the renewal helper with a scripted one.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    monkeypatch.setattr(
+        "channels.layers.get_channel_layer", lambda: InMemoryChannelLayer()
+    )
+    _install_fake_redis(monkeypatch)
+    monkeypatch.setattr(sse, "_RENEW_INTERVAL", 1000.0)
+    calls: list[float] = []
+
+    async def scripted(lease: Any, loop: asyncio.AbstractEventLoop) -> float:
+        """Ask for a quick retry after the first call only.
+
+        Args:
+            lease: Ignored.
+            loop: The running loop.
+
+        Returns:
+            A short delay once, then a very long one.
+        """
+        calls.append(loop.time())
+        return 0.01 if len(calls) == 1 else 1000.0
+
+    monkeypatch.setattr(sse, "_renew_lease", scripted)
+    response = await subscription_sse_view(schema=build_native_schema())(_request())
+    stream = response.streaming_content.__aiter__()
+    assert await stream.__anext__() == b":\n\n"
+    waiting = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0.15)
+    assert len(calls) >= 2
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    await sync_to_async(response.close)()

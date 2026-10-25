@@ -352,6 +352,10 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Honor the retry delay of the first in-stream SSE lease renewal. A failed
+  first renewal waited the full 15 seconds instead of the documented five
+  before the next attempt.
+
 - Answer variables too deep to coerce with HTTP 400 `QUERY_TOO_DEEP`. Roughly
   600 nested `and`/`or` levels in variables raised a `RecursionError` during
   coercion, answered as 400 `INTERNAL_SERVER_ERROR` with an ERROR traceback in
