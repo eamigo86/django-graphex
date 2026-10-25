@@ -6,7 +6,6 @@ import dataclasses
 import inspect
 import logging
 import re
-import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Sequence
 from decimal import Decimal
@@ -51,6 +50,7 @@ from graphql.language.ast import (
 from text_unidecode import unidecode
 
 from ._directives_eval import is_selection_skipped
+from ._execution_state import ExecutionStates
 from ._strconv import to_snake_case
 from .errors import ErrorType
 from .settings import graphql_api_settings
@@ -1219,16 +1219,10 @@ def _concrete_field_map(
     return result
 
 
-#: Private attribute on the request context holding the per-execution budgets.
-_WORK_ATTR = "_graphex_optimizer_work"
-
-#: Most executions tracked per table; the oldest entry is dropped beyond this.
-_WORK_TABLE_SIZE = 64
-
-#: Budgets for contexts that cannot take attributes (a dict or None).
-_WORK_FALLBACK: OrderedDict[tuple[int, int], list[Any]] = OrderedDict()
-
-_WORK_LOCK = threading.Lock()
+#: Optimizer work state, one entry per operation execution. Unlike the directive
+#: output budget this one is NOT shared across the items of a batch: each item is
+#: a separate operation with its own selection to plan.
+_EXECUTION_WORK = ExecutionStates()
 
 #: Key of the shared work state inside a root field's field-map cache.
 _WORK_KEY = (0, "work")
@@ -1237,10 +1231,11 @@ _WORK_KEY = (0, "work")
 def _request_work(info: GraphQLResolveInfo) -> dict[str, Any]:
     """Return the optimizer work state shared by one whole execution.
 
-    The state lives in a small table on the request context (or, for a context
-    that cannot take attributes, a bounded module table) keyed by the identity
-    of the execution's variable values and root value. Entries hold both
-    objects, so an identity can only match while its execution is alive.
+    The state lives in a bounded module table keyed by the identity of the
+    execution's variable values and root value, so it does not depend on what
+    kind of context the application passes (a dict, None or a mock all work).
+    Entries hold both objects, so an identity can only match while its
+    execution is alive.
 
     Args:
         info: Resolve information of any root field of the execution.
@@ -1249,25 +1244,8 @@ def _request_work(info: GraphQLResolveInfo) -> dict[str, Any]:
         State with the per-walker expansion counters under "used" and the
         "exhausted" flag set once any walker ran out of budget.
     """
-    variables = getattr(info, "variable_values", None)
-    root = getattr(info, "root_value", None)
-    context = getattr(info, "context", None)
-    key = (id(variables), id(root))
-    with _WORK_LOCK:
-        table = getattr(context, _WORK_ATTR, None)
-        if not isinstance(table, OrderedDict):
-            table = OrderedDict()
-            try:
-                setattr(context, _WORK_ATTR, table)
-            except (AttributeError, TypeError):
-                table = _WORK_FALLBACK
-        entry = table.get(key)
-        if entry is None or entry[0] is not variables or entry[1] is not root:
-            entry = table[key] = [variables, root, {"used": {}, "exhausted": False}]
-            while len(table) > _WORK_TABLE_SIZE:
-                table.popitem(last=False)
-        table.move_to_end(key)
-        return entry[2]
+    with _EXECUTION_WORK.lock:
+        return _EXECUTION_WORK.get(info, lambda: {"used": {}, "exhausted": False})  # type: ignore[no-any-return]
 
 
 def _within_work_budget(

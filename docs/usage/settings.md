@@ -42,7 +42,7 @@ DJANGO_GRAPHEX = {
     "OPTIMIZE_ONLY_FIELDS": True,
     "OPTIMIZE_NESTED_PAGINATION": True,
     "OPTIMIZER_SAFE_MODE": False,
-    "OPTIMIZER_WORK_BUDGET": 2000,  # per-request optimizer expansion cap per walker (None disables)
+    "OPTIMIZER_WORK_BUDGET": 2000,  # per-execution optimizer expansion cap per walker (None disables)
     "OPTIMIZE_ANNOTATED_FIELDS": True,
 
     # --- Subscriptions ----------------------------------------------------- #
@@ -74,7 +74,7 @@ DJANGO_GRAPHEX = {
 
     # --- String directive output ------------------------------------------ #
     "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,  # Unicode characters per @replace result; None = uncapped
-    "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,  # characters directives may add per request; None = unlimited
+    "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,  # characters directives may add per HTTP request (batch items share it); None = unlimited
 
     # --- File uploads (opt-in — Base64FileInput) --------------------------- #
     "MAX_UPLOAD_SIZE": None,        # Required when Base64FileInput is used
@@ -249,7 +249,7 @@ the set of documents your clients send is finite, since nothing is ever evicted.
 | `OPTIMIZE_ONLY_FIELDS` | `True` | Also narrow columns with `.only()` across the `select_related` span **and** inside each `Prefetch` child queryset. Set `False` if resolvers/properties read non-selected columns. |
 | `OPTIMIZE_NESTED_PAGINATION` | `True` | DB-side `ROW_NUMBER()` window slicing for reverse-FK nested paginated lists (`LimitOffset` / `Page`). `False` = in-memory order+slice fallback. See [Nested Lists](nested-lists.md#performance-n1). |
 | `OPTIMIZER_SAFE_MODE` | `False` | When `True`, any exception in the optimization block degrades to the un-optimized queryset and logs a `WARNING` (instead of a 500). Default fail-loud. See [Query Optimization](query-optimization.md). |
-| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-request cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap the root field is resolved without the optimizer plan (same data, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-operation-execution cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap the root field is resolved without the optimizer plan (same data, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
 | `OPTIMIZE_ANNOTATED_FIELDS` | `True` | Inject `AnnotatedField` DB annotations only when the field is selected. Runtime kill-switch for annotation injection. See [Fields → AnnotatedField](fields.md#annotatedfield). |
 
 ## Subscriptions
@@ -336,7 +336,7 @@ does **not** require `Base64FileInput` or any upload feature.
 | Setting | Default | Description |
 |---|---|---|
 | `MAX_REPLACE_OUTPUT_LENGTH` | `1_000_000` | Maximum **Unicode characters** in each `@replace` result, not encoded bytes; the request-wide budget is `MAX_DIRECTIVE_OUTPUT_TOTAL`. The exact Python replacement length (including empty-substring insertions and `count`) is checked **before** replacement allocation; results above the cap produce a GraphQL field error with normal null propagation. A result at the cap is allowed. Must be a positive integer; `None` restores the former uncapped behavior, which is unsafe without another output limit. |
-| `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10_000_000` | Per-**request** budget, in Unicode characters, for text that directives **add**. Every custom directive is charged the amount by which its result is longer than its input, summed over all fields, aliases, rows and chained directives of the execution (a subscription event is its own execution). Once the budget is spent, each further directive use is a GraphQL field error naming this setting and produces no text; a single field can overshoot by at most its own per-field cap. Normal requests are unaffected; directives that do not lengthen the text (`@uppercase`, `@truncate`, ...) are free. Must be a positive integer; `None` removes the budget. It complements `MAX_REPLACE_OUTPUT_LENGTH`, which still bounds each `@replace` result. |
+| `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10_000_000` | Per-**request** budget, in Unicode characters, for text that directives **add**. Every custom directive is charged the amount by which its result is longer than its input, summed over all fields, aliases, rows and chained directives of the execution (all items of a batch share the budget of their HTTP request; a subscription event is its own execution; an execution the GraphQL view did not start, or whose context cannot carry the counter -- `None`, `__slots__` -- is counted per execution). Once the budget is spent, each further directive use is a GraphQL field error naming this setting and produces no text; a single field can overshoot by at most its own per-field cap. Normal requests are unaffected; directives that do not lengthen the text (`@uppercase`, `@truncate`, ...) are free. Must be a positive integer; `None` removes the budget. It complements `MAX_REPLACE_OUTPUT_LENGTH`, which still bounds each `@replace` result. |
 
 ## File uploads
 

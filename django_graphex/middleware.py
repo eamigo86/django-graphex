@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Generator
 
 from graphql import GraphQLError
@@ -11,6 +9,12 @@ from graphql.execution.values import get_directive_values
 from graphql.pyutils import is_awaitable
 from graphql.type.directives import GraphQLIncludeDirective, GraphQLSkipDirective
 
+from ._execution_state import (
+    ExecutionStates,
+    RequestBudget,
+    is_subscription,
+    request_budget_of,
+)
 from .registry import get_global_registry
 from .settings import graphql_api_settings
 
@@ -38,28 +42,23 @@ class _DirectiveAwaitable:
         return self._factory().__await__()
 
 
-#: Private attribute on the request context holding the per-execution counters.
-_BUDGET_ATTR = "_graphex_directive_output"
-
-#: Most executions tracked per table; the oldest entry is dropped beyond this.
-_BUDGET_TABLE_SIZE = 64
-
-#: Counters for contexts that cannot take attributes (a dict or None).
-_FALLBACK_TABLE: OrderedDict[tuple[int, int], list[Any]] = OrderedDict()
-
-_BUDGET_LOCK = threading.Lock()
+#: Counters of executions that carry no request budget (anything not run by the
+#: GraphQL view: subscription events, transports, direct "execute" calls).
+_EXECUTIONS = ExecutionStates()
 
 
 def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
-    """Charge text grown by a directive against the per-request output budget.
+    """Charge text grown by a directive against the output budget.
 
-    The counter never lives in anything the client controls. It is kept in a
-    small table on the request context (or, for a context that cannot take
-    attributes, a bounded module table) keyed by the identity of the
-    execution's variable values and root value. Entries hold both objects, so
-    an identity can only match while its execution is alive. Subscription
-    events share their variable values but each has its own root value, so the
-    counter restarts per event.
+    The counter never lives in anything the client controls. An execution run
+    by the GraphQL view shares the budget of its whole HTTP request, so every
+    item of a batch draws from the same "MAX_DIRECTIVE_OUTPUT_TOTAL". Anything
+    else (a subscription event, a transport, a direct "execute" call) is its own
+    scope: the counter is kept per execution in a bounded module table, keyed by
+    the identity of the variable values and root value. Entries hold both
+    objects, so an identity can only match while its execution is alive.
+    Subscription events share their variable values but each has its own root
+    value, so the counter restarts per event, even over a request context.
 
     Args:
         info: The GraphQL resolve info for the field.
@@ -73,24 +72,14 @@ def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     maximum = graphql_api_settings.MAX_DIRECTIVE_OUTPUT_TOTAL
     if maximum is None:
         return
-    variables, root = info.variable_values, info.root_value
-    key = (id(variables), id(root))
-    with _BUDGET_LOCK:
-        table = getattr(info.context, _BUDGET_ATTR, None)
-        if table is None:
-            table = OrderedDict()
-            try:
-                setattr(info.context, _BUDGET_ATTR, table)
-            except (AttributeError, TypeError):
-                table = _FALLBACK_TABLE
-        entry = table.get(key)
-        if entry is None or entry[0] is not variables or entry[1] is not root:
-            entry = table[key] = [variables, root, 0]
-            while len(table) > _BUDGET_TABLE_SIZE:
-                table.popitem(last=False)
-        table.move_to_end(key)
-        entry[2] += grown
-        used = entry[2]
+    shared = None if is_subscription(info) else request_budget_of(info.context)
+    with _EXECUTIONS.lock:
+        if shared is None:
+            counter = _EXECUTIONS.get(info, RequestBudget)
+        else:
+            counter = shared
+        counter.used += grown
+        used = counter.used
     if used > maximum:
         raise GraphQLError(
             f"@{directive_name} output exceeds the request budget "

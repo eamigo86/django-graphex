@@ -127,8 +127,9 @@ DEFAULTS = {
     # Per-field @replace output cap in Unicode characters (not encoded bytes).
     # None restores the former uncapped behavior.
     "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,
-    # Per-request budget (Unicode characters) for text GROWN by directives, summed
-    # over every field, alias and row. None disables it.
+    # Per-HTTP-request budget (Unicode characters) for text GROWN by directives,
+    # summed over every field, alias and row, and shared by all items of a batch.
+    # A subscription event has its own. None disables it.
     "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,
     # Cost added for each custom directive use on a field (0 = directives are free).
     "COST_DIRECTIVE": 0,
@@ -145,7 +146,8 @@ DEFAULTS = {
     # optimization block degrades to the un-optimized queryset and logs a WARNING
     # instead of surfacing a 500. Default False (fail loud).
     "OPTIMIZER_SAFE_MODE": False,
-    # Per-request, per-walker cap on the selection contexts the queryset
+    # Per-operation-execution (each batch item is its own), per-walker cap on
+    # the selection contexts the queryset
     # optimizer expands. A fragment reached through distinct relation paths
     # describes exponentially many select/prefetch lookups, so no memo can plan
     # it in linear time. Past the cap the optimizer stops planning deeper

@@ -358,6 +358,18 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Fix the scope of the directive output budget. `MAX_DIRECTIVE_OUTPUT_TOTAL`
+  was counted per execution, so a 10-item batch got ten times the budget; it is
+  now per HTTP request (the GraphQL view binds one counter to the request, and
+  every batch item draws from it). A subscription event keeps its own budget.
+  Executions the view does not start use a per-execution counter in one bounded
+  table that no longer evicts live counters at 64 concurrent executions (limit
+  1,024), and the counter is read from the context's own `__dict__`, so a
+  context whose `__getattr__` invents values (a mock) can no longer disable it.
+  The optimizer work budget shares the same table and stays per execution
+  (each batch item plans its own selection); it also no longer depends on the
+  context type.
+
 - Fix `@round` on `Decimal` values. The precision clamp turned a zero or
   negative precision into a positive one (`0.0004` gave `0.00` instead of `0`,
   `1E-30` with precision 5 gave 28 decimals). It now quantizes half to even to

@@ -215,7 +215,7 @@ Configure in `settings.py` under `DJANGO_GRAPHEX`:
 | `OPTIMIZE_ONLY_FIELDS` | `True` | Additionally narrow columns with `.only()` across the `select_related` span **and** inside each `Prefetch` child queryset (conservative; see the warning above). |
 | `OPTIMIZE_NESTED_PAGINATION` | `True` | DB-side `ROW_NUMBER()` window slicing for reverse-FK nested paginated lists (`LimitOffset`/`Page`). `False` = in-memory order+slice fallback. See [DB-side nested pagination](#db-side-nested-pagination-window-slicing) (this page) and [Nested Lists](nested-lists.md#performance-n1). |
 | `OPTIMIZER_SAFE_MODE` | `False` | When `True`, any exception in the optimization block degrades to the un-optimized queryset and logs a `WARNING` (instead of a 500). Default fail-loud. See [`OPTIMIZER_SAFE_MODE`](#optimizer_safe_mode-fail-safe-degrade) below. |
-| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-request cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap the root field is resolved without the optimizer plan (same data, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-operation-execution cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap the root field is resolved without the optimizer plan (same data, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
 | `OPTIMIZE_ANNOTATED_FIELDS` | `True` | Inject `AnnotatedField` DB annotations only when the field is selected. Runtime kill-switch for annotation injection. See [Fields → AnnotatedField](fields.md#annotatedfield). |
 
 ```python
@@ -259,10 +259,10 @@ lookups the optimizer would emit grow as `4**n` for `n` fragments. Memoizing by
 fragment cannot plan an exponential set in linear time, and emitting it would
 also mean one query per lookup once there is data.
 
-`OPTIMIZER_WORK_BUDGET` (default `2000`) therefore caps, per request and per
+`OPTIMIZER_WORK_BUDGET` (default `2000`) therefore caps, per operation execution and per
 walker, how many selection contexts the optimizer expands. A realistic document
 stays orders of magnitude below it. The budget is shared by all root fields
-(aliases) of one request. Once any walker spends it, the root field being
+(aliases) of one execution; each item of a batch is its own execution. Once any walker spends it, the root field being
 planned is resolved without the optimizer plan, exactly as with
 `OPTIMIZE_QUERYSET = False`, and so are the request's later root fields: the
 data is identical and relations behind a `get_queryset` scope stay scoped, but

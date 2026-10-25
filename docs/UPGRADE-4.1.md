@@ -814,9 +814,13 @@ other directives; the separate text-time default change is described above.
 `@replace` results are limited to 1,000,000 Unicode characters by default
 (`MAX_REPLACE_OUTPUT_LENGTH`); an over-limit result, even one with no
 replacement, is a GraphQL field error, and a result at the cap stays valid. New
-`MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters per request, `None`
-disables) charges every directive for the text it adds; once spent, further
-directive uses become field errors. Many aliases and rows each under the
+`MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters per HTTP request,
+`None` disables) charges every directive for the text it adds; once spent,
+further directive uses become field errors. The budget is shared by every item
+of a batch (the GraphQL view binds one counter to the request), restarts for
+each subscription event, and is per execution for anything the view does not run
+(a direct `execute` call, a transport) or a context that cannot carry the
+counter (`None`, `__slots__`). Many aliases and rows each under the
 per-field cap can no longer produce hundreds of megabytes. Raise either setting
 or set it to `None` if you legitimately transform very large text. The opt-in
 `COST_DIRECTIVE` setting (default `0`) adds cost per custom directive use, so
@@ -892,9 +896,11 @@ GET components before hashing, so existing cached responses cold-miss once.
 ### Optimizer work budget
 
 The new `OPTIMIZER_WORK_BUDGET` setting (default 2000, `None` disables) caps the
-selection contexts each queryset-optimizer walker expands per request, so
-fragments reached through many distinct relation paths cannot cost seconds of
-CPU. The budget is shared by every root field (alias) of one request. Once any
+selection contexts each queryset-optimizer walker expands per operation
+execution, so fragments reached through many distinct relation paths cannot
+cost seconds of CPU. The budget is shared by every root field (alias) of one
+execution; unlike the directive output budget it is not shared across the items
+of a batch, because each item plans its own selection. Once any
 walker spends it, the root field being planned is resolved without the
 optimizer plan, exactly as with `OPTIMIZE_QUERYSET = False`, and so are the
 request's later root fields: the data and the scoping of `get_queryset`
@@ -1037,7 +1043,7 @@ durations) instead of failing on every read.
 | --- | --- | --- |
 | `DEFAULT_PAGE_SIZE` | `100` (was `None`) | Rows returned when the client omits a size. |
 | `DOCUMENT_CACHE_MAX_QUERY_LENGTH` | `65536` | Longest document kept in the parse and validation caches; `None` removes the bound. |
-| `OPTIMIZER_WORK_BUDGET` | `2000` | Selection contexts each optimizer walker expands per request (shared by all root fields); `None` disables. |
-| `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10000000` | Characters directives may add per request; `None` disables. |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Selection contexts each optimizer walker expands per operation execution (shared by all root fields; each batch item has its own); `None` disables. |
+| `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10000000` | Characters directives may add per HTTP request (shared by all batch items; each subscription event has its own); `None` disables. |
 | `MAX_REPLACE_OUTPUT_LENGTH` | `1000000` | Characters per `@replace` result; `None` restores uncapped behavior. |
 | `COST_DIRECTIVE` | `0` | Cost added per custom directive use. |

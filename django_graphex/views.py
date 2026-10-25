@@ -63,6 +63,7 @@ from graphql.pyutils import is_awaitable, is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
+from ._execution_state import bind_request_budget
 from .core._flat_gfk_scope import signature_grants
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
@@ -1788,10 +1789,13 @@ class BaseGraphQLView(View):
                 data=None, errors=_mark_client_errors(list(validation_errors))
             )
 
+        context = self.get_context(request)
+        # Every item of a batch draws from one directive output budget.
+        bind_request_budget(request, context)
         try:
             execute_options = {
                 "root_value": self.get_root_value(request),
-                "context_value": self.get_context(request),
+                "context_value": context,
                 "variable_values": variables,
                 "operation_name": operation_name,
                 "middleware": middleware,

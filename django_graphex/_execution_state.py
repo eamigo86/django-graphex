@@ -1,0 +1,149 @@
+"""Budget state shared by the middleware and the optimizer.
+
+Two scopes exist, and they differ on purpose:
+
+* "per execution": one GraphQL operation execution (a subscription event is its
+  own execution). The state is found in a bounded module table keyed by the
+  identity of the execution's variable values and root value. This is what the
+  optimizer work budget uses, and the fallback of the directive output budget.
+* "per request": every execution of one HTTP request, so all items of a batch
+  share one budget. The view binds a RequestBudget to the request
+  context; the directive output budget prefers it when it is present.
+"""
+
+from __future__ import annotations
+
+import threading
+from collections import OrderedDict
+from typing import Any, Callable
+
+from graphql import OperationType
+
+#: Private attribute on a context holding its request-wide budget.
+REQUEST_BUDGET_ATTR = "_graphex_request_budget"
+
+#: Most live-or-finished executions tracked; the least recently used entry is
+#: dropped beyond this. An execution is only dropped after more than this many
+#: other executions charged while it was still running, which is far above any
+#: realistic concurrency; such an execution restarts its counter once.
+EXECUTION_TABLE_SIZE = 1024
+
+
+class RequestBudget:
+    """Counter shared by every execution of one HTTP request.
+
+    Attributes:
+        used: Characters charged so far.
+    """
+
+    __slots__ = ("used",)
+
+    def __init__(self) -> None:
+        """Start with nothing used.
+
+        The counter begins at zero and only grows.
+        """
+        self.used = 0
+
+
+class ExecutionStates:
+    """Bounded table of per-execution state, keyed by execution identity.
+
+    Entries hold the variable values and the root value, so an identity can
+    only match while its execution is alive and an id is never reused for a
+    different live execution.
+    """
+
+    def __init__(self, size: int = EXECUTION_TABLE_SIZE) -> None:
+        """Create an empty table.
+
+        Args:
+            size: Most entries kept before the least recently used is dropped.
+        """
+        self.size = size
+        self.lock = threading.Lock()
+        self._table: OrderedDict[tuple[int, int], list[Any]] = OrderedDict()
+
+    def __len__(self) -> int:
+        """Count the tracked executions.
+
+        Returns:
+            The number of entries.
+        """
+        return len(self._table)
+
+    def get(self, info: Any, factory: Callable[[], Any]) -> Any:
+        """Return the state of the execution "info" belongs to.
+
+        The caller must hold "self.lock" while it reads or updates the state.
+
+        Args:
+            info: Resolve info of any field of the execution.
+            factory: Builds the state of a new execution.
+
+        Returns:
+            The execution's state object.
+        """
+        variables = getattr(info, "variable_values", None)
+        root = getattr(info, "root_value", None)
+        key = (id(variables), id(root))
+        entry = self._table.get(key)
+        if entry is None or entry[0] is not variables or entry[1] is not root:
+            entry = self._table[key] = [variables, root, factory()]
+            while len(self._table) > self.size:
+                self._table.popitem(last=False)
+        self._table.move_to_end(key)
+        return entry[2]
+
+
+def request_budget_of(context: Any) -> RequestBudget | None:
+    """Return the request budget bound to a context, if any.
+
+    The lookup reads the instance "__dict__" directly: "getattr" would trust a
+    context whose "__getattr__" invents values (a mock), and a dict or None has
+    no attributes at all.
+
+    Args:
+        context: The execution context value.
+
+    Returns:
+        The bound budget, or None.
+    """
+    try:
+        found = vars(context).get(REQUEST_BUDGET_ATTR)
+    except TypeError:
+        return None
+    return found if isinstance(found, RequestBudget) else None
+
+
+def bind_request_budget(request: Any, context: Any) -> None:
+    """Share one budget across every execution of an HTTP request.
+
+    The budget lives on the request; a context that is a different object (a
+    custom "get_context") is bound to the same budget. A context without an
+    instance "__dict__" keeps the per-execution budget.
+
+    Args:
+        request: The incoming HTTP request.
+        context: The execution context built for one execution of the request.
+    """
+    try:
+        shared = request_budget_of(request) or RequestBudget()
+        vars(request)[REQUEST_BUDGET_ATTR] = shared
+        if context is not request:
+            vars(context)[REQUEST_BUDGET_ATTR] = shared
+    except TypeError:
+        return
+
+
+def is_subscription(info: Any) -> bool:
+    """Tell whether the execution is a subscription event.
+
+    Args:
+        info: Resolve info of any field of the execution.
+
+    Returns:
+        True for a subscription operation.
+    """
+    operation = getattr(getattr(info, "operation", None), "operation", None)
+    return operation is OperationType.SUBSCRIPTION

@@ -359,16 +359,209 @@ def test_dict_context_budget_is_per_execution() -> None:
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 1000})
-def test_fallback_table_stays_bounded() -> None:
-    """Executions without an attribute-capable context cannot grow memory.
+def test_execution_table_stays_bounded() -> None:
+    """Executions without a request budget cannot grow memory.
 
-    The module table drops its oldest entries past a fixed size.
+    The module table drops its least recently used entries past a fixed size.
     """
     from types import SimpleNamespace
 
     from django_graphex import middleware
+    from django_graphex._execution_state import EXECUTION_TABLE_SIZE
 
-    for _ in range(middleware._BUDGET_TABLE_SIZE + 20):
+    for _ in range(EXECUTION_TABLE_SIZE + 20):
         info = SimpleNamespace(variable_values={}, root_value=None, context=None)
         middleware._charge(info, 1, "replace")  # type: ignore[arg-type]
-    assert len(middleware._FALLBACK_TABLE) <= middleware._BUDGET_TABLE_SIZE
+    assert len(middleware._EXECUTIONS) <= EXECUTION_TABLE_SIZE
+
+
+def _concurrent(contexts: list[Any], count: int = 30) -> list[int]:
+    """Run async executions concurrently and count each one's produced fields.
+
+    Args:
+        contexts: One context value per concurrent execution.
+        count: Aliases per execution.
+
+    Returns:
+        The number of non-null fields of every execution.
+    """
+    import asyncio
+    import random
+
+    from graphql import graphql
+
+    rng = random.Random(7)
+
+    async def slow(_root: Any, _info: Any) -> str:
+        """Yield to the loop so executions interleave.
+
+        Args:
+            _root: Unused root value.
+            _info: Unused resolve info.
+
+        Returns:
+            A short text.
+        """
+        await asyncio.sleep(rng.random() * 0.01)
+        return "x"
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType("Q", {"a": GraphQLField(GraphQLString, resolve=slow)}),
+        directives=[*specified_directives, *all_directives],
+    )
+    body = " ".join(f"f{i}: a @center(width: 100)" for i in range(count))
+
+    async def go() -> list[Any]:
+        """Gather every execution.
+
+        Returns:
+            The execution results.
+        """
+        return list(
+            await asyncio.gather(
+                *[
+                    graphql(
+                        schema,
+                        "{ %s }" % body,
+                        context_value=c,
+                        middleware=[GraphQLDirectiveMiddleware()],
+                    )
+                    for c in contexts
+                ]
+            )
+        )
+
+    return [
+        sum(v is not None for v in (r.data or {}).values()) for r in asyncio.run(go())
+    ]
+
+
+class _Ctx:
+    """A plain attribute-capable context.
+
+    It stands in for any request-like object that can carry attributes.
+    """
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 400})
+@pytest.mark.parametrize("kind", ["object", "dict", "none"])
+def test_many_concurrent_executions_keep_their_own_counters(kind: str) -> None:
+    """More than 64 concurrent executions never reset each other's counter.
+
+    Every execution adds 99 characters per field, so the budget of 400 allows 4
+    fields; none may get more, however many run at once.
+
+    Args:
+        kind: The context type shared by (object, dict) or absent (none).
+    """
+    shared: Any = {"object": _Ctx(), "dict": {}, "none": None}[kind]
+    produced = _concurrent([shared] * 150)
+    assert produced and max(produced) <= 4
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 400})
+def test_a_mock_context_cannot_disable_the_budget() -> None:
+    """A context whose __getattr__ invents values still gets a real budget.
+
+    The budget is read from the instance dictionary, never through getattr.
+    """
+    from unittest.mock import MagicMock
+
+    assert max(_concurrent([MagicMock()])) <= 4
+
+
+def _post_batch(items: int, aliases: int, budget: int) -> list[dict[str, Any]]:
+    """POST a batch of identical expanding queries to the GraphQL view.
+
+    Args:
+        items: Number of batch items.
+        aliases: Aliased expanding fields per item.
+        budget: MAX_DIRECTIVE_OUTPUT_TOTAL for the request.
+
+    Returns:
+        The decoded JSON answer.
+    """
+    import json
+    from types import ModuleType, SimpleNamespace
+
+    from django.test import Client
+    from django.urls import path
+
+    from django_graphex.views import GraphQLView
+
+    schema = SimpleNamespace(
+        graphql_schema=GraphQLSchema(
+            query=GraphQLObjectType(
+                "Q", {"a": GraphQLField(GraphQLString, resolve=lambda *_: "x")}
+            ),
+            directives=[*specified_directives, *all_directives],
+        )
+    )
+    urls = ModuleType("budget_urls")
+    urls.urlpatterns = [path("g/", GraphQLView.as_view(schema=schema, batch=True))]  # type: ignore[attr-defined]
+    body = "{ %s }" % " ".join(f"f{i}: a @center(width: 100)" for i in range(aliases))
+    settings_override = {
+        "MAX_DIRECTIVE_OUTPUT_TOTAL": budget,
+        "MAX_BATCH_SIZE": 20,
+        "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
+    }
+    with override_settings(DJANGO_GRAPHEX=settings_override, ROOT_URLCONF=urls):
+        response = Client().post(
+            "/g/",
+            data=json.dumps([{"query": body}] * items),
+            content_type="application/json",
+        )
+    return json.loads(response.content)  # type: ignore[no-any-return]
+
+
+def test_batch_items_share_one_request_budget() -> None:
+    """Ten items of one batch together may add only the request budget.
+
+    Each field adds 99 characters, so a budget of 1000 allows ten fields in
+    total across the whole batch, not ten per item.
+    """
+    answer = _post_batch(items=10, aliases=20, budget=1000)
+    produced = sum(
+        v is not None for item in answer for v in (item.get("data") or {}).values()
+    )
+    assert 0 < produced <= 11
+    assert any(item.get("errors") for item in answer)
+
+
+def test_a_single_request_item_is_unchanged() -> None:
+    """A batch of one behaves as before: its own budget.
+
+    The request budget of a single item equals the former per-execution one.
+    """
+    answer = _post_batch(items=1, aliases=20, budget=1000)
+    produced = sum(v is not None for v in (answer[0].get("data") or {}).values())
+    assert 0 < produced <= 11
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 10})
+def test_subscription_events_restart_even_with_a_request_budget() -> None:
+    """A subscription event ignores the request budget and has its own.
+
+    Events of a long-lived request context would otherwise accumulate.
+    """
+    from types import SimpleNamespace
+
+    from graphql import OperationType
+
+    from django_graphex._execution_state import RequestBudget, bind_request_budget
+    from django_graphex.middleware import _charge
+
+    request = SimpleNamespace()
+    bind_request_budget(request, request)
+    assert isinstance(vars(request)["_graphex_request_budget"], RequestBudget)
+    subscription = SimpleNamespace(operation=OperationType.SUBSCRIPTION)
+    shared: dict[str, Any] = {}
+    for _ in range(3):
+        info = SimpleNamespace(
+            variable_values=shared,
+            root_value={},
+            context=request,
+            operation=subscription,
+        )
+        _charge(info, 8, "replace")  # type: ignore[arg-type]
+    assert vars(request)["_graphex_request_budget"].used == 0
