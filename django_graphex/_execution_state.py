@@ -6,9 +6,11 @@ Two scopes exist, and they differ on purpose:
   own execution). The state lives in a weak table keyed by the graphql-core
   executor of the execution, so it lasts exactly as long as the execution. The
   events of one subscription share their stream's executor but run one after
-  the other, so that entry also remembers the root value of the current event
-  and starts a fresh state when another one arrives. An info without an
-  executor uses a bounded table keyed by the identity of the variable values
+  the other, so that entry also remembers the root response path of the current
+  event (graphql-core makes a new one per event execution, so equal payload
+  objects do not matter) and starts a fresh state when another one arrives.
+  The entry never holds the root value, which may reference the executor. An
+  info without an executor uses a bounded table keyed by the identity of the variable values
   and root value instead. This is what the optimizer work budget uses, and the
   fallback of the directive output budget.
 * "per request": every execution of one HTTP request, so all items of a batch
@@ -65,8 +67,10 @@ class ExecutionStates:
     An execution is identified by its graphql-core executor, held weakly so the
     state dies with it and nothing can evict a live one. A subscription event
     shares the executor of its source stream; the events of a stream run
-    sequentially, so the entry also holds the root value of the current event
-    and a different root value starts a fresh state. An info without an
+    sequentially, so the entry also holds the root response path of the current
+    event and a different path starts a fresh state. The entry never holds the
+    root value (it may reference the executor, which would keep the entry
+    alive forever). An info without an
     executor (a test double) falls back to a bounded table keyed by the variable
     values and the root value. Its entries hold both objects, so an identity can
     only match while its execution is alive.
@@ -112,11 +116,11 @@ class ExecutionStates:
             None,
         )
         if executor is not None:
-            root = getattr(info, "root_value", None)
+            event = _root_path(info) if is_subscription(info) else None
             try:
                 entry = self._by_executor.get(executor)
-                if entry is None or (is_subscription(info) and entry[0] is not root):
-                    entry = self._by_executor[executor] = [root, factory()]
+                if entry is None or entry[0] is not event:
+                    entry = self._by_executor[executor] = [event, factory()]
                 return entry[1]
             except TypeError:  # not hashable or not weak-referenceable
                 pass
@@ -158,6 +162,26 @@ def current_request_budget() -> RequestBudget | None:
         The budget set by "request_budget_scope", or None outside one.
     """
     return _REQUEST_BUDGET.get()
+
+
+def _root_path(info: Any) -> Any:
+    """Return the outermost response path of a field.
+
+    graphql-core builds a new root path object for the root field every time it
+    executes the operation, so for a subscription this identifies one event. It
+    references only response keys and type names, never the executor or a
+    payload.
+
+    Args:
+        info: Resolve info of any field of the execution.
+
+    Returns:
+        The root Path object, or None when the info carries no path.
+    """
+    path = getattr(info, "path", None)
+    while getattr(path, "prev", None) is not None:
+        path = path.prev
+    return path
 
 
 def is_subscription(info: Any) -> bool:

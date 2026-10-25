@@ -1161,3 +1161,93 @@ def test_live_subscription_event_keeps_its_counter_across_other_events() -> None
     assert result.data is not None
     assert result.data["main"]["two"] is None
     assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in result.errors[0].message
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_events_with_one_shared_payload_object_each_get_a_counter() -> None:
+    """A source yielding the same object every time still restarts per event.
+
+    Each event grows 99 characters under a budget of 150; sharing one counter
+    would refuse the second and third event.
+    """
+    import asyncio
+
+    from graphql import subscribe
+
+    payload = "tick"
+
+    async def source(*_: Any) -> Any:
+        for _ in range(3):
+            yield payload
+
+    schema = GraphQLSchema(
+        query=_QUERY,
+        subscription=GraphQLObjectType(
+            "S",
+            {
+                "t": GraphQLField(
+                    GraphQLString, subscribe=source, resolve=lambda value, _i: value
+                )
+            },
+        ),
+        directives=[*specified_directives, *all_directives],
+    )
+
+    async def go() -> list[Any]:
+        stream = subscribe(
+            schema,
+            parse("subscription { t @center(width: 100) }"),
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+        return [result async for result in stream]
+
+    results = asyncio.run(go())
+    assert len(results) == 3
+    assert not any(result.errors for result in results)
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 10**9})
+def test_a_root_value_holding_its_info_does_not_leak_a_table_entry() -> None:
+    """Entries die with their execution even when the root references it.
+
+    The resolver stores the resolve info (which reaches the executor) on the
+    root value; the weak table must not keep that root alive.
+    """
+    import gc
+
+    from django_graphex import middleware
+
+    class Holder:
+        """Root value that stashes the resolve info."""
+
+    def resolve(root: Any, info: Any) -> str:
+        """Keep a reference to the info on the root value.
+
+        Args:
+            root: The root value.
+            info: The resolve info.
+
+        Returns:
+            A short string.
+        """
+        root.info = info
+        return "x"
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "Q", {"a": GraphQLField(GraphQLString, resolve=resolve)}
+        ),
+        directives=[*specified_directives, *all_directives],
+    )
+    gc.collect()
+    before = len(middleware._EXECUTIONS)
+    for _ in range(200):
+        result = graphql_sync(
+            schema,
+            "{ a @center(width: 10) }",
+            root_value=Holder(),
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+        assert not result.errors
+    gc.collect()
+    assert len(middleware._EXECUTIONS) <= before + 1

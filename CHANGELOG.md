@@ -408,9 +408,12 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   as their execution. They were found in a 1024-entry LRU keyed by variable and
   root identity, so a still-running (for example async) execution lost its
   counter after 1024 other executions and restarted from zero. State is now keyed
-  weakly by the graphql-core executor. The events of one subscription share their
-  stream's executor, so that entry also remembers the current event's root value
-  and starts a fresh counter for the next one.
+  weakly by the graphql-core executor, and the entry never holds the root value
+  (a root that kept its resolve info made the entry uncollectable, so the table
+  grew without bound). The events of one subscription share their stream's
+  executor, so that entry also remembers the current event's root response path,
+  which graphql-core creates anew for every event, and starts a fresh counter
+  for the next one even when the source yields the same object each time.
 - Share the directive output budget across a batch for every context type, and
   keep concurrent requests apart. The budget was written onto the request and the
   user's context, so a dict or `__slots__` context never shared it, and a context

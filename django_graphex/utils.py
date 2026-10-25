@@ -1235,7 +1235,8 @@ def _request_work(info: GraphQLResolveInfo) -> dict[str, Any]:
     execution, so it lasts exactly as long as the execution and does not depend
     on what kind of context the application passes (a dict, None or a mock all
     work). The events of a subscription share their stream's executor, so the
-    entry also tracks the current event's root value and restarts per event. An
+    entry also tracks the current event's root response path (never the root
+    value) and restarts per event. An
     info without an executor uses a bounded table keyed by the identity of the
     variable values and root value.
 
