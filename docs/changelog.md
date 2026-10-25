@@ -53,7 +53,7 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 - Subscription WebSocket handshakes without `graphql-transport-ws` are rejected before accept ([migration](UPGRADE-4.1.md#websocket-subprotocol-is-required)).
 - Generated database error messages are generic ([migration](UPGRADE-4.1.md#database-error-messages-are-generic)).
 - Primary-key tie-break can reorder tied rows ([migration](UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
-- Cursors are validated by one rule on the database and in-memory paths: tampered cursors answer `Invalid cursor`, finite decimals above float range are valid, and a naive datetime cursor is refused when the column is timezone-aware ([migration](UPGRADE-4.1.md#tampered-and-unconvertible-cursors)).
+- Cursors are validated by one rule on the database and in-memory paths: tampered cursors answer `Invalid cursor`, finite decimals above float range are valid, a naive datetime cursor is refused when the column is timezone-aware, and a `DecimalField` cursor with more fractional digits than `decimal_places` is refused ([migration](UPGRADE-4.1.md#tampered-and-unconvertible-cursors)).
 - `page: null` on a page-number list is the first page instead of an error ([migration](UPGRADE-4.1.md#explicit-page-null-is-the-first-page)).
 - Nullable columns order NULL last ascending and first descending in offset and page results ([migration](UPGRADE-4.1.md#nullable-ordering-in-offset-and-page-results)).
 - `Meta.name` is honored as the GraphQL name of an `InputType`, and two types made by one factory are distinct types, not a re-executed declaration ([migration](UPGRADE-4.1.md#one-public-output-type-per-model-and-registry)).
@@ -389,6 +389,10 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Make the cursor parity matrix independent of the database pk sequence. A decimal
+  boundary such as `1e-999` compared as zero on SQLite but exactly in memory, so
+  the pages differed whenever row pks were not `1..5`; both paths now refuse a
+  `DecimalField` boundary that no stored value can equal.
 - Correlate reverse-FK filters on the column the foreign key targets. A child FK
   with `to_field` pointing at a non-pk column was compared with the parent `pk`, so
   `not`, `or` and destination-scoped relation filters returned the wrong parents

@@ -55,9 +55,15 @@ FIELDS = ["integer", "floating", "decimal", "date", "datetime", "uuid_field"]
 PKS = [None, "1", "zzz", "99999999999999999999"]
 
 
-@pytest.fixture
-def rows() -> list[ScalarKindsModel]:
+@pytest.fixture(params=[0, 9], ids=["pk1", "pk10"])
+def rows(request: pytest.FixtureRequest) -> list[ScalarKindsModel]:
     """Create five rows with a value of every ordering type.
+
+    The primary keys start at 1 or 10 so no outcome depends on the database pk
+    sequence (a cursor pk of "1" is a real row in one run and not in the other).
+
+    Args:
+        request: Fixture request carrying the pk offset.
 
     Returns:
         The created rows.
@@ -65,6 +71,7 @@ def rows() -> list[ScalarKindsModel]:
     author = Author.objects.create(name="a")
     return [
         ScalarKindsModel.objects.create(
+            pk=1 + request.param + i,
             author=author,
             char="c",
             integer=i,
@@ -130,6 +137,14 @@ def test_cursor_validation_matrix_is_identical_on_both_paths(
         ("decimal", "9" * 400, False),
         ("decimal", "-1e999", False),
         ("decimal", "1e10000", False),
+        # More fractional digits than decimal_places=2 can never match a stored
+        # value: refused on both paths. Trailing zeros do not count.
+        ("decimal", "1e-999", True),
+        ("decimal", "0.001", True),
+        ("decimal", "2.50", False),
+        ("decimal", "2.5", False),
+        ("decimal", "2.5000", False),
+        ("decimal", "100E-2", False),
         # Beyond ten to the 10,000th: a client error, not a database error.
         ("decimal", "1e10001", True),
         ("decimal", "1e999999", True),
@@ -162,3 +177,24 @@ def test_pinned_cursor_decisions(
         list(ScalarKindsModel.objects.all()),
     ):
         assert (_outcome(source, field, token) == "invalid") is invalid
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("field", FIELDS)
+def test_cursors_encoded_from_real_rows_always_pass(
+    rows: list[ScalarKindsModel], field: str
+) -> None:
+    """A cursor built from a stored row is valid and agrees on both paths.
+
+    Args:
+        rows: The created rows.
+        field: Ordering field under test.
+    """
+    ScalarKindsModel.objects.filter(pk=rows[0].pk).update(decimal=Decimal("2.50"))
+    ScalarKindsModel.objects.filter(pk=rows[1].pk).update(decimal=Decimal("0.01"))
+    paginator = CursorGraphqlPagination(ordering=field, page_size=2)
+    for row in ScalarKindsModel.objects.all():
+        token = paginator.encode_cursor(getattr(row, field), row.pk)
+        db = _outcome(ScalarKindsModel.objects.all(), field, token)
+        memory = _outcome(list(ScalarKindsModel.objects.all()), field, token)
+        assert db == memory != "invalid"

@@ -208,6 +208,29 @@ def _coerce_cursor_component(raw: str, kind: type, aware: bool) -> Any:
     return raw
 
 
+def _check_decimal_places(number: Decimal, field: Any) -> None:
+    """Refuse a boundary with more fractional digits than the column stores.
+
+    Trailing zeros do not count, so "2.50" and "2.5" both fit two places. The
+    digit tuple is used instead of normalize() because that rounds to the
+    context precision.
+
+    Args:
+        number: The finite boundary already coerced to a Decimal.
+        field: The model field behind the ordering column.
+
+    Raises:
+        ValueError: If the field is a DecimalField with fewer places.
+    """
+    if not isinstance(field, DecimalField) or field.decimal_places is None:
+        return
+    _, digits, exponent = number.as_tuple()
+    text = "".join(map(str, digits))
+    zeros = len(text) - len(text.rstrip("0"))
+    if text.strip("0") and -(int(exponent) + zeros) > field.decimal_places:
+        raise ValueError(str(number))
+
+
 # Model field classes by cursor kind; the first match wins, so DateTimeField
 # precedes its base DateField.
 _FIELD_KINDS: tuple[tuple[type, tuple[type, ...]], ...] = (
@@ -2037,6 +2060,13 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         # (like the DB path) instead of a TypeError/InvalidOperation.
         values = [getattr(obj, field_name, None) for obj in items]
         value = _coerce_like(value, next((v for v in values if v is not None), None))
+        if isinstance(value, Decimal) and hasattr(items[0], "_meta"):
+            try:
+                _check_decimal_places(value, items[0]._meta.get_field(field_name))
+            except FieldDoesNotExist:
+                pass  # an annotation has no declared places
+            except ValueError as exc:
+                raise GraphQLError("Invalid cursor") from exc
         if pk is not None:
             pk = _coerce_like(pk, next((o.pk for o in items if o.pk is not None), None))
         for index, obj in enumerate(items):
@@ -2123,7 +2153,9 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         kind = next((k for k, types in _FIELD_KINDS if isinstance(field, types)), None)
         if kind is not None:
             aware = bool(settings.USE_TZ) if kind is datetime.datetime else False
-            _coerce_cursor_component(value, kind, aware)
+            number = _coerce_cursor_component(value, kind, aware)
+            if kind is Decimal:
+                _check_decimal_places(number, field)
 
     @staticmethod
     def _legacy_value_predicate(field_name: str, descending: bool, value: Any) -> Any:
