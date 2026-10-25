@@ -38,6 +38,7 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 - Mutable input defaults are copied per request; zero-argument factories run per input ([migration](UPGRADE-4.1.md#mutable-defaults-are-copied)).
 - `not` inside a to-many relation filter means NOT EXISTS; separate `and` branches use separate rows ([migration](UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
 - An `or` operand holding a relation key next to a sibling relation key (or a negated operand) matches its own related row, like an `and` operand ([migration](UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
+- A `not` enclosing a to-many relation object is the exact complement of its same-row match; a double negation beside a sibling relation key uses its own related row ([migration](UPGRADE-4.1.md#not-inside-to-many-relation-filters)).
 - `exact: null` selects NULL rows ([migration](UPGRADE-4.1.md#explicit-exact-null-selects-null-rows)).
 - Primary-key tie-break can reorder tied rows; tampered cursors answer `Invalid cursor` ([migration](UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
 - Numeric `DateField`/`DateTimeField` part filters take `Int` ([migration](UPGRADE-4.1.md#numeric-date-part-filters-take-int)).
@@ -364,6 +365,14 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   broader type) for the schema that serves the write.
 
 ### Fixes and changes
+
+- Make a `not` that encloses a to-many relation object the exact complement of
+  that object's match. `{ not: { tags: { and: [z, x] } } }` excluded posts that
+  had a `z` tag and a different `x` tag because the ORM tests each criterion of
+  an `exclude()` separately; it now compiles to `NOT EXISTS` of one tag
+  satisfying every same-row criterion, and `not: { not: { tags } }` beside a
+  sibling relation key uses its own related row. The seeded oracle test now
+  generates these shapes.
 
 - Validate cursor boundaries with one rule on the database and the in-memory
   path. The database path refused finite decimals above float range (`1e999`,

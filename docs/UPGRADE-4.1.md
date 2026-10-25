@@ -410,6 +410,13 @@ a negated one (`{ or: [{ tags: x }, { not: { tags: z } }] }`) tests "has x" and
 "has no z" independently. Results change only for these shapes; `or` operands
 without a sibling relation key or a `not` are unchanged.
 
+A `not` that encloses a relation object is now the exact complement of that
+object's match. `{ not: { tags: { and: [z, x] } } }` used to exclude posts
+tagged `x` and `z` on different tags (the ORM's `exclude()` tests each
+criterion separately) although no single tag is both; it now returns every
+post. A double negation `{ not: { not: { tags: x } }, tags: y }` uses a
+separate tag for each key.
+
 ### Numeric date-part filters take Int
 
 Explicitly declared numeric `DateField` and `DateTimeField` part filters

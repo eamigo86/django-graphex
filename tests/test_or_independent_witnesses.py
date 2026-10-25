@@ -13,11 +13,21 @@ from .test_and_many_filtering import AndManyTag as Tag
 from .test_to_many_not_rule import _label, _orm, _tags, _titles, subsets  # noqa: F401
 
 X, Y, Z = _label("x"), _label("y"), _label("z")
+ALL = ["none", "x", "xy", "xyz", "xz", "y", "yz", "z"]
 
 
 @pytest.mark.parametrize(
     ("node", "expected"),
     [
+        # A not that encloses a relation object is the exact complement of its
+        # match: NOT EXISTS of one tag satisfying every same-row criterion.
+        ({"not": _tags({"and": [Z, X]})}, ALL),
+        ({"not": _tags({"or": [{"and": [Z, X]}]})}, ALL),
+        ({"not": _tags({**Z, "or": [X]})}, ALL),
+        ({"not": _tags({"and": [X, Y]})}, ALL),
+        ({"not": _tags(X)}, ["none", "y", "yz", "z"]),
+        # A double negation is a positive test with its own witness.
+        ({"not": {"not": _tags(X)}, **_tags({"or": [Y]})}, ["xy", "xyz"]),
         # The reported shape: or[x] next to a sibling tags z. Each relation
         # branch has its own witness, exactly like and[x] next to tags z.
         ({"or": [_tags(X)], **_tags(Z)}, ["xyz", "xz"]),
@@ -123,7 +133,7 @@ def _tag_sat(node: dict, labels: str) -> bool:
         if key == "not":
             terms.append(not _tag_sat(value, labels))
         elif key == "and":
-            for child in value:
+            for child in _flat(value):
                 if _has_not(child):
                     terms.append(_tag_sat(child, labels))
                 else:
@@ -137,6 +147,24 @@ def _tag_sat(node: dict, labels: str) -> bool:
     if row:
         terms.append(any(_tag_row(row, label) for label in labels))
     return all(terms)
+
+
+def _flat(children: list[dict]) -> list[dict]:
+    """Splice nested pure-and operands: and is associative (matrix case c).
+
+    Args:
+        children: The operands of an and list.
+
+    Returns:
+        The operands with pure and wrappers expanded.
+    """
+    flat: list[dict] = []
+    for child in children:
+        if list(child) == ["and"]:
+            flat.extend(_flat(child["and"]))
+        else:
+            flat.append(child)
+    return flat
 
 
 def _has_not(node: dict) -> bool:
@@ -179,10 +207,6 @@ def _tag_row(node: dict, label: str) -> bool:
 def _gen_tag(rng: random.Random, depth: int) -> dict:
     """Generate a tag-level node.
 
-    A "not" that encloses a relation object holding several same-row criteria
-    is a separate, pre-existing gap (Django exclude() semantics), so a tag-level
-    row here is a single label, an "or" of labels, or a label beside a "not".
-
     Args:
         rng: Seeded random source.
         depth: Remaining nesting budget.
@@ -191,12 +215,14 @@ def _gen_tag(rng: random.Random, depth: int) -> dict:
         A tag-level filter node.
     """
     pick = rng.random()
-    if depth > 0 and pick < 0.25:
-        return {"or": [_label(rng.choice("xyz")) for _ in range(rng.randint(1, 3))]}
-    if depth > 0 and pick < 0.45:
+    if depth > 0 and pick < 0.2:
+        return {"and": [_gen_tag(rng, depth - 1) for _ in range(rng.randint(1, 3))]}
+    if depth > 0 and pick < 0.4:
+        return {"or": [_gen_tag(rng, depth - 1) for _ in range(rng.randint(1, 3))]}
+    if depth > 0 and pick < 0.55:
         return {"not": _gen_tag(rng, depth - 1)}
     node: dict = _label(rng.choice("xyz"))
-    if depth > 0 and rng.random() < 0.2:
+    if depth > 0 and rng.random() < 0.25:
         node["not"] = _gen_tag(rng, depth - 1)
     return node
 
@@ -218,10 +244,7 @@ def _gen_post(rng: random.Random, depth: int) -> dict:
     elif depth > 0 and pick < 0.45:
         node = {"or": [_gen_post(rng, depth - 1) for _ in range(rng.randint(1, 3))]}
     elif depth > 0 and pick < 0.55:
-        inner = _gen_post(rng, depth - 1)
-        # A double negation beside a relation key is a separate, pre-existing
-        # edge (the ORM merges both into one join); keep the generator off it.
-        node = {"not": inner} if "not" not in inner else inner
+        node = {"not": _gen_post(rng, depth - 1)}
     elif pick < 0.85:
         node = _tags(_gen_tag(rng, depth))
     else:
@@ -231,7 +254,7 @@ def _gen_post(rng: random.Random, depth: int) -> dict:
     return node
 
 
-@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("seed", range(60))
 def test_random_filters_match_the_independent_witness_oracle(
     subsets: None,  # noqa: F811
     seed: int,

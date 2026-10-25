@@ -447,7 +447,11 @@ def _has_independent_many_and(node: Any, model: type[Model]) -> bool:
                     _has_inner_not(child, model, True) for child in value
                 ):
                     return True
-        elif key == "not" and _has_independent_many_and(value, model):
+        elif key == "not" and (
+            _has_independent_many_and(value, model)
+            or to_q(value, model, _combinator="not")[1]
+        ):
+            # A not over a to-many relation is NOT EXISTS of its own row.
             return True
         else:
             related = _relation_target(model, key)
@@ -542,7 +546,14 @@ def _independent_many_q(
             if has_any:
                 result &= combined
         elif key == "not":
-            result &= ~_independent_many_q(value, queryset, "not", scope)
+            inner = _independent_many_q(value, queryset, "not", scope)
+            if inner and to_q(value, queryset.model, _combinator="not")[1]:
+                # Exact complement: no row of its own satisfies every criterion
+                # (the ORM's exclude() would test each criterion separately).
+                branch = queryset.filter(pk=OuterRef("pk")).filter(inner)
+                result &= ~Q(Exists(branch))
+            else:
+                result &= ~inner
         else:
             leaf_q, _ = to_q(
                 {key: value}, queryset.model, _combinator=combinator, _scope=scope
