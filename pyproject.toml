@@ -110,6 +110,15 @@ include = [
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
+    # Root files that test modules read by path (release notes, the report
+    # contract, tox, lock and docs-site config); without them those tests fail
+    # when run from the published tarball.
+    "/CHANGELOG.md",
+    "/audit-remediation-django-graphex-4.0.0.en.md",
+    "/audit-remediation-django-graphex-4.0.0.es.md",
+    "/tox.ini",
+    "/uv.lock",
+    "/zensical.yml",
 ]
 
 [tool.ruff]

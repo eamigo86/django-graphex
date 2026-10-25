@@ -1368,6 +1368,10 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Docs and tests
 
+- Ship the root files that test modules read (`CHANGELOG.md`, the two 4.0.0
+  remediation reports, `tox.ini`, `uv.lock` and `zensical.yml`) in the sdist, and
+  guard the allowlist with a static test. Directories such as `benchmarks/` and
+  `examples/` are still not shipped.
 - Publish the 4.1.0 core33 comparison as the current series,
   `core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c`, measured from
   4.1.0 source `460efb9b7c29b097f2939c05e79514f2fda3242c` with the unmodified harness.
