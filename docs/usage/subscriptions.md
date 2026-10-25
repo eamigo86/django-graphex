@@ -654,7 +654,8 @@ Error surfacing splits at the moment the stream is committed:
   `{"errors": [...]}` followed by the `complete` frame — never an HTTP 4xx,
   because a status code cannot change once the streaming response has begun.
 - **Masked errors** — with `DEBUG=False`, an unexpected exception from the
-  `subscribe` resolver or an event resolver is framed with the allowlisted
+  `subscribe` resolver, an event resolver or the stream itself while it is
+  iterated (a channel-layer error, a scope lookup) is framed with the allowlisted
   message, `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`, its `path` and an
   `errorId`, exactly as the HTTP views do (see
   [Production execution errors](views.md#production-execution-errors)); one

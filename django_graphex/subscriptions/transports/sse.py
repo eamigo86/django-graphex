@@ -71,6 +71,7 @@ from graphql import (
 from graphql.utilities import get_operation_ast
 
 from ...security import (
+    as_graphql_error,
     format_client_error,
     introspection_disabled,
     mark_client_errors,
@@ -739,11 +740,9 @@ def subscription_sse_view(
                     # so an escaping exception aborts the connection with no
                     # protocol signal at all. Frame it exactly like a post-200
                     # validation error — next{errors} — then complete.
-                    from graphql import GraphQLError
-
-                    logger.exception("Subscription delivery failed; closing stream.")
+                    # "_frame_next" masks it and logs it once (DEBUG: raw).
                     yield _frame_next(
-                        ExecutionResult(data=None, errors=[GraphQLError(str(exc))])
+                        ExecutionResult(data=None, errors=[as_graphql_error(exc)])
                     )
                 # The source completed (out-of-band close) → terminal frame.
                 yield _COMPLETE_FRAME

@@ -227,7 +227,8 @@ async def test_sync_providers_preserve_context_and_error_paths() -> None:
             await sse.subscription_sse_view(schema_provider=broken_provider)(request)
         consumer = _ws_consumer({"user": None}, schema_provider=broken_provider)
         await consumer._run_operation_framed("failure", {"query": _SUB_QUERY})
-        assert "provider failure" in json.dumps(consumer._sent)
+        assert "provider failure" not in json.dumps(consumer._sent)
+        assert "INTERNAL_SERVER_ERROR" in json.dumps(consumer._sent)
     finally:
         context_value.reset(token)
 

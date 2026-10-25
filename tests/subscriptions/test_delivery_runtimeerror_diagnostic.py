@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -214,7 +215,8 @@ async def test_client_complete_valueerror_keeps_existing_error_frame(
         frame = await communicator.receive_json_from(timeout=2)
         assert frame["type"] == "error"
         assert frame["id"] == "failed-op"
-        assert str(failure) in frame["payload"][0]["message"]
+        assert str(failure) not in json.dumps(frame["payload"])
+        assert frame["payload"][0]["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
         assert not any(
             record.name == "django_graphex.subscriptions.delivery"
             and record.levelno == logging.WARNING

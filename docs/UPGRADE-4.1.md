@@ -1014,8 +1014,8 @@ text.
 ### Subscription errors are masked like HTTP errors
 
 With `DEBUG=False`, the SSE and WebSocket transports now use the HTTP view's
-masking. An unexpected exception raised by a `subscribe` resolver or by an event
-resolver (a `RuntimeError`, a `FieldError`, a `DatabaseError`) is sent as
+masking. An unexpected exception raised by a `subscribe` resolver, by an event
+resolver or while the stream is iterated, even after events were delivered (a `RuntimeError`, a `FieldError`, a `DatabaseError`) is sent as
 `An internal error occurred.` (`INTERNAL_SERVER_ERROR`) or `Unable to complete
 the data operation.` (`DATA_ACCESS_ERROR`), keeps `locations` and `path`, carries
 an opaque `extensions.errorId`, and logs one ERROR record with the traceback on

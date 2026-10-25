@@ -377,6 +377,14 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Mask exceptions raised while iterating a subscription source. An async-generator
+  `subscribe` that raised on iteration, a channel-layer error or a scope lookup
+  failure reached the client as `GraphQLError(str(exc))`, which counted as
+  deliberate, and was logged by the transport. SSE and WebSocket now route it
+  through `security.format_client_error`: `INTERNAL_SERVER_ERROR` or
+  `DATA_ACCESS_ERROR` with an `errorId` and exactly one ERROR record. A
+  `GraphQLError` raised on purpose keeps its message. The same applies to any
+  other failure of a WebSocket operation before it streams.
 - Keep rejected subscriber filters public over SSE and WebSocket. The subscribe-time
   filter validation raised a plain `ValueError` for client input (an
   undeclared field, a lookup the ORM refuses such as `tags: {iexact: 1}`), which

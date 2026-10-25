@@ -81,6 +81,25 @@ async def _one_event(_root: Any, _info: Any) -> Any:
     yield "x"
 
 
+def _stream_raising(error: BaseException, after_event: bool = False) -> Any:
+    """Build an async-generator subscribe that raises while it is iterated.
+
+    Args:
+        error: The exception to raise.
+        after_event: Whether to yield one event before raising.
+
+    Returns:
+        The subscribe resolver (an async generator function).
+    """
+
+    async def subscribe(_root: Any, _info: Any) -> Any:
+        if after_event:
+            yield "x"
+        raise error
+
+    return subscribe
+
+
 def _schema() -> GraphQLSchema:
     """Build a schema whose subscriptions fail in different ways.
 
@@ -98,6 +117,28 @@ def _schema() -> GraphQLSchema:
         ),
         "subPublic": GraphQLField(
             string, subscribe=_subscribe_raising(GraphQLError("deliberate refusal"))
+        ),
+        "genRuntime": GraphQLField(
+            string,
+            subscribe=_stream_raising(RuntimeError("password=hunter2 at db-host")),
+            resolve=lambda value, _info: value,
+        ),
+        "genAfterEvent": GraphQLField(
+            string,
+            subscribe=_stream_raising(
+                RuntimeError("password=hunter2 at db-host"), True
+            ),
+            resolve=lambda value, _info: value,
+        ),
+        "genDatabase": GraphQLField(
+            string,
+            subscribe=_stream_raising(DatabaseError("SELECT secret FROM vault")),
+            resolve=lambda value, _info: value,
+        ),
+        "genPublic": GraphQLField(
+            string,
+            subscribe=_stream_raising(GraphQLError("deliberate stream refusal")),
+            resolve=lambda value, _info: value,
         ),
         "evRuntime": GraphQLField(
             string,
@@ -434,3 +475,146 @@ async def test_rejected_client_filters_stay_public_and_unlogged(
     assert message in error["message"]
     assert "extensions" not in error
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+async def _sse_all_errors(
+    monkeypatch: pytest.MonkeyPatch, query: str
+) -> list[dict[str, Any]]:
+    """Run a subscription over SSE and collect the errors of every frame.
+
+    Args:
+        monkeypatch: Replaces the channel layer with an in-memory one.
+        query: The subscription document.
+
+    Returns:
+        The errors of all "next" frames, in order; "complete" must end the stream.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    response = await sse.subscription_sse_view(schema=_schema())(_json_request(query))
+    frames = [frame async for frame in sse_frames(response)]
+    assert frames[-1] == b"event: complete\ndata: \n\n"
+    errors: list[dict[str, Any]] = []
+    for frame in frames[:-1]:
+        event, data = frame.decode().strip().split("\n", 1)
+        assert event == "event: next"
+        errors += json.loads(data.removeprefix("data: ")).get("errors", [])
+    return errors
+
+
+async def _ws_all_errors(
+    monkeypatch: pytest.MonkeyPatch, query: str
+) -> list[dict[str, Any]]:
+    """Run a subscription over WebSocket and collect the errors of every frame.
+
+    Args:
+        monkeypatch: Replaces the channel layer with an in-memory one.
+        query: The subscription document.
+
+    Returns:
+        The errors of all "next" frames, in order, up to the "complete" frame.
+    """
+    from django_graphex.subscriptions.transports import ws
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+    communicator = _make_communicator(
+        ws.subscription_ws_consumer(schema=_schema()), layer=layer
+    )
+    await _connect_and_ack(communicator)
+    await communicator.send_json_to(
+        {"id": "op", "type": "subscribe", "payload": {"query": query}}
+    )
+    errors: list[dict[str, Any]] = []
+    while True:
+        frame = await communicator.receive_json_from(timeout=5)
+        if frame["type"] == "complete":
+            break
+        assert frame["type"] == "next"
+        errors += frame["payload"].get("errors", [])
+    await communicator.disconnect()
+    return errors
+
+
+@_TRANSPORTS
+@pytest.mark.parametrize(
+    ("query", "code"),
+    (
+        ("subscription { genRuntime }", "INTERNAL_SERVER_ERROR"),
+        ("subscription { genAfterEvent }", "INTERNAL_SERVER_ERROR"),
+        ("subscription { genDatabase }", "DATA_ACCESS_ERROR"),
+    ),
+)
+@override_settings(DEBUG=False)
+async def test_errors_raised_while_iterating_the_source_are_masked(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    transport: str,
+    query: str,
+    code: str,
+) -> None:
+    """A source that fails mid-iteration is masked with exactly one ERROR log.
+
+    Args:
+        monkeypatch: Replaces the channel layer with an in-memory one.
+        caplog: The log capture fixture.
+        transport: The transport under test.
+        query: The failing subscription.
+        code: The expected extensions code.
+    """
+    caplog.set_level(logging.DEBUG)
+    run = _sse_all_errors if transport == "sse" else _ws_all_errors
+
+    (error,) = await run(monkeypatch, query)
+
+    assert error["extensions"]["code"] == code
+    error_id = error["extensions"]["errorId"]
+    assert not any(secret in json.dumps(error) for secret in _SECRETS)
+    (record,) = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert record.name == "django_graphex.internal_errors"
+    assert error_id in record.getMessage()
+    assert record.exc_info is not None
+
+
+@_TRANSPORTS
+@override_settings(DEBUG=False)
+async def test_deliberate_error_while_iterating_the_source_stays_public(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    transport: str,
+) -> None:
+    """A GraphQLError the source raises on purpose keeps its message.
+
+    Args:
+        monkeypatch: Replaces the channel layer with an in-memory one.
+        caplog: The log capture fixture.
+        transport: The transport under test.
+    """
+    caplog.set_level(logging.DEBUG)
+    run = _sse_all_errors if transport == "sse" else _ws_all_errors
+
+    (error,) = await run(monkeypatch, "subscription { genPublic }")
+
+    assert error["message"] == "deliberate stream refusal"
+    assert "extensions" not in error
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@_TRANSPORTS
+@override_settings(DEBUG=True)
+async def test_debug_keeps_the_raw_message_of_a_source_failure(
+    monkeypatch: pytest.MonkeyPatch, transport: str
+) -> None:
+    """With DEBUG on, a mid-iteration failure keeps its raw text.
+
+    Args:
+        monkeypatch: Replaces the channel layer with an in-memory one.
+        transport: The transport under test.
+    """
+    run = _sse_all_errors if transport == "sse" else _ws_all_errors
+
+    (error,) = await run(monkeypatch, "subscription { genRuntime }")
+
+    assert error["message"] == "password=hunter2 at db-host"

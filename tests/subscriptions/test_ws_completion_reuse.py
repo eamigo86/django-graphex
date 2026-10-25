@@ -241,4 +241,6 @@ async def test_teardown_error_keeps_existing_terminal_frame_sequence(
     consumer = _ws_consumer({"user": _User()}, schema=build_native_schema())
     await consumer._run_operation_framed("failing", {"query": _QUERY})
     assert [frame["type"] for frame in consumer._sent] == ["complete", "error"]
-    assert consumer._sent[1]["payload"] == [{"message": "close failed"}]
+    (error,) = consumer._sent[1]["payload"]
+    assert error["message"] == "An internal error occurred."
+    assert error["extensions"]["code"] == "INTERNAL_SERVER_ERROR"

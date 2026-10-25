@@ -23,6 +23,7 @@ __all__ = (
     "introspection_disabled",
     "format_graphql_error",
     "format_client_error",
+    "as_graphql_error",
 )
 
 error_logger = logging.getLogger("django_graphex.internal_errors")
@@ -544,3 +545,21 @@ def format_client_error(
             safe[key] = formatted[key]
     safe["extensions"] = {"code": code, "errorId": error_id}
     return safe
+
+
+def as_graphql_error(exc: BaseException) -> GraphQLError:
+    """Wrap an exception raised while delivering a stream for a frame.
+
+    A GraphQLError is returned as is, so a deliberate one stays public. Any
+    other exception keeps itself as "original_error", which "format_client_error"
+    reads to mask it (and log it once) exactly like a resolver exception.
+
+    Args:
+        exc: The exception raised while iterating the subscription source.
+
+    Returns:
+        A GraphQLError to place in an "ExecutionResult".
+    """
+    if isinstance(exc, GraphQLError):
+        return exc
+    return GraphQLError(str(exc), original_error=exc)

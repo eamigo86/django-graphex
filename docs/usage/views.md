@@ -107,8 +107,8 @@ If a logging handler fails, the HTTP response stays safe, but that particular
 ID may have no matching log record.
 
 The subscription transports use the same classification and masking function.
-An unexpected exception from a `subscribe` resolver or from an event resolver
-is framed (`error` frame or `next` payload on WebSocket, a `next` event on SSE)
+An unexpected exception from a `subscribe` resolver, from an event resolver or
+raised while iterating the stream (a channel-layer error, a scope lookup) is framed (`error` frame or `next` payload on WebSocket, a `next` event on SSE)
 with the same message, `code`, `locations`, `path` and `errorId`, and logs one
 ERROR record with the traceback on `django_graphex.internal_errors` whose
 message names the transport (`SSE` or `WebSocket`) instead of `HTTP`. Deliberate

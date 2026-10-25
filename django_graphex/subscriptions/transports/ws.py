@@ -84,6 +84,7 @@ from graphql import (
 from graphql.utilities import get_operation_ast
 
 from ...security import (
+    as_graphql_error,
     format_client_error,
     introspection_disabled,
     mark_client_errors,
@@ -112,20 +113,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-
-def _as_error(exc: BaseException) -> Any:
-    """Wrap an exception as a "GraphQLError" for a "next{errors}" frame.
-
-    Args:
-        exc: The exception raised while delivering the subscription.
-
-    Returns:
-        A "GraphQLError" carrying the exception message.
-    """
-    from graphql import GraphQLError
-
-    return GraphQLError(str(exc))
 
 
 # graphql-transport-ws close codes.
@@ -684,11 +671,10 @@ def subscription_ws_consumer(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - framed, never escapes
-                logger.exception(
-                    "Subscription operation %r failed before it could stream.",
-                    op_id,
+                # Masked and logged once by the shared formatter (DEBUG: raw).
+                await self._send_error(
+                    op_id, [format_client_error(exc, None, "WebSocket")]
                 )
-                await self._send_error(op_id, [{"message": str(exc)}])
 
         async def _run_operation(self, op_id: str, payload: dict[str, Any]) -> None:
             """Run one subscription operation: subscribe -> next* -> complete.
@@ -847,11 +833,10 @@ def subscription_ws_consumer(
                     # it as ``next{errors}`` — matching the SSE transport and
                     # the spec's "errors after execution started" shape — and
                     # fall through to the terminal ``complete``.
-                    logger.exception(
-                        "Subscription delivery failed for operation %r.", op_id
-                    )
+                    # The shared formatter masks and logs it once ("_send_next").
                     await self._send_next(
-                        op_id, ExecutionResult(data=None, errors=[_as_error(exc)])
+                        op_id,
+                        ExecutionResult(data=None, errors=[as_graphql_error(exc)]),
                     )
             except asyncio.CancelledError:
                 # Client complete / disconnect cancelled this operation: tear the
