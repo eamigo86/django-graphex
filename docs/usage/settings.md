@@ -201,7 +201,7 @@ session, tenant, locale or cookie value that can affect the response.
 | Setting | Default | Description |
 |---|---|---|
 | `DOCUMENT_CACHE_MAXSIZE` | `128` | In-process bound (per LRU) for two independent document caches in the view layer. `0` disables **both** caches; `None` leaves them unbounded. A negative integer raises `ImproperlyConfigured` when this setting is read. |
-| `DOCUMENT_CACHE_MAX_QUERY_LENGTH` | `65536` | Per-entry bound, in characters of query text, for both document caches. A longer document is parsed and validated on every request but never cached. `0` caches no document; `None` removes the per-entry bound. A negative integer raises `ImproperlyConfigured` when this setting is read. |
+| `DOCUMENT_CACHE_MAX_QUERY_LENGTH` | `65536` | Bound on what both document caches retain. A document longer than this many characters, or whose parsed AST has more than an eighth of this many tokens, is parsed and validated on every request but never cached; each cache also retains at most this many AST tokens in total, evicting least recently used entries first. `0` caches no document; `None` removes every one of these bounds. A negative integer raises `ImproperlyConfigured` when this setting is read. |
 
 graphql-core re-parses and re-revalidates the identical query document on every
 request; real APIs replay a small, stable set of documents (a handful of
@@ -225,14 +225,21 @@ persisted queries from your frontend), so both steps are memoizable:
   "valid" verdicts immediately — the cache never serves a stale verdict across
   a limit change.
 
-The caches are bounded by entry count, but a parsed AST is many times larger
-than its query text. `DOCUMENT_CACHE_MAX_QUERY_LENGTH` therefore caps the text of
-each cached document, which bounds the worst case: the parse cache retains at
-most `DOCUMENT_CACHE_MAXSIZE` x `DOCUMENT_CACHE_MAX_QUERY_LENGTH` characters of
-query text (128 x 65,536 = about 8.4 million characters by default) plus the
-ASTs built from them, and the same again for each schema's validation
-sub-cache. Persisted-query-sized documents stay cached; very large documents,
-which a client sends once, are simply processed without being retained. Setting
+A parsed AST is many times larger than its query text (up to about 270x for a
+dense document such as `{ a a a ... }`), so entry count and text length alone do
+not bound memory. `DOCUMENT_CACHE_MAX_QUERY_LENGTH` therefore also bounds the
+AST itself, measured in tokens: a document is retained only when it is at most
+that many characters long **and** its AST has at most an eighth of that many
+tokens (8,192 by default), and each cache evicts least recently used entries
+once it retains more than that many tokens in total (65,536 by default). A
+retained AST measured about 320-550 bytes per token, so the default worst case
+is about 40 MB of ASTs per worker for the parse cache, and the same again for
+each schema's validation sub-cache when its cached verdicts carry errors
+(errors reference the AST nodes they blame), on top of at most
+`DOCUMENT_CACHE_MAXSIZE` x 65,536 characters of query text in the parse cache
+(the validation cache keys on a digest of the text instead). Persisted-query-sized
+documents stay cached; very large or token-dense documents, which a client sends
+once, are simply processed without being retained. Setting
 either bound to `None` removes that guarantee.
 
 Raise `DOCUMENT_CACHE_MAXSIZE` if your application legitimately replays more

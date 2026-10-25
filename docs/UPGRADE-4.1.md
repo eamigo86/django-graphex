@@ -888,9 +888,11 @@ replaces the intermediate behavior that stopped later operations after an HTTP
 
 The parse and validation caches no longer retain documents longer than the new
 `DOCUMENT_CACHE_MAX_QUERY_LENGTH` (default 65536 characters; `None` removes the
-bound; a negative integer is rejected). Longer documents are parsed and
-validated on every request. Worst-case retained query text is
-`DOCUMENT_CACHE_MAXSIZE` times that length. The response cache stores only HTTP
+bound; a negative integer is rejected). Longer documents, and documents whose
+parsed AST has more than an eighth of that many tokens, are parsed and
+validated on every request. Each cache also retains at most that many AST
+tokens in total (about 40 MB of ASTs per cache at the default). The validation
+cache keys on a digest of the query text, not the text. The response cache stores only HTTP
 200 data responses without errors; partial-data errors, validation failures and
 other non-200 responses re-execute on the next request, and previously stored
 failed entries are ignored. The default response-cache key frames its body and

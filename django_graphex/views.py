@@ -627,6 +627,10 @@ def _item_savepoints() -> Iterator[None]:
 #     LRU-capped (PERMISSION_SCHEMA_CACHE_MAXSIZE ≤ 64), so total memory is
 #     bounded by maxsize * (schemas ≤ 64).
 #
+# Both caches also bound the AST tokens they retain (see "_retained_tokens"): an
+# AST is up to ~270x its text, so entry count and text length alone do not
+# bound memory.
+#
 # Thread-safety: an OrderedDict is not safe under concurrent mutation, so every
 # read/write path takes a lock. The critical sections only touch the dict (no
 # I/O), so contention is negligible.
@@ -635,8 +639,52 @@ def _item_savepoints() -> Iterator[None]:
 #: Lock guarding the parse LRU.
 _PARSE_CACHE_LOCK = threading.Lock()
 
-#: Global parse LRU: query string -> DocumentNode (bounded by the setting).
-_PARSE_CACHE: OrderedDict[str, Any] = OrderedDict()
+
+class _TokenLRU(OrderedDict):
+    """LRU that also totals the AST tokens its entries retain."""
+
+    def __init__(self) -> None:
+        """Start empty with no retained tokens."""
+        super().__init__()
+        self._sizes: dict[Any, int] = {}
+        self.tokens = 0
+
+    def admit(
+        self,
+        key: Any,
+        value: Any,
+        tokens: int,
+        maxsize: int,
+        budget: int | None,
+    ) -> None:
+        """Store an entry, then evict least recently used ones to fit the bounds.
+
+        Args:
+            key: The cache key.
+            value: The value to retain.
+            tokens: The AST tokens the entry retains.
+            maxsize: The most entries the LRU may hold.
+            budget: The most tokens the LRU may retain, or None for no bound.
+        """
+        if key in self:
+            self.tokens -= self._sizes.pop(key)
+        self[key] = value
+        self.move_to_end(key)
+        self._sizes[key] = tokens
+        self.tokens += tokens
+        while len(self) > maxsize or (budget is not None and self.tokens > budget):
+            oldest, _ = self.popitem(last=False)
+            self.tokens -= self._sizes.pop(oldest)
+
+    def clear(self) -> None:
+        """Drop every entry and reset the token total."""
+        super().clear()
+        self._sizes.clear()
+        self.tokens = 0
+
+
+#: Global parse LRU: query string -> DocumentNode (bounded by the settings).
+_PARSE_CACHE: _TokenLRU = _TokenLRU()
 
 #: Lock guarding the per-schema validation sub-caches (both the WeakKeyDictionary
 #: and the inner OrderedDicts).
@@ -645,7 +693,7 @@ _VALIDATE_CACHE_LOCK = threading.Lock()
 #: schema OBJECT -> inner LRU keyed by query, rules, error cap, runtime limits,
 #: and suggestion visibility ->
 #: tuple[GraphQLError, ...]. WeakKeyDictionary so a GC'd schema drops its verdicts.
-_VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, OrderedDict[tuple, tuple]]" = (
+_VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, _TokenLRU]" = (
     weakref.WeakKeyDictionary()
 )
 
@@ -669,9 +717,9 @@ def _document_cache_maxsize() -> int:
 def _document_cacheable(query: str) -> bool:
     """Return whether a query may enter the document caches.
 
-    Both caches are bounded by entry count only; an AST is many times larger
-    than its text, so a document longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH"
-    is parsed and validated without being retained.
+    A query longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH" is parsed and
+    validated without being retained. The parsed size is checked later by
+    "_retained_tokens", because an AST is hundreds of times larger than its text.
 
     Args:
         query: The raw GraphQL query string.
@@ -681,6 +729,39 @@ def _document_cacheable(query: str) -> bool:
     """
     limit = graphql_api_settings.DOCUMENT_CACHE_MAX_QUERY_LENGTH
     return limit is None or len(query) <= limit
+
+
+def _token_budget() -> int | None:
+    """Return the AST tokens each document cache may retain in total.
+
+    Returns:
+        "DOCUMENT_CACHE_MAX_QUERY_LENGTH", or None when that bound is removed.
+    """
+    return graphql_api_settings.DOCUMENT_CACHE_MAX_QUERY_LENGTH
+
+
+def _retained_tokens(document: Any) -> int | None:
+    """Return the tokens a document would retain, or None when it is too large.
+
+    One entry may hold at most an eighth of the token budget, so a document of
+    ordinary density (about six characters per token) is limited only by its
+    length, while a dense one such as "{ a a a ... }" is not retained.
+
+    Args:
+        document: The parsed "DocumentNode".
+
+    Returns:
+        The token count, or None when the document must not be cached.
+    """
+    budget = _token_budget()
+    if budget is None or document.loc is None:
+        return 0
+    count = 0
+    token, end = document.loc.start_token, document.loc.end_token
+    while token is not end:
+        token = token.next
+        count += 1
+    return count if count <= budget // 8 else None
 
 
 def _dynamic_limits_key() -> tuple:
@@ -770,8 +851,9 @@ def _parse_or_depth_error(query: str) -> Any:
 def cached_parse(query: str) -> Any:
     """Return the parsed "DocumentNode" for the query, memoized in a bounded LRU.
 
-    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) or the query is
-    longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH" this is a plain "parse(query)". A parse error propagates to the caller exactly as an
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0), or the query or
+    its AST exceeds the "DOCUMENT_CACHE_MAX_QUERY_LENGTH" bounds, this is a plain
+    "parse(query)". A parse error propagates to the caller exactly as an
     uncached "parse" would — failures are NOT cached.
 
     The returned AST is immutable and shared across callers/schemas; it must not
@@ -796,12 +878,12 @@ def cached_parse(query: str) -> Any:
     # Parse OUTSIDE the lock (tokenizing can be relatively expensive); a benign
     # duplicate parse under concurrency just overwrites with an equivalent AST.
     document = _parse_or_depth_error(query)
+    tokens = _retained_tokens(document)
+    if tokens is None:
+        return document
 
     with _PARSE_CACHE_LOCK:
-        _PARSE_CACHE[query] = document
-        _PARSE_CACHE.move_to_end(query)
-        while len(_PARSE_CACHE) > maxsize:
-            _PARSE_CACHE.popitem(last=False)
+        _PARSE_CACHE.admit(query, document, tokens, maxsize, _token_budget())
     return document
 
 
@@ -867,8 +949,9 @@ def cached_validate(
     # limit would survive a limit tightening and silently bypass the guard until
     # eviction/restart. `_dynamic_limits_key` folds in every setting that can flip
     # a verdict (kept cheap: plain ints/None and a small tuple).
+    # The query text is keyed by its digest so a cached verdict never pins the text.
     key = (
-        query,
+        hashlib.sha256(query.encode("utf-8", "surrogatepass")).hexdigest(),
         _rules_key(rules),
         max_errors,
         _dynamic_limits_key(),
@@ -892,16 +975,16 @@ def cached_validate(
     if any(isinstance(error, StackDepthError) for error in errors):
         # The verdict reflects this caller's stack depth, not the document.
         return errors
+    tokens = _retained_tokens(document)
+    if tokens is None:
+        return errors
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
         if sub is None:
-            sub = OrderedDict()
+            sub = _TokenLRU()
             _VALIDATE_CACHE[schema] = sub
-        sub[key] = errors
-        sub.move_to_end(key)
-        while len(sub) > maxsize:
-            sub.popitem(last=False)
+        sub.admit(key, errors, tokens, maxsize, _token_budget())
     return errors
 
 

@@ -58,8 +58,11 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   `DOCUMENT_CACHE_MAX_QUERY_LENGTH` setting (default 65536 characters; `None`
   removes the bound; a negative integer is rejected) keeps longer documents out
   of both caches: they are parsed and validated on every request. Smaller
-  documents are cached as before. Worst-case retained query text is
-  `DOCUMENT_CACHE_MAXSIZE` x `DOCUMENT_CACHE_MAX_QUERY_LENGTH` characters.
+  documents are cached as before. The bound also covers the parsed AST: a
+  document is retained only when its AST has at most an eighth of that many
+  tokens, and each cache holds at most that many tokens in total (about 40 MB
+  of ASTs at the default), because a dense document such as `{ a a a ... }`
+  parses to roughly 270 times the size of its text.
 
 - Fix: a GraphQL error now rolls back writes on every database alias that is
   inside a transaction opened for the request, not only the default one. Each
@@ -345,6 +348,14 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   broader type) for the schema that serves the write.
 
 ### Fixes and changes
+
+- Bound the document caches by retained AST size. `DOCUMENT_CACHE_MAX_QUERY_LENGTH`
+  capped the query text, but a 64,000-character `{ a a a ... }` parses to about
+  17 MB, so 128 entries could pin gigabytes per worker. A document is now cached
+  only when its AST has at most an eighth of that many tokens, and each cache
+  retains at most that many tokens in total (about 40 MB at the default,
+  least recently used entries evicted first). The validation cache also keys on
+  a digest of the query text instead of the text itself.
 
 - Stop caching the stack-depth verdict. A validation `RecursionError` answers
   `QUERY_TOO_DEEP`, but that outcome depends on how deep the calling thread
