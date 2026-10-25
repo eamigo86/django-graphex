@@ -1,0 +1,127 @@
+{
+  "aggregation": {
+    "method": "per-statistic median of three validated raw runs",
+    "ops": "median of each per-run statistic; per-run p95 is not pooled p95",
+    "runs": 3,
+    "schema_rebuild_samples_ms": "per-position median of five diagnostic rebuild samples; not a raw run series"
+  },
+  "dataset": {
+    "authors": 2000,
+    "comments_per_post": 5,
+    "posts_per_author": 10
+  },
+  "library": "graphex",
+  "machine": {
+    "cpu_count": 16,
+    "platform": "macOS-27.0.1-arm64-arm-64bit"
+  },
+  "measurement_source": {
+    "commit": "460efb9b7c29b097f2939c05e79514f2fda3242c",
+    "constraints_sha256": "031a6c39d018bc60814d178adf42e7d81e2d1f78c20571916395901ca251a177",
+    "manifest_sha256": "0cbad15a165506a61cb18c1a5da44750accbfe8a23e3aa99070145b33d5c3957",
+    "tree": "9b9e348ea236ecc57b1913ab767e5729ec0a33ef",
+    "version": "4.1.0"
+  },
+  "operations": {
+    "create_comment": {
+      "iterations": 100,
+      "mean_ms": 0.4722,
+      "min_ms": 0.4204,
+      "p50_ms": 0.4503,
+      "p95_ms": 0.5876,
+      "sql_queries": 4,
+      "stddev_ms": 0.068
+    },
+    "filtered": {
+      "iterations": 100,
+      "mean_ms": 1.3504,
+      "min_ms": 1.2323,
+      "p50_ms": 1.3194,
+      "p95_ms": 1.5892,
+      "sql_queries": 1,
+      "stddev_ms": 0.1297
+    },
+    "flat_list": {
+      "iterations": 100,
+      "mean_ms": 1.0364,
+      "min_ms": 0.8745,
+      "p50_ms": 1.0292,
+      "p95_ms": 1.2008,
+      "sql_queries": 1,
+      "stddev_ms": 0.1121
+    },
+    "nested": {
+      "iterations": 100,
+      "mean_ms": 24.6731,
+      "min_ms": 20.4166,
+      "p50_ms": 23.94,
+      "p95_ms": 38.8099,
+      "sql_queries": 3,
+      "stddev_ms": 5.388
+    },
+    "single": {
+      "iterations": 100,
+      "mean_ms": 0.4589,
+      "min_ms": 0.4104,
+      "p50_ms": 0.432,
+      "p95_ms": 0.5802,
+      "sql_queries": 1,
+      "stddev_ms": 0.0712
+    }
+  },
+  "profile": "core33",
+  "raw_sha256": [
+    "0efbaf0af031d3324c71ec5f06a1cf29ab7524eee3c72d898159f20f7edf08d9",
+    "1474368a400a350866f6e92b0d4e34853e718c76a68c873d76337c4384aafd9b",
+    "b5b0906fe19f2b98610467ed994f80a496b0e532cb0e46804fc186e560e1a88e"
+  ],
+  "schema": "django-graphex.core33.comparison.v1",
+  "schema_import_ms": 52.276,
+  "schema_rebuild_diagnostic_ms": [
+    3.472,
+    3.198,
+    4.035,
+    3.5207,
+    3.201
+  ],
+  "seed_source": {
+    "commit": "460efb9b7c29b097f2939c05e79514f2fda3242c",
+    "sha256": "f92bcbaf1b61a7afce713fc433f5a59f55c2bbb288fa4ab1d707554df55edbf4",
+    "tree": "9b9e348ea236ecc57b1913ab767e5729ec0a33ef"
+  },
+  "surface": {
+    "Author": [
+      "bio",
+      "email",
+      "id",
+      "name",
+      "posts"
+    ],
+    "Comment": [
+      "authorName",
+      "createdAt",
+      "id",
+      "isApproved",
+      "text"
+    ],
+    "Post": [
+      "author",
+      "body",
+      "comments",
+      "createdAt",
+      "id",
+      "status",
+      "title",
+      "viewsCount"
+    ]
+  },
+  "whole_stack": {
+    "django": "6.0.8",
+    "python": "3.12.11",
+    "versions": {
+      "django": "6.0.8",
+      "django-graphex": "4.1.0",
+      "graphql-core": "3.3.0"
+    }
+  }
+}

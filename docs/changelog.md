@@ -1354,6 +1354,16 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Docs and tests
 
+- Publish the 4.1.0 core33 comparison as the current series,
+  `core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c`, measured from
+  4.1.0 source `460efb9b7c29b097f2939c05e79514f2fda3242c` with the unmodified harness.
+  SQL counts are identical to the 4.0.0 series and the GraphEx p50 differences
+  are within noise; GraphEx/Ariadne create-comment p50 is 0.55× at 50,000 and
+  100,000 comments. The run had a heavier background load than the previous
+  series (about 8-10 against 4-6), so cold-import figures (GraphEx about 52-54
+  ms, graphene-django about 25-29 ms) are not comparable across series. The
+  earlier `core33-4.0.0` series stay as historical evidence.
+
 - Playground example: describe the closed draft and `internalNote` leaks as
   closed; scope `postSubscription` for anonymous subscribers with
   `subscription_scope`; require login for `postUpdate`, `postDelete` and

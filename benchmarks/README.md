@@ -185,8 +185,8 @@ Every timing statistic is the median of that statistic across the three
 validated runs; a median of per-run p95 values is not a pooled 300-request
 p95. The measured django-graphex source remains 3.1.1 in provenance. These
 files remain the earlier 3.1.1-source core33 comparison; they do
-not replace the historical `results/` comparison or the newer prepared
-4.0.0-source series.
+not replace the historical `results/` comparison or the newer
+4.0.0-source and 4.1.0-source series.
 
 Use a trusted results parent without concurrent pathname substitution. A
 foreign directory moved into the stage name after creation but before the first
@@ -224,9 +224,10 @@ occurs. The publisher still refuses an occupied public target.
 
 The [current comparison](../docs/why.md#current-core33-comparison) renders
 all five request p50/SQL cells for both seed sizes directly from the eight
-committed artifacts in `core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. Its earlier
+committed artifacts in `core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c`. Its earlier
+`core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`,
 `core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`, 3.1.1-source core33 and 3.1.0 series remain historical. The
-current series measures prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`, not a published
+current series measures 4.1.0 source `460efb9b7c29b097f2939c05e79514f2fda3242c`, not a published
 wheel.
 
 The `replay` mode instead requires `--profile core33 --events`,
@@ -254,18 +255,21 @@ For a new comparison, select a fresh immutable child with `--series` in either
 mode. The default remains `core33` for existing callers. A series must be one
 portable `core33`-prefixed directory name; unsafe names and occupied children
 (including links) are refused before seed planning or replay reads. The
-prepared 4.0.0 comparison should use
-`core33-4.0.0-<full-measurement-commit>` after the measuring source is frozen,
+prepared comparison should use
+`core33-<version>-<full-measurement-commit>` after the measuring source is frozen,
 not a mutable `latest` pointer. For example, append
-`--series core33-4.0.0-<full-measurement-commit>` to either command above.
-The current prepared 4.0.0 SQLite result is installed at
-`results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/`. Its eight JSON files were generated from measuring
-source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` and committed later at `826d5bae87ed7bbe705cf309d46a16d3ad3cdf33`; publication identity is
-not measurement identity. The three-run per-statistic medians include
-create-comment GraphEx/Ariadne p50 ratios of 0.57× at 50,000 comments and
-0.51× at 100,000. Whole-stack graphql-core versions differ, and accepted
-background load was not proven stable throughout the run. The earlier
-`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/` remains available; neither series is a paired
+`--series core33-<version>-<full-measurement-commit>` to either command above.
+The current 4.1.0 SQLite result is installed at
+`results/core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c/`. Its eight JSON files were generated from measuring
+source `460efb9b7c29b097f2939c05e79514f2fda3242c` with no harness patch and added in the commit that publishes them;
+publication identity is not measurement identity. The three-run per-statistic medians include
+create-comment GraphEx/Ariadne p50 ratios of 0.55× at 50,000 comments and
+0.55× at 100,000. SQL counts match the 4.0.0 series for every operation and
+library. Whole-stack graphql-core versions differ, and accepted background load
+(about 8-10 load average, against 4-6 for the previous series) was not stable
+throughout the run. The earlier
+`core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/` and
+`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/` series remain available; no series is a paired
 baseline or PostgreSQL timing result.
 
 The older `results/core33/` bundle stays intact. Selecting a fresh name does
@@ -456,7 +460,7 @@ graphex mutation itself records **4 request-internal SQL statements** on SQLite:
 Those statements describe the earlier 3.1.1-source core33 artifacts. The
 prepared 4.0.0 source uses a scoped post-write SQLite FK lookup instead of
 the table-wide PRAGMA inside an outer transaction. A separate controlled
-comparison is now recorded in the immutable 4.0.0-source series above; the
+comparison is now recorded in the immutable 4.0.0-source and 4.1.0-source series above; the
 eight earlier core33 JSON files remain unchanged.
 
 ## What the harness records

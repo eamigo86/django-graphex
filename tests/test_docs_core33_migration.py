@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SERIES = "core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e"
+SERIES = "core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c"
 RESULTS = ROOT / "benchmarks/results" / SERIES
 LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")
 OPERATIONS = ("flat_list", "nested", "single", "filtered", "create_comment")
@@ -25,18 +25,19 @@ def _load_result(library: str, authors: int) -> dict:
     return json.loads((RESULTS / f"{prefix}{library}.json").read_text(encoding="utf-8"))
 
 
-def test_comparison_intro_names_all_four_retained_series() -> None:
+def test_comparison_intro_names_all_five_retained_series() -> None:
     """Count the current series and each retained historical comparison.
 
-    The introduction must not omit the pre-fragment 4.0.0 result series.
+    The introduction must not omit either earlier 4.0.0 result series.
     """
     page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
     intro = page.split("## How it compares", maxsplit=1)[1].split(
         "## Current core33 comparison", maxsplit=1
     )[0]
     for label in (
-        "four distinct benchmark series",
+        "five distinct benchmark series",
         SERIES,
+        "core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e",
         "core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9",
         "3.1.1-source core33",
         "original 3.1.0",
@@ -102,12 +103,12 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
         "not a pooled 300-sample percentile",
         "schema rebuild",
         "Raw SHA-256",
-        "prepared 4.0.0 source",
+        "4.1.0 source",
     ):
         assert token in current
     assert f"benchmarks/results/{SERIES}/" in current
-    assert "826d5bae87ed7bbe705cf309d46a16d3ad3cdf33" in current
-    assert "bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e" in current
+    assert "460efb9b7c29b097f2939c05e79514f2fda3242c" in current
+    assert "Historical core33 4.0.0 comparison" in page
     assert "Historical core33 4.0.0 pre-fragment comparison" in page
     assert "benchmarks/run_publish_core33.py" in current
 
@@ -132,10 +133,36 @@ def test_current_public_summary_uses_new_artifact_values() -> None:
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         current = path.read_text(encoding="utf-8").split("## 3.1.1", 1)[0]
         assert SERIES in current
-        assert "4.0.0 source" in current
+        assert "4.1.0 source" in current
         assert _load_result("graphex", 1000)["measurement_source"]["commit"] in current
         for ratio in ratios:
             assert f"{ratio:.2f}×" in current
+
+
+def test_current_cold_import_table_is_derived_from_eight_artifacts() -> None:
+    """Keep the current cold-import medians bound to the committed data.
+
+    The historical claim that graphex and graphene-django import in about the
+    same time must not be repeated for the current series.
+    """
+    page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"<!-- core33-cold-import:start -->\n(.*?)\n<!-- core33-cold-import:end -->",
+        page,
+        re.DOTALL,
+    )
+    assert match is not None
+    rows = [
+        "| Library | 1,000-author seed | 2,000-author seed |",
+        "| :-- | --: | --: |",
+    ]
+    for library in LIBRARIES:
+        cells = [
+            f"{_load_result(library, authors)['schema_import_ms']:.2f} ms"
+            for authors in (1000, 2000)
+        ]
+        rows.append(f"| {library} | {cells[0]} | {cells[1]} |")
+    assert match.group(1).strip() == "\n".join(rows)
 
 
 def test_current_stack_versions_match_committed_results() -> None:
