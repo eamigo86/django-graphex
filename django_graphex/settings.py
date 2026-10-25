@@ -436,11 +436,20 @@ class GraphQLAPISettings(_BaseAPISettings):
         )
 
 
-def _validate_limit(value: Any, key: str, setting_name: str) -> None:
-    """Refuse a limit written below the smallest value that means anything.
+#: Limits that are strictly integer or None. The older limits keep their
+#: lenient type policy; these were added later and are compared or sliced
+#: directly, so a string fails on every request and "True" silently means 1.
+_STRICT_INTEGER_LIMITS = frozenset(
+    {"OPTIMIZER_WORK_BUDGET", "DOCUMENT_CACHE_MAX_QUERY_LENGTH"}
+)
 
-    Only integers are inspected: "None" is every one of these keys' documented
-    off switch, and a non-integer is somebody else's error to report.
+
+def _validate_limit(value: Any, key: str, setting_name: str) -> None:
+    """Refuse a limit below its smallest useful value, or of the wrong type.
+
+    "None" is every one of these keys' documented off switch. For the keys in
+    "_STRICT_INTEGER_LIMITS" only an integer (not a boolean) is accepted; for
+    the others a non-integer is somebody else's error to report.
 
     Args:
         value: The resolved setting value.
@@ -448,8 +457,18 @@ def _validate_limit(value: Any, key: str, setting_name: str) -> None:
         setting_name: The Django setting namespace (for the message).
 
     Raises:
-        ImproperlyConfigured: When "value" is an integer below the minimum.
+        ImproperlyConfigured: When "value" is not an integer or None, or is an
+            integer below the minimum.
     """
+    if value is None:
+        return
+    strict = key in _STRICT_INTEGER_LIMITS
+    if strict and (isinstance(value, bool) or not isinstance(value, int)):
+        raise ImproperlyConfigured(
+            "{}['{}'] = {!r} must be an integer or None.".format(
+                setting_name, key, value
+            )
+        )
     minimum, remedy = LIMIT_MINIMUMS[key]
     if not isinstance(value, int) or value >= minimum:
         return

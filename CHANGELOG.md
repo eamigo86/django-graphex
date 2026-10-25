@@ -349,6 +349,12 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Validate the type of the newer limits. `DOCUMENT_CACHE_MAX_QUERY_LENGTH` and
+  `OPTIMIZER_WORK_BUDGET` only had a range check, so `"65536"` raised a
+  `TypeError` on every request and `True` silently meant 1. Like
+  `MAX_DIRECTIVE_OUTPUT_TOTAL`, they now raise `ImproperlyConfigured` when read
+  unless the value is an integer or `None`.
+
 - Answer server faults outside field execution with HTTP 500. The status rule
   was "an error without a path means 400", so a failing hook such as
   `get_root_value`, or any other masked internal error raised before a field

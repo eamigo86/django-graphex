@@ -6,7 +6,11 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 
-from django_graphex.settings import DEFAULTS, GraphQLAPISettings, graphql_api_settings
+from django_graphex.settings import (
+    DEFAULTS,
+    GraphQLAPISettings,
+    graphql_api_settings,
+)
 
 LIMIT_NAMES = (
     "MAX_BATCH_SIZE",
@@ -14,6 +18,13 @@ LIMIT_NAMES = (
     "DOCUMENT_CACHE_MAXSIZE",
     "DOCUMENT_CACHE_MAX_QUERY_LENGTH",
 )
+
+#: Limits added later that accept only an integer or None.
+STRICT_LIMIT_NAMES = {
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH",
+    "OPTIMIZER_WORK_BUDGET",
+    "MAX_DIRECTIVE_OUTPUT_TOTAL",
+}
 
 
 @pytest.mark.parametrize(
@@ -68,7 +79,7 @@ def test_default_is_unchanged(name: str) -> None:
         assert getattr(graphql_api_settings, name) == DEFAULTS[name]
 
 
-@pytest.mark.parametrize("name", LIMIT_NAMES)
+@pytest.mark.parametrize("name", sorted(set(LIMIT_NAMES) - STRICT_LIMIT_NAMES))
 @pytest.mark.parametrize("value", [False, True, -0.5, "-1"])
 def test_existing_nonnegative_bool_and_noninteger_policy_is_unchanged(
     name: str, value: bool | float | str
@@ -95,3 +106,20 @@ def test_negative_limit_is_validated_lazily(name: str) -> None:
     with pytest.raises(ImproperlyConfigured, match="minimum of 0"):
         getattr(reader, name)
     assert name not in reader.__dict__
+
+
+@pytest.mark.parametrize("name", sorted(STRICT_LIMIT_NAMES))
+@pytest.mark.parametrize("value", [True, False, "65536", 1.5, [1]])
+def test_limit_rejects_non_integer_values(name: str, value: object) -> None:
+    """Reject a boolean, string, float or list where an integer limit is read.
+
+    A string used to fail later with a TypeError on every request, and True
+    silently meant 1.
+
+    Args:
+        name: Limit read through the public singleton.
+        value: A value that is not an integer.
+    """
+    with override_settings(DJANGO_GRAPHEX={name: value}):
+        with pytest.raises(ImproperlyConfigured, match=name):
+            getattr(graphql_api_settings, name)

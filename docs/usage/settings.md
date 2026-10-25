@@ -532,7 +532,10 @@ works as expected. Reading a setting name that does not exist raises
 `DOCUMENT_CACHE_MAX_QUERY_LENGTH` reject negative integers with `ImproperlyConfigured` when each setting is read, not
 at Django startup. The error names the setting, rejected value, minimum of
 zero, and remedy. Their existing `0`, `None`, positive, and default behaviors
-are unchanged; this is not a general setting-type validator.
+are unchanged; this is not a general setting-type validator. The newer limits
+`DOCUMENT_CACHE_MAX_QUERY_LENGTH`, `OPTIMIZER_WORK_BUDGET` and
+`MAX_DIRECTIVE_OUTPUT_TOTAL` additionally require an integer or `None`: a string
+such as `"65536"` or a boolean raises `ImproperlyConfigured` when read.
 
 ## Typos in the `DJANGO_GRAPHEX` dict
 
