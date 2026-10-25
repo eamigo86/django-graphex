@@ -243,7 +243,7 @@ def _recursive_schema() -> Any:
 
 
 def _nested_variables(depth: int) -> dict[str, Any]:
-    """Build variables nested ``depth`` levels deep.
+    """Build variables nested depth levels deep.
 
     Args:
         depth: How many nested "all" lists to build.
