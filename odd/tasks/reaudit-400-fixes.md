@@ -72,7 +72,7 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 | T43 | Q-B5, Q-B6 + found bug | `or` operands over a to-many relation get their own rows; one cursor coercion rule on DB and in-memory paths; enclosing `not` over a relation object = exact NOT EXISTS complement | D | [x] | `1655ee0`, `73d135b`, `cd670fe`; seeded oracle 60 seeds; full 7452 passed, cov 97.6 %; Playground 82/82 (parent re-run) |
 | T44 | Pg-B1..Pg-B8 | Upload extension allow-list + media served as attachment/nosniff/CSP sandbox; username validated via the model field; e2e tests isolate the channel layer; tmp MEDIA_ROOT for every test; README/doc values verified by test; wscat Origin; auth/ids notes | D | [x] | `4f63582`, `c78ea29`, `e3c5144`; Playground 94 passed with/without migrations and on 6 random seeds; library 7452 passed |
 | T45 | Docs B1-B5 and per-area doc items | Subscriptions over HTTP -> 400 `SUBSCRIPTION_NOT_SUPPORTED`; CHANGELOG behavior list rebuilt (~50 bullets, each linked to UPGRADE-4.1); UPGRADE-4.1 gaps filled (FK output scoping, subscriptions, request shape); settings block complete; Graphene wording removed; audit rows cite round-3 commits; docs consistency test | D | [x] | `0ca5021`, `7d519b1`, `928efe4`, `149b8b6`; parent final run: 7459 passed / 6 skipped, cov 97.61 %; ruff/mypy/bandit clean; docstring gates (CI and strict) TOTAL 0; Playground 94 passed |
-| T37 | Benchmark, D4, D7 | Rerun core33 benchmark; update why.md, README, benchmarks README | D | [ ] | |
+| T37 | Benchmark, D4, D7 | core33 publication run (3 runs x 2 seeds x 4 libs) on clean clone of `460efb9`, no harness patch; series `core33-4.1.0-460efb9...` committed; why.md/README/benchmarks README updated; cold-import claim (D7) corrected | D | [x] | `36977b6`; SQL counts identical to 4.0.0 series; graphex lowest p50 everywhere; interleaved A/B: flat/single ~+2 %, nested 10-24 % faster; load 8-10 noted |
 
 ## Acceptance criteria
 
@@ -142,6 +142,8 @@ Route: D = delegated writer (sonnet), I = inline. Evidence lists the commit and 
 
 - T38-T45 done (2026-10-24/25).
 
+- T37 done. All 45 tasks closed. Final report: `auditoria-final-django-graphex-4.1.0.md` (repo root, untracked).
+
 ## Next step
 
-T37 benchmark on the final HEAD (scratch clone, no harness patch), then update README/why.md/benchmarks README, then the final report.
+None. Push, tag, PR and publication remain the user's decisions.
