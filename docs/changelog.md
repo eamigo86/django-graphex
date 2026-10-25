@@ -389,6 +389,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Keep rejected subscriber filters public over SSE and WebSocket. The subscribe-time
+  filter validation raised a plain `ValueError` for client input (an
+  undeclared field, a lookup the ORM refuses such as `tags: {iexact: 1}`), which
+  the new transport masking turned into `INTERNAL_SERVER_ERROR` with an ERROR log
+  per attempt. It now raises `ClientFilterError`, a `GraphQLError` (and still a
+  `ValueError`), with the same message.
 - Mask unexpected exceptions over SSE and WebSocket like the HTTP view. A
   `subscribe` or event resolver raising `RuntimeError("password=...")` sent that
   text to the client. The classification and masking now live in one function,

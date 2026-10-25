@@ -122,13 +122,14 @@ def _schema() -> GraphQLSchema:
 
 
 async def _sse_errors(
-    monkeypatch: pytest.MonkeyPatch, query: str
+    monkeypatch: pytest.MonkeyPatch, query: str, schema: Any = None
 ) -> list[dict[str, Any]]:
     """Run a subscription over SSE and return the first frame's errors.
 
     Args:
         monkeypatch: Replaces the channel layer with an in-memory one.
         query: The subscription document.
+        schema: The schema to serve; the failing-resolver schema by default.
 
     Returns:
         The errors of the first "next" frame.
@@ -137,7 +138,9 @@ async def _sse_errors(
 
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
-    response = await sse.subscription_sse_view(schema=_schema())(_json_request(query))
+    response = await sse.subscription_sse_view(schema=schema or _schema())(
+        _json_request(query)
+    )
     assert response.status_code == 200
     async for frame in sse_frames(response):
         event, data = frame.decode().strip().split("\n", 1)
@@ -147,13 +150,14 @@ async def _sse_errors(
 
 
 async def _ws_errors(
-    monkeypatch: pytest.MonkeyPatch, query: str
+    monkeypatch: pytest.MonkeyPatch, query: str, schema: Any = None
 ) -> list[dict[str, Any]]:
     """Run a subscription over WebSocket and return the first frame's errors.
 
     Args:
         monkeypatch: Replaces the channel layer with an in-memory one.
         query: The subscription document.
+        schema: The schema to serve; the failing-resolver schema by default.
 
     Returns:
         The errors of the first "next" or "error" frame.
@@ -163,7 +167,7 @@ async def _ws_errors(
     layer = InMemoryChannelLayer()
     monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
     communicator = _make_communicator(
-        ws.subscription_ws_consumer(schema=_schema()), layer=layer
+        ws.subscription_ws_consumer(schema=schema or _schema()), layer=layer
     )
     await _connect_and_ack(communicator)
     await communicator.send_json_to(
@@ -390,4 +394,43 @@ async def test_ws_undecodable_frame_closes_without_an_error_log(
 
     assert closed["type"] == "websocket.close"
     assert closed["code"] == 4400
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@_TRANSPORTS
+@pytest.mark.parametrize(
+    ("filter_input", "message"),
+    (
+        ("{tags: {iexact: 1}}", "is not a valid database lookup on"),
+        ('{title: {startswith: "a"}}', "not to include unknown field"),
+        ('{title: {icontains: "a"}}', "not to include unknown field"),
+        ("{id: {gt: 1}}", "not to include unknown field"),
+    ),
+)
+@override_settings(DEBUG=False)
+async def test_rejected_client_filters_stay_public_and_unlogged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    transport: str,
+    filter_input: str,
+    message: str,
+) -> None:
+    """A subscriber filter the server refuses is client input, not a fault.
+
+    Args:
+        monkeypatch: Replaces the channel layer with an in-memory one.
+        caplog: The log capture fixture.
+        transport: The transport under test.
+        filter_input: The GraphQL filter literal.
+        message: A fragment of the public refusal.
+    """
+    from tests.subscriptions.test_audit_defects import _build_native_schema
+
+    caplog.set_level(logging.DEBUG)
+    query = "subscription { post(action: CREATE, filter: %s) { id } }" % filter_input
+
+    (error,) = await _run(transport)(monkeypatch, query, _build_native_schema())
+
+    assert message in error["message"]
+    assert "extensions" not in error
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

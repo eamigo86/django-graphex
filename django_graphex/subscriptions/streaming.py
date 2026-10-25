@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
-from graphql import execute
+from graphql import GraphQLError, execute
 
 from .delivery import make_delivery_iterator
 from .source import ChannelLayerSource
@@ -258,6 +258,14 @@ def _lookup_names(model: Any, root: str) -> "set[str]":
     return set((field or Field()).get_lookups())
 
 
+class ClientFilterError(GraphQLError, ValueError):
+    """A subscriber filter the server refuses: invalid client input.
+
+    A GraphQLError so the transports keep its message public and unlogged; also
+    a ValueError, the type this validation raised before, for direct callers.
+    """
+
+
 def _assert_orm_accepts(model: Any, client_filters: "Mapping[str, Any]") -> None:
     """Raise when the ORM itself refuses to build a query from "client_filters".
 
@@ -283,14 +291,14 @@ def _assert_orm_accepts(model: Any, client_filters: "Mapping[str, Any]") -> None
         client_filters: The raw filters supplied by the subscriber.
 
     Raises:
-        ValueError: When the ORM cannot build a query from the filters.
+        ClientFilterError: When the ORM cannot build a query from the filters.
     """
     if model is None or not client_filters:
         return
     try:
         model._default_manager.filter(**client_filters)
     except Exception as exc:  # noqa: BLE001 - re-raised as the module's own error
-        raise ValueError(
+        raise ClientFilterError(
             "Subscription filter {} is not a valid database lookup on {}: {}.".format(
                 ", ".join(sorted(client_filters)), model.__name__, exc
             )
@@ -343,19 +351,20 @@ def _validate_client_filters(
         model: The subscribed Django model whose field lookups are consulted.
 
     Raises:
-        ValueError: When a filter key roots on an undeclared field, carries a
+        ClientFilterError: When a filter key roots on an undeclared field, carries a
             segment that is not a registered lookup, carries a lookup outside
             the equality/membership allow list, or the mapping as a whole is not
-            a query the ORM can build. (A plain exception keeps this module free
-            of any graphene/graphql error coupling; the transport layer
-            translates it into an error frame.)
+            a query the ORM can build. Each is invalid client input, so it is a
+            deliberate GraphQLError: the transports send its message as is,
+            without masking or an ERROR log. (No original_error is attached, as
+            that would make the formatter treat it as an internal failure.)
     """
     if not client_filters:
         return
     for key in client_filters:
         root, *rest = key.split("__")
         if root not in declared:
-            raise ValueError(
+            raise ClientFilterError(
                 "Subscription filter key '{}' is not a declared output field. "
                 "Allowed fields: {}.".format(key, ", ".join(sorted(declared)))
             )
@@ -364,14 +373,14 @@ def _validate_client_filters(
         lookups = _lookup_names(model, root)
         for segment in rest:
             if segment not in lookups:
-                raise ValueError(
+                raise ClientFilterError(
                     "Subscription filter key '{}' is not a valid Django lookup "
                     "on the declared output field '{}': '{}' is neither a "
                     "lookup nor a transform. Relation traversal is not allowed "
                     "in client filters.".format(key, root, segment)
                 )
             if segment not in _ALLOWED_LOOKUPS:
-                raise ValueError(
+                raise ClientFilterError(
                     "Subscription filter key '{}' uses '{}', which is not an "
                     "allowed lookup in client filters. Allowed lookups: {} (or "
                     "a bare field name, which means exact). Ordered and pattern "

@@ -271,9 +271,9 @@ async def test_orm_rejected_client_lookup_is_refused_at_subscribe(
     frames = await _read_frames(response)
     assert frames[0].startswith("event: next\n")
     payload = json.loads(frames[0].split("data: ", 1)[1])
-    # The ORM refusal is an unexpected exception: masked like the HTTP view.
-    assert "iexact" not in json.dumps(payload)
-    assert payload["errors"][0]["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
+    # A client filter the ORM refuses is client input: public, never masked.
+    assert "iexact" in payload["errors"][0]["message"]
+    assert "errorId" not in json.dumps(payload)
     assert frames[-1] == "event: complete\ndata: \n\n"
     assert not layer.groups
 
