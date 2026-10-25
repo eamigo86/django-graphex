@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import collections
 import inspect
 import json
+import types
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -34,7 +36,13 @@ def _resolve_value(root: Any, info: Any) -> Any:
 
 
 class _Query(ObjectType):
-    """Expose the configured value through the raw JSON scalar."""
+    """Expose the configured value through the raw JSON scalar.
+
+
+
+    Verifies the behavior named in the summary line.
+
+    """
 
     value = field(GdxJSON, resolver=_resolve_value)
     plain = field(GraphQLString)
@@ -115,7 +123,13 @@ def test_http_response_stays_strict_json() -> None:
     """
 
     class _Strict(GraphQLView):
-        """Serve a root value carrying a non-finite number."""
+        """Serve a root value carrying a non-finite number.
+
+
+
+        Verifies the behavior named in the summary line.
+
+        """
 
         def get_root_value(self, request: Any) -> Any:
             """Return the offending root value.
@@ -182,3 +196,43 @@ async def test_subscription_payload_is_rejected_too() -> None:
     assert result.errors is not None
     assert isinstance(result.errors[0], GraphQLError)
     assert "non-finite" in result.errors[0].message
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda v: (1, v),
+        lambda v: collections.OrderedDict(a=v),
+        lambda v: {"a": (v,)},
+        lambda v: {"a": {v}},
+        lambda v: collections.namedtuple("Pair", "x y")(1, v),
+        lambda v: types.MappingProxyType({"a": v}),
+    ],
+    ids=["tuple", "ordered-dict", "tuple-in-dict", "set", "namedtuple", "mapping"],
+)
+def test_nonfinite_inside_other_containers_is_a_field_error(wrap: Any) -> None:
+    """A non-finite float in a tuple, OrderedDict, set or other mapping is rejected.
+
+    Args:
+        wrap: Builds a non-list, non-dict container holding the float.
+    """
+    result = graphql_sync(
+        _SCHEMA.graphql_schema, "{ value }", root_value={"value": wrap(_NAN)}
+    )
+    assert result.data == {"value": None}
+    assert result.errors is not None
+    assert "JSON cannot represent non-finite numbers" in result.errors[0].message
+
+
+def test_strings_and_bytes_are_not_traversed() -> None:
+    """A string is a sequence of strings; it must not be walked character by character.
+
+
+
+    Verifies the behavior named in the summary line.
+
+    """
+    result = graphql_sync(
+        _SCHEMA.graphql_schema, "{ value }", root_value={"value": ("nan", b"inf")}
+    )
+    assert result.errors is None

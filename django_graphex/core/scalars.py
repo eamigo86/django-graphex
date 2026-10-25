@@ -24,6 +24,8 @@ import decimal
 import json
 import re
 import uuid as _uuid_module
+from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from math import isfinite
 from typing import Any
 
@@ -483,8 +485,9 @@ GdxJSONString = GraphQLScalarType(
 def _reject_nonfinite_json_input(value: Any) -> Any:
     """Reject non-finite floats in raw JSON input without copying it.
 
-    Only built-in JSON containers are traversed. Other native Python values
-    retain the scalar's existing input identity behavior.
+    Every mapping, every non-text sequence (tuple, namedtuple, deque, ...) and
+    every set is traversed, because the JSON encoder emits them all. Other native
+    Python values retain the scalar's existing input identity behavior.
 
     Args:
         value: Raw input value to inspect.
@@ -501,12 +504,16 @@ def _reject_nonfinite_json_input(value: Any) -> Any:
         current = pending.pop()
         if isinstance(current, float) and not isfinite(current):
             raise GraphQLError("JSON cannot represent non-finite numbers")
-        if type(current) is list or type(current) is dict:
+        is_mapping = isinstance(current, Mapping)
+        if is_mapping or (
+            isinstance(current, (Sequence, AbstractSet))
+            and not isinstance(current, (str, bytes, bytearray))
+        ):
             identity = id(current)
             if identity in visited:
                 continue
             visited.add(identity)
-            pending.extend(current.values() if type(current) is dict else current)
+            pending.extend(current.values() if is_mapping else current)
     return value
 
 

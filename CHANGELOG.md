@@ -349,6 +349,12 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Reject non-finite floats inside every container the JSON encoder emits. The
+  `JSON` scalar's finite-number check only looked inside `dict` and `list`, so
+  `(1, nan)`, an `OrderedDict` holding `inf`, a namedtuple or a set still
+  produced `NaN`/`Infinity` in the response. Any mapping, non-text sequence and
+  set is now traversed (iteratively, and cycle-safe).
+
 - Bound the document caches by retained AST size. `DOCUMENT_CACHE_MAX_QUERY_LENGTH`
   capped the query text, but a 64,000-character `{ a a a ... }` parses to about
   17 MB, so 128 entries could pin gigabytes per worker. A document is now cached
