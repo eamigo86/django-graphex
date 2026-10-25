@@ -908,3 +908,85 @@ async def test_initial_renewal_retry_delay_is_honored(
     with pytest.raises(asyncio.CancelledError):
         await waiting
     await sync_to_async(response.close)()
+
+
+class _Clock:
+    """Model the loop clock the lease code reads."""
+
+    def __init__(self) -> None:
+        """Start at an arbitrary instant."""
+        self.now = 500.0
+
+    def time(self) -> float:
+        """Return the fake instant.
+
+        Returns:
+            The current fake loop time.
+        """
+        return self.now
+
+
+class _ClockedClient:
+    """Advance a fake clock while a Redis command is in flight."""
+
+    def __init__(self, clock: _Clock) -> None:
+        """Record the clock and the arguments of every command.
+
+        Args:
+            clock: The clock to advance by the command latency.
+        """
+        self.clock = clock
+        self.fail = False
+        self.latency = 0.0
+        self.calls: list[tuple[Any, ...]] = []
+
+    def eval(self, script: str, key_count: int, *args: Any) -> int:
+        """Take "latency" seconds, then fail or confirm ownership.
+
+        Args:
+            script: Lua source, ignored.
+            key_count: Key count, ignored.
+            *args: Key, token and TTL.
+
+        Returns:
+            One when ownership is confirmed.
+
+        Raises:
+            OSError: While "fail" is set.
+        """
+        self.calls.append(args)
+        self.clock.now += self.latency
+        if self.fail:
+            raise OSError("down")
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_lease_timing_uses_the_production_constants() -> None:
+    """TTL 45 s, margin 5 s -> 40 s window; retry 5 s, renew 15 s, send stamp.
+
+    Raises:
+        AssertionError: If any production timing value or stamp drifts.
+    """
+    from django_graphex.subscriptions.transports import sse
+    from django_graphex.subscriptions.transports._sse_lease import _Lease
+
+    clock = _Clock()
+    client = _ClockedClient(clock)
+    lease = _Lease(client, "key", "token")
+    client.latency = 3.0
+    sent_at = clock.now
+    delay = await sse._renew_lease(lease, clock)  # type: ignore[arg-type]
+    assert delay == 15.0
+    assert client.calls[-1][-1] == 45_000
+    # Stamped when the command was SENT, not when it came back.
+    assert lease.renewed_at == sent_at
+    assert lease.may_still_own(sent_at + 39.99)
+    assert not lease.may_still_own(sent_at + 40.0)
+
+    client.fail = True
+    clock.now = sent_at + 20.0
+    assert await sse._renew_lease(lease, clock) == 5.0  # type: ignore[arg-type]
+    clock.now = sent_at + 40.0
+    with pytest.raises(sse._LeaseLost):
+        await sse._renew_lease(lease, clock)  # type: ignore[arg-type]
