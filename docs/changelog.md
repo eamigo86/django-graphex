@@ -97,6 +97,9 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   by that check before `MAX_REQUEST_BODY_SIZE` could answer 413. `dispatch` now
   checks the cap first, so an oversized body is refused unparsed whether or not
   the client holds the cookie. CSRF behavior is unchanged.
+  A `BaseGraphQLView` mounted behind Django's `CsrfViewMiddleware` is still
+  parsed by the middleware first; bound the body with a proxy limit or a
+  body-size middleware placed before it.
 
 - Fix: bound the total text that directives add to one response. Only a
   per-field cap existed (`MAX_REPLACE_OUTPUT_LENGTH`), so many aliases and rows

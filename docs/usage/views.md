@@ -163,6 +163,18 @@ package release.
 
 `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt` (`BaseGraphQLView`
 is not — mount it behind Django's own CSRF middleware, or exempt it yourself).
+
+!!! warning "`BaseGraphQLView` behind `CsrfViewMiddleware`"
+
+    The middleware runs before the view. When a POST carries no `X-CSRFToken`
+    header it reads `request.POST`, which parses a `multipart/form-data` body and
+    spools its files to disk **before** the view's `MAX_REQUEST_BODY_SIZE` check
+    can refuse it. The cap therefore does not protect a `BaseGraphQLView`
+    mounted behind `CsrfViewMiddleware`. Bound the body ahead of the middleware
+    instead: set a size limit on your reverse proxy, or put a small
+    body-size middleware **before** `CsrfViewMiddleware` in `MIDDLEWARE`.
+    `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt`, so the
+    middleware skips them and the view's own cap runs first.
 On all three, a POST whose content type a browser can send cross-site **without
 a CORS preflight** must carry the `X-Requested-With` header or it is refused
 with HTTP 403 before its body is read. That set is
@@ -439,6 +451,15 @@ declared `Content-Length` first, then measures the body itself — so a client
 cannot under-declare its length to slip past. The check runs before Django's
 CSRF check, which would otherwise parse a multipart body for any client holding
 a `csrftoken` cookie, so an oversized upload is refused unparsed.
+
+!!! warning "Not for `BaseGraphQLView` behind `CsrfViewMiddleware`"
+
+    This ordering holds for the CSRF check the view itself decorates with. A
+    `BaseGraphQLView` mounted behind Django's `CsrfViewMiddleware` is checked by
+    the middleware first, and the middleware parses a multipart body (when no
+    `X-CSRFToken` header is sent) before the view's cap runs. Use a proxy body
+    limit, or a body-size middleware placed before `CsrfViewMiddleware`. See
+    [cross-site POST protection](#cross-site-post-protection).
 
 JSON that the decoder cannot parse returns **HTTP 400**, including when the
 decoder raises a recursion error. This is parser-error handling, not a promise
