@@ -467,12 +467,14 @@ when the column does, so a naive datetime cursor is now refused on the
 database path too when `USE_TZ` is on. Cursors issued by the server are
 unchanged.
 
-When the ordering column is a model `DecimalField`, a boundary with more
-fractional digits than the field's `decimal_places` (trailing zeros ignored, so
-`2.50` and `2.5` both fit two places) is `Invalid cursor` on both paths. No
-stored value can equal such a boundary, and the database used to round it
-(`1e-999` compared as zero on SQLite) while memory compared it exactly. Huge
-magnitudes stay valid, and annotation orderings are unchanged.
+A `DecimalField` cursor with more fractional digits than the field's
+`decimal_places` is valid and compared exactly. No stored value can equal it, so
+the database path turns `> c` into `>= ceil(c)` and `< c` into `<= floor(c)` at
+the column scale (ascending and descending, with or without a pk), and the
+in-memory path compares the exact Decimal. Both answer the same page; before, the
+database rounded it (`1e-999` compared as zero on SQLite). Lists whose Decimal
+values are computed in Python keep paging. Huge magnitudes stay valid, and
+annotation orderings are unchanged.
 
 ### Nullable ordering in offset and page results
 

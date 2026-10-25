@@ -10,7 +10,7 @@ import base64
 import binascii
 import datetime
 import math
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -208,27 +208,39 @@ def _coerce_cursor_component(raw: str, kind: type, aware: bool) -> Any:
     return raw
 
 
-def _check_decimal_places(number: Decimal, field: Any) -> None:
-    """Refuse a boundary with more fractional digits than the column stores.
+def _decimal_scale_bounds(
+    number: Decimal, field: Any
+) -> tuple[Decimal, Decimal] | None:
+    """Return the column-scale neighbours of a boundary finer than the column.
 
-    Trailing zeros do not count, so "2.50" and "2.5" both fit two places. The
-    digit tuple is used instead of normalize() because that rounds to the
-    context precision.
+    No stored value can equal a boundary with more fractional digits than the
+    column keeps, so a strict comparison is exact against its ceiling (for
+    "greater than") or floor (for "less than") at the column scale. Trailing
+    zeros do not count, so "2.50" and "2.5" both fit two places.
 
     Args:
         number: The finite boundary already coerced to a Decimal.
         field: The model field behind the ordering column.
 
-    Raises:
-        ValueError: If the field is a DecimalField with fewer places.
+    Returns:
+        The (ceiling, floor) pair at the column scale, or None when the field
+        is not a DecimalField or the boundary fits its places.
     """
     if not isinstance(field, DecimalField) or field.decimal_places is None:
-        return
+        return None
+    places = field.decimal_places
     _, digits, exponent = number.as_tuple()
     text = "".join(map(str, digits))
     zeros = len(text) - len(text.rstrip("0"))
-    if text.strip("0") and -(int(exponent) + zeros) > field.decimal_places:
-        raise ValueError(str(number))
+    if not text.strip("0") or -(int(exponent) + zeros) <= places:
+        return None
+    step = Decimal(1).scaleb(-places)
+    # The context must hold every integer digit plus the places kept.
+    context = Context(prec=max(number.adjusted(), 0) + places + 2)
+    return (
+        number.quantize(step, rounding=ROUND_CEILING, context=context),
+        number.quantize(step, rounding=ROUND_FLOOR, context=context),
+    )
 
 
 # Model field classes by cursor kind; the first match wins, so DateTimeField
@@ -1861,7 +1873,11 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
     @staticmethod
     def _keyset_predicate(
-        field_name: str, descending: bool, value: Any, pk: Any
+        field_name: str,
+        descending: bool,
+        value: Any,
+        pk: Any,
+        bounds: tuple[Decimal, Decimal] | None = None,
     ) -> Any:
         """Build the compound keyset Q predicate for "rows after the cursor".
 
@@ -1890,6 +1906,10 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             descending: Whether the ordering is descending.
             value: The boundary row's ordering value ("None" for a NULL boundary).
             pk: The boundary row's primary key.
+            bounds: The (ceiling, floor) of a Decimal boundary finer than its
+                column, from "_validate_boundary". No stored value equals such a
+                boundary, so the comparison turns inclusive on the neighbour
+                and the pk tiebreak is dropped.
 
         Returns:
             A Django Q object selecting the rows strictly after the boundary.
@@ -1911,8 +1931,15 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             return within_null_group
 
         # Boundary row's ordering value is NOT NULL.
-        strictly_beyond = Q(**{f"{field_name}__{cmp}": value})
-        pk_tied = Q(**{field_name: value, f"pk__{cmp}": pk})
+        if bounds is None:
+            strictly_beyond = Q(**{f"{field_name}__{cmp}": value})
+            pk_tied = Q(**{field_name: value, f"pk__{cmp}": pk})
+        else:
+            strictly_beyond = Q(
+                **{f"{field_name}__{cmp}e": bounds[1] if descending else bounds[0]}
+            )
+            # Dropped, but still built so a bad pk is refused as before.
+            pk_tied = Q(pk__in=[], **{f"pk__{cmp}": pk})
         if descending:
             # NULLs first: no NULL row sorts after a non-NULL boundary.
             return strictly_beyond | pk_tied
@@ -2060,13 +2087,6 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         # (like the DB path) instead of a TypeError/InvalidOperation.
         values = [getattr(obj, field_name, None) for obj in items]
         value = _coerce_like(value, next((v for v in values if v is not None), None))
-        if isinstance(value, Decimal) and hasattr(items[0], "_meta"):
-            try:
-                _check_decimal_places(value, items[0]._meta.get_field(field_name))
-            except FieldDoesNotExist:
-                pass  # an annotation has no declared places
-            except ValueError as exc:
-                raise GraphQLError("Invalid cursor") from exc
         if pk is not None:
             pk = _coerce_like(pk, next((o.pk for o in items if o.pk is not None), None))
         for index, obj in enumerate(items):
@@ -2109,18 +2129,22 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             #      produce a clean GraphQLError, not an unhandled HTTP 500.
             try:
                 value, pk = self.decode_cursor_parts(cursor)
-                self._validate_boundary(qs.model, field_name, value)
+                bounds = self._validate_boundary(qs.model, field_name, value)
                 if pk is None:
                     # Legacy value-only cursor: fall back to the plain value
                     # boundary (no pk tiebreak available). A NULL boundary value
                     # cannot use a "field > NULL" comparison (never true), so
                     # route it through the isnull-aware group filter instead.
                     qs = qs.filter(
-                        self._legacy_value_predicate(field_name, descending, value)
+                        self._legacy_value_predicate(
+                            field_name, descending, value, bounds
+                        )
                     )
                 else:
                     qs = qs.filter(
-                        self._keyset_predicate(field_name, descending, value, pk)
+                        self._keyset_predicate(
+                            field_name, descending, value, pk, bounds
+                        )
                     )
             except (ValueError, ValidationError) as exc:
                 raise GraphQLError("Invalid cursor") from exc
@@ -2128,7 +2152,9 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         return qs[:page_size]
 
     @staticmethod
-    def _validate_boundary(model: Any, field_name: str, value: str | None) -> None:
+    def _validate_boundary(
+        model: Any, field_name: str, value: str | None
+    ) -> tuple[Decimal, Decimal] | None:
         """Apply the shared cursor rule to the ordering column's boundary.
 
         The in-memory path coerces the boundary with the same function
@@ -2141,24 +2167,34 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             field_name: The bare ordering-field name.
             value: The decoded boundary ordering value ("None" for NULL).
 
+        Returns:
+            The (ceiling, floor) at the column scale when the boundary is a
+            Decimal finer than a DecimalField column, otherwise None.
+
         Raises:
             ValueError: If the boundary is not valid for the column.
         """
         if value is None:
-            return
+            return None
         try:
             field = model._meta.get_field(field_name)
         except FieldDoesNotExist:
-            return
+            return None
         kind = next((k for k, types in _FIELD_KINDS if isinstance(field, types)), None)
         if kind is not None:
             aware = bool(settings.USE_TZ) if kind is datetime.datetime else False
             number = _coerce_cursor_component(value, kind, aware)
             if kind is Decimal:
-                _check_decimal_places(number, field)
+                return _decimal_scale_bounds(number, field)
+        return None
 
     @staticmethod
-    def _legacy_value_predicate(field_name: str, descending: bool, value: Any) -> Any:
+    def _legacy_value_predicate(
+        field_name: str,
+        descending: bool,
+        value: Any,
+        bounds: tuple[Decimal, Decimal] | None = None,
+    ) -> Any:
         """Build the pk-less (legacy) "rows after the cursor" predicate.
 
         The composite keyset predicate needs a pk tiebreak; a legacy value-only
@@ -2173,6 +2209,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             field_name: The bare ordering-field name.
             descending: Whether the ordering is descending.
             value: The boundary ordering value ("None" for a NULL boundary).
+            bounds: The (ceiling, floor) of a Decimal boundary finer than its
+                column; the comparison then turns inclusive on the neighbour.
 
         Returns:
             A Django Q object selecting the rows after the value boundary.
@@ -2183,6 +2221,9 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # Ascending NULLs last: nothing follows a NULL boundary without a
             # pk tiebreak. Descending NULLs first: the entire non-NULL body does.
             return Q(**{f"{field_name}__isnull": False}) if descending else Q(pk__in=[])
+        if bounds is not None:
+            lookup = f"{field_name}__{'lte' if descending else 'gte'}"
+            return Q(**{lookup: bounds[1] if descending else bounds[0]})
         lookup = f"{field_name}__{'lt' if descending else 'gt'}"
         return Q(**{lookup: value})
 
@@ -2324,14 +2365,18 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # decode_cursor_parts (malformed base64) or at filter() (type coercion).
             try:
                 value, pk = self.decode_cursor_parts(cursor)
-                self._validate_boundary(qs.model, field_name, value)
+                bounds = self._validate_boundary(qs.model, field_name, value)
                 if pk is None:
                     page_qs = page_qs.filter(
-                        self._legacy_value_predicate(field_name, descending, value)
+                        self._legacy_value_predicate(
+                            field_name, descending, value, bounds
+                        )
                     )
                 else:
                     page_qs = page_qs.filter(
-                        self._keyset_predicate(field_name, descending, value, pk)
+                        self._keyset_predicate(
+                            field_name, descending, value, pk, bounds
+                        )
                     )
             except (ValueError, ValidationError) as exc:
                 raise GraphQLError("Invalid cursor") from exc
