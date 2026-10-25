@@ -122,7 +122,10 @@ the request gets HTTP 400 with graphql-core's validation message (for example
 invalid value ...`), without the raw exception text and without an ERROR log
 record. With `DEBUG=True` the full message, cause text included, is kept. A
 `ValueError` raised during execution (resolvers, output serialization) is still
-masked and logged as described above.
+masked and logged as described above. Only `ValueError`, `TypeError` and
+`GraphQLError` mean invalid input: any other exception a scalar raises while
+coercing (a database error, say) is a server fault and is masked and logged
+too.
 
 GraphQL `locations`, `path`, null propagation, and rollback are unchanged.
 For the current JSON endpoint, a field execution error returns HTTP 200 with
@@ -130,7 +133,11 @@ For the current JSON endpoint, a field execution error returns HTTP 200 with
 `null`. For example, a failed `{ required }` request can return
 `{"data": null, "errors": [{"message": "Execution stopped.", "path": ["required"]}]}`.
 Syntax, validation, and variable-coercion errors remain HTTP 400 without a
-`data` member. An HTTP 200 response containing errors is not cached; a
+`data` member. A server fault outside field execution (for example a failing
+`get_root_value` hook) is masked as above and answers HTTP 500 instead of 400.
+A `query` that is not a string, or `variables` that are not a JSON object, answer
+HTTP 400 (`Must provide query string.` / `Variables must be a JSON object.`)
+without an ERROR log. An HTTP 200 response containing errors is not cached; a
 repeated request runs again. Clients must inspect `errors`, not only status.
 `DEBUG=True`, the shared subscription formatter
 used by WebSocket/SSE, and subclasses that override `format_error` retain

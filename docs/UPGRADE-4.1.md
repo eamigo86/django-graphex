@@ -923,7 +923,8 @@ no ERROR log. Before, they answered HTTP 400 with `INTERNAL_SERVER_ERROR` and
 logged a traceback. Errors raised during execution keep their masking and log,
 and so does any other exception type a scalar raises while coercing (for
 example a database error): only `ValueError`, `TypeError` and `GraphQLError`
-mean invalid input.
+mean invalid input. A masked internal error raised outside field execution (a
+failing hook such as `get_root_value`) now answers HTTP 500 instead of 400.
 With `DEBUG=False`, unexpected resolver exceptions on the built-in HTTP views
 answer with `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` and an opaque
 `errorId` correlated with server logs; clients must not rely on raw exception

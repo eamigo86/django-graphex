@@ -349,6 +349,13 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Answer server faults outside field execution with HTTP 500. The status rule
+  was "an error without a path means 400", so a failing hook such as
+  `get_root_value`, or any other masked internal error raised before a field
+  ran, answered 400 as if the client were at fault. A masked internal error now
+  answers 500; syntax, validation and variable-coercion errors stay 400, and
+  field errors stay inside HTTP 200.
+
 - Answer malformed request shapes as clean 400s. A `query` that is not a string
   (`{"query": 123}`, `{"query": ["a"]}`) or `variables` that are not a JSON
   object (`"variables": "[1]"`, `[1]`) answered 400 `INTERNAL_SERVER_ERROR` with

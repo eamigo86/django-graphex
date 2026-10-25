@@ -142,6 +142,40 @@ def test_valid_requests_are_unchanged(view_class: type[BaseGraphQLView]) -> None
         assert response.status_code == 200, variables
 
 
+class _BrokenRoot(GraphQLView):
+    """A view whose root-value hook has a server fault."""
+
+    def get_root_value(self, request: Any) -> Any:
+        """Fail like an unreachable backing service.
+
+        Args:
+            request: The incoming request.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        raise RuntimeError("internal-detail")
+
+
+@override_settings(DEBUG=False)
+def test_server_fault_outside_field_execution_answers_500(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A masked internal error without a field path is HTTP 500, not 400.
+
+    Args:
+        caplog: The log capture fixture.
+    """
+    caplog.set_level(logging.DEBUG, logger="django_graphex.internal_errors")
+    response = _BrokenRoot.as_view(schema=_SCHEMA)(_request("post", {"query": "{ a }"}))
+
+    assert response.status_code == 500
+    (error,) = json.loads(response.content)["errors"]
+    assert error["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
+    assert "internal-detail" not in response.content.decode()
+    assert [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
 @pytest.mark.parametrize("view_class", _VIEWS)
 def test_client_errors_and_field_errors_keep_their_status(
     view_class: type[BaseGraphQLView],

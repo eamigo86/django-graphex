@@ -120,6 +120,43 @@ def _mark_request_errors(result: Any) -> Any:
     return result
 
 
+def _request_error_status(errors: Any) -> int:
+    """Return the HTTP status for an execution result's path-less errors.
+
+    Path-less errors come from before execution (parse, validate, coercion),
+    where the client is at fault, and from server faults outside field
+    execution (a failing hook). The second kind is an internal error.
+
+    Args:
+        errors: The execution result's errors.
+
+    Returns:
+        500 when a path-less error is an internal one, otherwise 400.
+    """
+    for error in errors:
+        if getattr(error, "path", None):
+            continue
+        cause = _internal_error_cause(error)
+        if cause is not None and not _is_client_input(error, cause):
+            return 500
+    return 400
+
+
+def _is_client_input(error: Any, cause: BaseException) -> bool:
+    """Return whether an error flagged by phase is invalid client input.
+
+    Args:
+        error: The error being classified.
+        cause: Its unexpected cause, from "_internal_error_cause".
+
+    Returns:
+        True for a pre-execution error whose cause is a ValueError or TypeError.
+    """
+    return bool(getattr(error, _CLIENT_ERROR_ATTR, False)) and isinstance(
+        cause, (ValueError, TypeError)
+    )
+
+
 def _scrub_cause_text(message: str, cause: BaseException) -> str:
     """Remove a raw exception's text from a graphql-core coercion message.
 
@@ -1605,7 +1642,7 @@ class BaseGraphQLView(View):
             if execution_result.errors and any(
                 not getattr(e, "path", None) for e in execution_result.errors
             ):
-                status_code = 400
+                status_code = _request_error_status(execution_result.errors)
             else:
                 response["data"] = execution_result.data
 
@@ -2041,9 +2078,7 @@ class BaseGraphQLView(View):
         cause = _internal_error_cause(error)
         if cause is None:
             return formatted
-        if getattr(error, _CLIENT_ERROR_ATTR, False) and isinstance(
-            cause, (ValueError, TypeError)
-        ):
+        if _is_client_input(error, cause):
             # Invalid client input (parse, validate, variable coercion): keep the
             # validation contract, but never echo the raw exception text. Only
             # ValueError and TypeError mean "invalid input"; any other exception a
@@ -2984,7 +3019,7 @@ class GraphQLView(BaseGraphQLView):
                 not getattr(error, "path", None) for error in execution_result.errors
             ):
                 # Request errors have no field path and no execution data.
-                status_code = 400
+                status_code = _request_error_status(execution_result.errors)
             else:
                 response["data"] = execution_result.data
 
