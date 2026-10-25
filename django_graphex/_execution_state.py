@@ -3,9 +3,12 @@
 Two scopes exist, and they differ on purpose:
 
 * "per execution": one GraphQL operation execution (a subscription event is its
-  own execution). The state is found in a bounded module table keyed by the
-  identity of the execution's variable values and root value. This is what the
-  optimizer work budget uses, and the fallback of the directive output budget.
+  own execution). The state lives in a weak table keyed by the graphql-core
+  executor of the execution, so it lasts exactly as long as the execution. A
+  subscription event and an info without such an executor use a bounded table
+  keyed by the identity of the variable values and root value instead. This is
+  what the optimizer work budget uses, and the fallback of the directive output
+  budget.
 * "per request": every execution of one HTTP request, so all items of a batch
   share one budget. The view binds a RequestBudget to the request
   context; the directive output budget prefers it when it is present.
@@ -14,6 +17,7 @@ Two scopes exist, and they differ on purpose:
 from __future__ import annotations
 
 import threading
+import weakref
 from collections import OrderedDict
 from collections.abc import MutableMapping
 from typing import Any, Callable
@@ -23,10 +27,10 @@ from graphql import OperationType
 #: Private attribute on a context holding its request-wide budget.
 REQUEST_BUDGET_ATTR = "_graphex_request_budget"
 
-#: Most live-or-finished executions tracked; the least recently used entry is
-#: dropped beyond this. An execution is only dropped after more than this many
-#: other executions charged while it was still running, which is far above any
-#: realistic concurrency; such an execution restarts its counter once.
+#: Most subscription events (and executor-less infos) tracked by identity; the
+#: least recently used entry is dropped beyond this. An entry is only dropped
+#: after more than this many other executions charged while it was still
+#: running, which is far above any realistic concurrency; it restarts once.
 EXECUTION_TABLE_SIZE = 1024
 
 
@@ -48,21 +52,28 @@ class RequestBudget:
 
 
 class ExecutionStates:
-    """Bounded table of per-execution state, keyed by execution identity.
+    """Table of per-execution state, keyed by execution identity.
 
-    Entries hold the variable values and the root value, so an identity can
-    only match while its execution is alive and an id is never reused for a
-    different live execution.
+    An execution is identified by its graphql-core executor, held weakly so the
+    state dies with it and nothing can evict a live one. A subscription event
+    shares the executor of its source stream, and an info without an executor
+    (a test double) has none; both fall back to a bounded table keyed by the
+    variable values and the root value. Its entries hold both objects, so an
+    identity can only match while its execution is alive.
     """
 
     def __init__(self, size: int = EXECUTION_TABLE_SIZE) -> None:
         """Create an empty table.
 
         Args:
-            size: Most entries kept before the least recently used is dropped.
+            size: Most fallback entries kept before the least recently used is
+                dropped.
         """
         self.size = size
         self.lock = threading.Lock()
+        self._by_executor: weakref.WeakKeyDictionary[Any, Any] = (
+            weakref.WeakKeyDictionary()
+        )
         self._table: OrderedDict[tuple[int, int], list[Any]] = OrderedDict()
 
     def __len__(self) -> int:
@@ -71,7 +82,7 @@ class ExecutionStates:
         Returns:
             The number of entries.
         """
-        return len(self._table)
+        return len(self._table) + len(self._by_executor)
 
     def get(self, info: Any, factory: Callable[[], Any]) -> Any:
         """Return the state of the execution "info" belongs to.
@@ -85,6 +96,20 @@ class ExecutionStates:
         Returns:
             The execution's state object.
         """
+        if not is_subscription(info):
+            executor = getattr(
+                getattr(getattr(info, "async_helpers", None), "track", None),
+                "__self__",
+                None,
+            )
+            try:
+                state = self._by_executor.get(executor)
+                if state is None and executor is not None:
+                    state = self._by_executor[executor] = factory()
+                if state is not None:
+                    return state
+            except TypeError:  # not hashable or not weak-referenceable
+                pass
         variables = getattr(info, "variable_values", None)
         root = getattr(info, "root_value", None)
         key = (id(variables), id(root))

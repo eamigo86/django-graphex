@@ -1231,11 +1231,11 @@ _WORK_KEY = (0, "work")
 def _request_work(info: GraphQLResolveInfo) -> dict[str, Any]:
     """Return the optimizer work state shared by one whole execution.
 
-    The state lives in a bounded module table keyed by the identity of the
-    execution's variable values and root value, so it does not depend on what
-    kind of context the application passes (a dict, None or a mock all work).
-    Entries hold both objects, so an identity can only match while its
-    execution is alive.
+    The state lives in a module table keyed by the graphql-core executor of the
+    execution, so it lasts exactly as long as the execution and does not depend
+    on what kind of context the application passes (a dict, None or a mock all
+    work). A subscription event, or an info without an executor, uses a bounded
+    table keyed by the identity of the variable values and root value.
 
     Args:
         info: Resolve information of any root field of the execution.

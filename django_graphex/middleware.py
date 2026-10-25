@@ -54,11 +54,13 @@ def _charge(info: GraphQLResolveInfo, grown: int, directive_name: str) -> None:
     by the GraphQL view shares the budget of its whole HTTP request, so every
     item of a batch draws from the same "MAX_DIRECTIVE_OUTPUT_TOTAL". Anything
     else (a subscription event, a transport, a direct "execute" call) is its own
-    scope: the counter is kept per execution in a bounded module table, keyed by
-    the identity of the variable values and root value. Entries hold both
-    objects, so an identity can only match while its execution is alive.
-    Subscription events share their variable values but each has its own root
-    value, so the counter restarts per event, even over a request context.
+    scope: the counter is kept per execution in a table keyed by the
+    graphql-core executor, so it lasts as long as the execution. Subscription
+    events share the executor of their source stream and fall back to a bounded
+    table keyed by the identity of the variable values and root value. Entries
+    hold both objects, so an identity can only match while its execution is
+    alive. Events share their variable values but each has its own root value,
+    so the counter restarts per event, even over a request context.
 
     Args:
         info: The GraphQL resolve info for the field.

@@ -679,3 +679,204 @@ def test_subscription_events_restart_even_with_a_request_budget() -> None:
         )
         _charge(info, 8, "replace")  # type: ignore[arg-type]
     assert vars(request)["_graphex_request_budget"].used == 0
+
+
+_FILLERS = 1100
+
+
+def _serial_fillers(schema: GraphQLSchema, query: str, context: Any = None) -> None:
+    """Run more complete serial executions than the fallback table holds.
+
+    Args:
+        schema: Schema the fillers run against.
+        query: Query each filler runs.
+        context: Context value of every filler.
+    """
+    for _ in range(_FILLERS):
+        result = graphql_sync(
+            schema,
+            query,
+            context_value=context,
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+        assert not result.errors
+
+
+async def _run_with_fillers(fillers: bool, context: Any) -> Any:
+    """Grow 99 characters, wait, optionally run fillers, then grow 99 more.
+
+    Args:
+        fillers: Whether to run serial executions while the first waits.
+        context: Context value of the waiting execution.
+
+    Returns:
+        The execution result of the waiting operation.
+    """
+    import asyncio
+
+    from graphql import graphql
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def second(*_: Any) -> str:
+        started.set()
+        await release.wait()
+        return "x"
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            "Q",
+            {
+                "one": GraphQLField(GraphQLString, resolve=lambda *_: "x"),
+                "two": GraphQLField(GraphQLString, resolve=second),
+            },
+        ),
+        directives=[*specified_directives, *all_directives],
+    )
+    task = asyncio.ensure_future(
+        graphql(
+            schema,
+            "{ one @center(width: 100) two @center(width: 100) }",
+            context_value=context,
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+    )
+    await started.wait()
+    if fillers:
+        _serial_fillers(schema, "{ one @center(width: 100) }", context={})
+    release.set()
+    return await task
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+@pytest.mark.parametrize("fillers", [False, True])
+@pytest.mark.parametrize("context", [None, {}])
+def test_live_execution_keeps_its_counter_across_many_executions(
+    fillers: bool, context: Any
+) -> None:
+    """A running execution is not reset by other executions finishing.
+
+    Field one adds 99 characters, then field two waits while more than the
+    fallback table size of other executions run; field two's own 99 must still
+    exceed the budget of 150.
+
+    Args:
+        fillers: Whether other executions run while field two waits.
+        context: Context value of the waiting execution.
+    """
+    import asyncio
+
+    result = asyncio.run(_run_with_fillers(fillers, context))
+    assert result.data is not None
+    assert result.data["one"] is not None
+    assert result.data["two"] is None
+    assert result.errors
+    assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in result.errors[0].message
+
+
+@pytest.mark.parametrize("fillers", [False, True])
+def test_live_execution_keeps_its_optimizer_work_across_many_executions(
+    fillers: bool,
+) -> None:
+    """The optimizer work state of a running execution survives other runs.
+
+    Two fields of one execution read the same state before and after more than
+    the fallback table size of other executions completed.
+
+    Args:
+        fillers: Whether other executions run while field two waits.
+    """
+    import asyncio
+
+    from graphql import graphql
+
+    from django_graphex.utils import _request_work
+
+    states: list[dict[str, Any]] = []
+
+    async def go() -> None:
+        gate = asyncio.Event()
+        started = asyncio.Event()
+
+        def one(_root: Any, info: Any) -> str:
+            work = _request_work(info)
+            work["used"]["walker"] = 7
+            work["exhausted"] = True
+            states.append(work)
+            return "x"
+
+        async def two(_root: Any, info: Any) -> str:
+            started.set()
+            await gate.wait()
+            states.append(_request_work(info))
+            return "x"
+
+        def filler(_root: Any, info: Any) -> str:
+            assert _request_work(info) == {"used": {}, "exhausted": False}
+            return "x"
+
+        def schema_of(a: Any, b: Any) -> GraphQLSchema:
+            return GraphQLSchema(
+                query=GraphQLObjectType(
+                    "Q",
+                    {
+                        "one": GraphQLField(GraphQLString, resolve=a),
+                        "two": GraphQLField(GraphQLString, resolve=b),
+                    },
+                )
+            )
+
+        task = asyncio.ensure_future(graphql(schema_of(one, two), "{ one two }"))
+        await started.wait()
+        if fillers:
+            plain = schema_of(filler, filler)
+            for _ in range(_FILLERS):
+                graphql_sync(plain, "{ one }")
+        gate.set()
+        assert not (await task).errors
+
+    asyncio.run(go())
+    assert states[0] is states[1]
+    assert states[1] == {"used": {"walker": 7}, "exhausted": True}
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_real_subscription_events_each_get_their_own_counter() -> None:
+    """Each event of a graphql-core subscription restarts the counter.
+
+    Events share one source executor, but each grows 99 characters under a
+    budget of 150 and none of them fails.
+    """
+    import asyncio
+
+    from graphql import subscribe
+
+    async def source(*_: Any) -> Any:
+        for event in range(3):
+            yield f"event {event}"
+
+    schema = GraphQLSchema(
+        query=_QUERY,
+        subscription=GraphQLObjectType(
+            "S",
+            {
+                "t": GraphQLField(
+                    GraphQLString, subscribe=source, resolve=lambda value, _i: value
+                )
+            },
+        ),
+        directives=[*specified_directives, *all_directives],
+    )
+
+    async def go() -> list[Any]:
+        stream = subscribe(
+            schema,
+            parse("subscription { t @center(width: 100) }"),
+            middleware=[GraphQLDirectiveMiddleware()],
+        )
+        return [result async for result in stream]
+
+    results = asyncio.run(go())
+    assert len(results) == 3
+    assert not any(result.errors for result in results)
