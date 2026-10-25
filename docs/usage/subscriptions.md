@@ -1269,7 +1269,10 @@ five-second safety margin). A later success resets that window. Only when
 failures outlast it, or Redis answers that the token is no longer owned, does
 the stream end with the usual lease-lost frame; the frame never carries backend
 details. A short Redis outage therefore no longer drops every stream at once.
-All streams of a process share one Redis client (connection pool) per URL.
+All streams of a process share one Redis client (connection pool) per URL. The
+client pings idle connections every 30 seconds and enables TCP keepalive; lease
+admission retries once after a connection error, so a connection dropped by a
+proxy does not fail the next admission with HTTP 503.
 Redis failover and network partitions can weaken a strict global count: this
 is an availability guard, not a distributed consensus guarantee. Keep the
 server/gateway connection limit as a separate safeguard.

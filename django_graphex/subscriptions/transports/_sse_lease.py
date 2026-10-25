@@ -25,6 +25,9 @@ _RENEW_INTERVAL = 15.0
 _RETRY_INTERVAL = 5.0
 _SAFETY_MARGIN = 5.0
 _REDIS_TIMEOUT_SECONDS = 2.0
+# Pooled connections live as long as the process; ping idle ones so a
+# connection dropped by a proxy or NAT is replaced instead of failing a command.
+_HEALTH_CHECK_SECONDS = 30
 
 _ACQUIRE = """-- sse-acquire
 local time = redis.call('TIME')
@@ -202,6 +205,8 @@ def _shared_client(redis_cls: Any, url: str) -> Any:
                 url,
                 socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
                 socket_timeout=_REDIS_TIMEOUT_SECONDS,
+                socket_keepalive=True,
+                health_check_interval=_HEALTH_CHECK_SECONDS,
             )
             cached = _clients[url] = (redis_cls, client)
         return cached[1]
@@ -226,19 +231,25 @@ async def _acquire(user: Any, url: str, limit: int) -> _Lease | None:
 
     key = _principal_key(user)
     client = _shared_client(Redis, url)
-    token = uuid4().hex
-    try:
-        admitted = await _run_blocking(
-            lambda: client.eval(_ACQUIRE, 1, key, token, limit, _TTL_MS)
-        )
-    except BaseException:
-        # The network may fail AFTER Redis admits the token, or the request may
-        # be cancelled during the handshake. Never leave an unknown grant live.
+    for attempt in (1, 2):
+        token = uuid4().hex
         try:
-            await _run_blocking(lambda: client.eval(_RELEASE, 1, key, token))
-        except Exception:  # noqa: BLE001 - TTL expires an unknown grant
-            logger.warning("Could not confirm SSE admission cleanup; TTL applies.")
-        raise
+            admitted = await _run_blocking(
+                lambda: client.eval(_ACQUIRE, 1, key, token, limit, _TTL_MS)
+            )
+            break
+        except BaseException as exc:
+            # The network may fail AFTER Redis admits the token, or the request
+            # may be cancelled during the handshake. Never leave an unknown
+            # grant live.
+            try:
+                await _run_blocking(lambda: client.eval(_RELEASE, 1, key, token))
+            except Exception:  # noqa: BLE001 - TTL expires an unknown grant
+                logger.warning("Could not confirm SSE admission cleanup; TTL applies.")
+            # A pooled connection may have gone stale: retry once with a fresh
+            # token. Cancellation and the second failure propagate.
+            if attempt == 2 or not isinstance(exc, Exception):
+                raise
     if not admitted:
         return None
     return _Lease(client, key, token)

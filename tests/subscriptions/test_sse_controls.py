@@ -990,3 +990,85 @@ async def test_lease_timing_uses_the_production_constants() -> None:
     clock.now = sent_at + 40.0
     with pytest.raises(sse._LeaseLost):
         await sse._renew_lease(lease, clock)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_acquire_retries_once_after_a_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale pooled connection fails the first command; the retry succeeds.
+
+    Args:
+        monkeypatch: Installs a Redis fake whose first eval raises.
+
+    Raises:
+        OSError: Asserted when the retry also fails.
+    """
+    from django_graphex.subscriptions.transports._sse_lease import _acquire
+
+    redis = _install_fake_redis(monkeypatch)
+    real_eval = redis.eval
+    attempts: list[int] = []
+
+    def flaky(script: str, key_count: int, key: str, *args: Any) -> int:
+        """Fail the very first command only.
+
+        Args:
+            script: Atomic Lua operation.
+            key_count: Number of keys.
+            key: Principal key.
+            *args: Operation arguments.
+
+        Returns:
+            The fake backend's result.
+
+        Raises:
+            ConnectionError: On the first command.
+        """
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionError("stale connection")
+        return real_eval(script, key_count, key, *args)
+
+    redis.eval = flaky  # type: ignore[method-assign]
+    lease = await _acquire(_User(), "redis://stale/0", 1)
+    assert lease is not None
+    assert sum(map(len, redis.slots.values())) == 1
+    await lease.close()
+    assert not redis.slots
+
+    redis.fail = True
+    with pytest.raises(OSError, match="backend unavailable"):
+        await _acquire(_User(), "redis://stale/0", 1)
+
+
+def test_shared_client_is_configured_for_long_lived_pools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shared client pings idle connections and keeps sockets alive.
+
+    Args:
+        monkeypatch: Captures the options passed to "from_url".
+    """
+    from django_graphex.subscriptions.transports._sse_lease import _shared_client
+
+    options: dict[str, Any] = {}
+
+    class _Redis:
+        @staticmethod
+        def from_url(url: str, **kwargs: Any) -> object:
+            """Capture the construction options.
+
+            Args:
+                url: Ignored.
+                **kwargs: The client options.
+
+            Returns:
+                A placeholder client.
+            """
+            options.update(kwargs)
+            return object()
+
+    _shared_client(_Redis, "redis://options/0")
+    assert options["health_check_interval"] > 0
+    assert options["socket_keepalive"] is True

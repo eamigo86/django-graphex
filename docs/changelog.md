@@ -368,6 +368,11 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   first renewal waited the full 15 seconds instead of the documented five
   before the next attempt.
 
+- Harden the shared SSE lease Redis client. It now pings idle pooled
+  connections (`health_check_interval`) and enables TCP keepalive, and lease
+  admission retries once, with a fresh token, after a connection error so a
+  stale pooled connection no longer answers the first stream with HTTP 503.
+
 - Answer variables too deep to coerce with HTTP 400 `QUERY_TOO_DEEP`. Roughly
   600 nested `and`/`or` levels in variables raised a `RecursionError` during
   coercion, answered as 400 `INTERNAL_SERVER_ERROR` with an ERROR traceback in
