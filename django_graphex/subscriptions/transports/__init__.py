@@ -146,6 +146,8 @@ async def _start_source_event_stream(
             " if an unparsed JSON string was provided."
         )
 
+    # "Executor" exists in every supported graphql-core (>=3.3.0, <3.4), so the
+    # fallback branch is reachable only on an unsupported runtime.
     executor_class = getattr(graphql_execution, "Executor", None)
     if executor_class is None:
         result = source_factory(
@@ -163,7 +165,22 @@ async def _start_source_event_stream(
         }
         if _EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS:
             options["hide_suggestions"] = hide_suggestions
-        executor = executor_class.build(schema, document, **options)
+        try:
+            executor = executor_class.build(schema, document, **options)
+        except RecursionError:
+            # Only variable coercion runs here, before any resolver: a bare
+            # RecursionError is the client's over-deep value, answered like the
+            # HTTP view. A resolver's own RecursionError is raised later, by
+            # "source_factory", and stays an internal error.
+            return ExecutionResult(
+                data=None,
+                errors=[
+                    GraphQLError(
+                        "Variables are nested too deeply to be coerced.",
+                        extensions={"code": "QUERY_TOO_DEEP"},
+                    )
+                ],
+            )
         if isinstance(executor, list):
             return ExecutionResult(data=None, errors=executor)
         result = source_factory(executor)

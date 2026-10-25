@@ -136,8 +136,9 @@ Syntax, validation, and variable-coercion errors remain HTTP 400 without a
 `data` member. A server fault outside field execution (for example a failing
 `get_root_value` hook) is masked as above and answers HTTP 500 instead of 400.
 Variables nested so deeply that coercing them exhausts the stack answer HTTP 400
-`QUERY_TOO_DEEP` without an ERROR log; a `RecursionError` raised by a resolver is
-still masked and logged. A `query` that is not a string, or `variables` that are not a JSON object, answer
+`QUERY_TOO_DEEP` without an ERROR log, and the SSE and WebSocket subscription
+transports frame the same error ("Variables are nested too deeply to be
+coerced."); a `RecursionError` raised by a resolver is still masked and logged. A `query` that is not a string, or `variables` that are not a JSON object, answer
 HTTP 400 (`Must provide query string.` / `Variables must be a JSON object.`)
 without an ERROR log. An HTTP 200 response containing errors is not cached; a
 repeated request runs again. Clients must inspect `errors`, not only status.

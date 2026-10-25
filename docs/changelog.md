@@ -389,6 +389,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Answer variables too deep to coerce over subscriptions with `QUERY_TOO_DEEP`.
+  The transports build the executor, which coerces the variables, outside any
+  guard, so SSE let a bare `RecursionError` escape and WebSocket sent its raw
+  message with no code. Both now frame the same coded error as HTTP ("Variables
+  are nested too deeply to be coerced."), unlogged and without an `errorId`; a
+  `RecursionError` raised by a subscribe resolver is unchanged.
 - Keep the per-execution directive budget and optimizer work state alive as long
   as their execution. They were found in a 1024-entry LRU keyed by variable and
   root identity, so a still-running (for example async) execution lost its

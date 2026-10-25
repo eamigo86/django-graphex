@@ -321,7 +321,9 @@ fragments (with the default recursion limit). The view answers those documents
 with an HTTP 400 and `extensions.code` `QUERY_TOO_DEEP` ("Query is nested too
 deeply to be parsed/validated") instead of an HTTP 500, whether or not
 `MAX_QUERY_DEPTH` is set. Only parsing and validation are guarded this way;
-`RecursionError` raised by a resolver is still a server error.
+`RecursionError` raised by a resolver is still a server error. Variables nested
+too deeply to coerce get the same code ("Variables are nested too deeply to be
+coerced.") over HTTP, SSE and WebSocket.
 
 ### Cyclic fragments and direct callers
 
