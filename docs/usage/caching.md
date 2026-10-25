@@ -49,7 +49,7 @@ _graphql_v2_{scope}_{version_identity}_{version}_{identity}_{body_hash}
 | `{version_identity}` | selected counter namespace | `global` by default; the identity/bucket namespace in legacy mode |
 | `{version}` | current counter value | Makes older responses unreachable after invalidation |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
-| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of the tagged, length-framed raw request body and `query`, `variables`, `operationName` GET parameters | Distinguishes request components without ambiguous concatenation |
+| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of the tagged, length-framed raw request body and `query`, `variables`, `operationName` GET parameters, plus the `pretty` flag when set | Distinguishes request components without ambiguous concatenation |
 
 The raw body contributes to the key even for an unusual GET request carrying
 one: identical GET parameters with different body bytes produce different

@@ -213,3 +213,19 @@ def test_custom_fetch_cache_key_override_remains_in_dispatch() -> None:
             assert response.status_code == 200
             assert json.loads(response.content)["data"] == {"alpha": "ok"}
     assert calls == ["{ alpha }", "{ alpha }"]
+
+
+def test_pretty_parameter_is_part_of_the_cache_key() -> None:
+    """A pretty-printed response is never served to a compact request.
+
+    "json_encode" formats the body by the GET "pretty" parameter, so the cached
+    body differs by it. An empty value is compact and shares the plain key.
+    """
+    factory = RequestFactory()
+    url = "/graphql/?query=%7B%20alpha%20%7D"
+    plain = factory.get(url)
+    pretty = factory.get(url + "&pretty=1")
+    empty = factory.get(url + "&pretty=")
+
+    assert GraphQLView.fetch_cache_key(plain) != GraphQLView.fetch_cache_key(pretty)
+    assert GraphQLView.fetch_cache_key(plain) == GraphQLView.fetch_cache_key(empty)

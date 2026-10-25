@@ -1259,6 +1259,50 @@ class BaseGraphQLView(View):
     def _enforce_request_body_size(self, request: Any) -> None:
         """Reject an oversized POST before parsing or accessing document caches.
 
+        Body-size guard: when "MAX_REQUEST_BODY_SIZE" is configured (not None)
+        and the request body length exceeds the limit, the request is rejected
+        with HTTP 413 (Content Too Large) BEFORE the JSON body is parsed or the
+        CSRF check can read it. This is the primary memory-safety cap for base64
+        file uploads: the entire base64 payload sits in the JSON body, so
+        rejecting before "parse_body" prevents it from ever being allocated. The
+        per-field decoded-size pre-check in "decode_base64_file" is a secondary
+        guard.
+
+        The guard uses a two-stage strategy:
+
+        1. Fast-reject (O(1)): if "Content-Length" is present AND already exceeds
+           "MAX_REQUEST_BODY_SIZE", reject immediately without reading the body —
+           avoids buffering an honest large upload.
+        2. Authoritative check: measure the body itself, regardless of the
+           "Content-Length" header. This prevents a client from spoofing a low
+           "Content-Length" to bypass the guard.
+
+        Stage 2 measures the body two different ways, because the two request
+        classes offer two different things:
+
+        * Every content type EXCEPT "multipart/form-data" is measured by reading
+          it, "len(request.body)". The body has to be in memory to be parsed
+          anyway, so the read costs nothing extra.
+        * "multipart/form-data" is measured WITHOUT reading it, by seeking
+          "request._stream" to its end and straight back. Reading it would drag
+          a streamed upload under Django's "DATA_UPLOAD_MAX_MEMORY_SIZE". A seek
+          allocates nothing and the parser still receives a pristine stream.
+          This is the same measurement Django's own "HttpRequest.body" performs
+          on a seekable stream, done one level up so it can answer 413 instead
+          of 400.
+
+        A multipart stream that is not seekable is a WSGI "LimitedStream", which
+        is already capped at "CONTENT_LENGTH": an under-declared length truncates
+        the body it is lying about rather than smuggling it past stage 1. The one
+        thing that cap cannot express is an ABSENT length, which "WSGIRequest"
+        turns into a limit of zero, so such a request is refused with HTTP 411 —
+        a clearer answer than the empty-payload 400 Django would otherwise give.
+
+        None of this bounds RECEPTION under ASGI: the handler spools the whole
+        body before this view exists, so the bytes are already on disk by the
+        time the seek measures them. Bounding what arrives is the ASGI server's
+        job, not this setting's.
+
         Args:
             request: The incoming HTTP request.
 
@@ -1319,26 +1363,21 @@ class BaseGraphQLView(View):
             # cap mean something, and it must therefore run for every content
             # type — multipart included, which is where the bypass lived.
             if content_type == "multipart/form-data":
-                # Measure the stream instead of reading it. Reading
-                # request.body here would be WRONG: "dispatch" carries
-                # @ensure_csrf_cookie, whose process_view runs the full CSRF
-                # token check whenever a csrftoken cookie is present, and
-                # that check reads request.POST. For multipart that drains
-                # the stream before we get here, so request.body raises
-                # RawPostDataException (HTTP 500) — and this endpoint plants
-                # the cookie on every response, so only a client's FIRST
-                # multipart POST ever survived. Reading also drags multipart
-                # under DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default),
-                # which streaming multipart otherwise escapes, and doubles
-                # peak memory for an upload that would have gone to disk.
+                # Measure the stream instead of reading it. This guard runs
+                # before "@ensure_csrf_cookie" (see "dispatch"), so the stream
+                # is still pristine here and must stay that way for the parser.
+                # Reading request.body would drag multipart under
+                # DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default), which
+                # streaming multipart otherwise escapes, and double the peak
+                # memory of an upload that would have gone to disk.
                 #
                 # A seek costs none of that. Under ASGI "_stream" is the
                 # SpooledTemporaryFile "ASGIHandler.read_body" already
                 # filled, so its true size is one seek away: nothing is
                 # allocated, "_read_started" is never set, and the parser
                 # still sees a pristine stream. The position is saved and
-                # restored rather than assumed to be zero, because the CSRF
-                # check above may already have consumed it.
+                # restored rather than assumed to be zero, because a caller
+                # (a test client, a wrapping middleware) may have advanced it.
                 stream = getattr(request, "_stream", None)
                 measured_length = None
                 if stream is not None and stream.seekable():
@@ -1466,50 +1505,9 @@ class BaseGraphQLView(View):
         The cross-site POST guard runs BEFORE this method, in "as_view" — see
         "csrf_header_guard" for why it cannot live here.
 
-        Body-size guard: when "MAX_REQUEST_BODY_SIZE" is configured (not None)
-        and the request body length exceeds the limit, the request is rejected
-        with HTTP 413 (Content Too Large) BEFORE the JSON body is parsed. This is
-        the primary memory-safety cap for base64 file uploads: the entire base64
-        payload sits in the JSON body, so rejecting before "parse_body" prevents
-        it from ever being allocated. The per-field decoded-size pre-check in
-        "decode_base64_file" is a secondary guard.
-
-        The guard uses a two-stage strategy:
-
-        1. Fast-reject (O(1)): if "Content-Length" is present AND already exceeds
-           "MAX_REQUEST_BODY_SIZE", reject immediately without reading the body —
-           avoids buffering an honest large upload.
-        2. Authoritative check: measure the body itself, regardless of the
-           "Content-Length" header. This prevents a client from spoofing a low
-           "Content-Length" to bypass the guard.
-
-        Stage 2 measures the body two different ways, because the two request
-        classes offer two different things:
-
-        * Every content type EXCEPT "multipart/form-data" is measured by reading
-          it, "len(request.body)". The body has to be in memory to be parsed
-          anyway, so the read costs nothing extra.
-        * "multipart/form-data" is measured WITHOUT reading it, by seeking
-          "request._stream" to its end and straight back. Reading it would break
-          the request (the CSRF check "@ensure_csrf_cookie" performs has already
-          drained the stream through "request.POST" whenever the client holds a
-          "csrftoken" cookie) and would drag a streamed upload under Django's
-          "DATA_UPLOAD_MAX_MEMORY_SIZE". A seek does neither: nothing is
-          allocated and the parser still receives a pristine stream. This is the
-          same measurement Django's own "HttpRequest.body" performs on a seekable
-          stream, done one level up so it can answer 413 instead of 400.
-
-        A multipart stream that is not seekable is a WSGI "LimitedStream", which
-        is already capped at "CONTENT_LENGTH": an under-declared length truncates
-        the body it is lying about rather than smuggling it past stage 1. The one
-        thing that cap cannot express is an ABSENT length, which "WSGIRequest"
-        turns into a limit of zero, so such a request is refused with HTTP 411 —
-        a clearer answer than the empty-payload 400 Django would otherwise give.
-
-        None of this bounds RECEPTION under ASGI: the handler spools the whole
-        body before this view exists, so the bytes are already on disk by the
-        time the seek measures them. Bounding what arrives is the ASGI server's
-        job, not this setting's.
+        The body-size cap ("MAX_REQUEST_BODY_SIZE") has already been enforced by
+        "dispatch" through "_enforce_request_body_size", so an oversized body
+        never reaches this method, the CSRF check or the parser.
 
         Args:
             request: The incoming HTTP request.
@@ -1524,8 +1522,7 @@ class BaseGraphQLView(View):
             status.
 
         Raises:
-            HttpError: When the method is unsupported, the body exceeds
-                "MAX_REQUEST_BODY_SIZE", a multipart file exceeds
+            HttpError: When the method is unsupported, a multipart file exceeds
                 "MAX_UPLOAD_SIZE", or a batch endpoint receives a body that
                 is not a list (any content type); caught internally and
                 serialized into the GraphQL error envelope before the response is
@@ -2306,10 +2303,11 @@ class GraphQLView(BaseGraphQLView):
         """Return a SHA-256 cache key from framed body and GET components.
 
         The raw body of every request, including GET requests, and the query,
-        variables, and operationName parameters are tagged and length-framed
-        before hashing. Framing prevents adjacent components from collapsing
-        into one cache slot. Missing and empty GET parameters still contribute
-        the same empty value.
+        variables, operationName, and pretty parameters are tagged and
+        length-framed before hashing. Framing prevents adjacent components from
+        collapsing into one cache slot. Missing and empty GET parameters still
+        contribute the same empty value. A truthy "pretty" parameter adds a fifth
+        tagged part because "json_encode" formats the cached body by it.
 
         Subclasses may override this staticmethod to derive the body hash
         differently (e.g. normalising whitespace or extracting the operation
@@ -2329,12 +2327,17 @@ class GraphQLView(BaseGraphQLView):
         get_query = request.GET.get("query") or ""
         get_variables = request.GET.get("variables") or ""
         get_operation = request.GET.get("operationName") or ""
-        for tag, value in (
+        parts = [
             (b"body", request.body),
             (b"query", get_query.encode("utf-8")),
             (b"variables", get_variables.encode("utf-8")),
             (b"operationName", get_operation.encode("utf-8")),
-        ):
+        ]
+        if request.GET.get("pretty"):
+            # Only a pretty request is framed with this part, so every compact
+            # request keeps the digest it always had.
+            parts.append((b"pretty", b"1"))
+        for tag, value in parts:
             m.update(tag)
             m.update(len(value).to_bytes(8, "big"))
             m.update(value)

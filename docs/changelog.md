@@ -361,6 +361,12 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Include the GET `pretty` parameter in the default response-cache key. The view
+  pretty-prints the body when `?pretty=` is set, but the key ignored it, so a
+  pretty-printed cached response could be served to a compact request (and the
+  reverse). Compact requests keep their previous key. Also refresh the stale
+  comments around the request-body cap now that it runs before the CSRF check.
+
 - Validate the type of the newer limits. `DOCUMENT_CACHE_MAX_QUERY_LENGTH` and
   `OPTIMIZER_WORK_BUDGET` only had a range check, so `"65536"` raised a
   `TypeError` on every request and `True` silently meant 1. Like
