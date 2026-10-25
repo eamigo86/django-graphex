@@ -900,7 +900,9 @@ further directive uses become field errors. The budget is shared by every item
 of a batch (the GraphQL view binds one counter to the request), restarts for
 each subscription event, and is per execution for anything the view does not run
 (a direct `execute` call, a transport) or a context that cannot carry the
-counter (`None`, `__slots__`). Many aliases and rows each under the
+counter (`None`, an immutable mapping, `__slots__`). A `get_context` that
+returns a dict or another mutable mapping carries the counter under the private
+key `_graphex_request_budget`, so batch items still share it. Many aliases and rows each under the
 per-field cap can no longer produce hundreds of megabytes. Raise either setting
 or set it to `None` if you legitimately transform very large text. The opt-in
 `COST_DIRECTIVE` setting (default `0`) adds cost per custom directive use, so

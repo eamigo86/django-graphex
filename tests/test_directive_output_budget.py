@@ -528,6 +528,120 @@ def test_batch_items_share_one_request_budget() -> None:
     assert any(item.get("errors") for item in answer)
 
 
+def _post_two_items(view_class: Any) -> list[dict[str, Any]]:
+    """POST two identical growing items to a batch view of the given class.
+
+    Args:
+        view_class: GraphQLView or a subclass of it.
+
+    Returns:
+        The decoded JSON answer.
+    """
+    import json
+    from types import ModuleType, SimpleNamespace
+
+    from django.test import Client
+    from django.urls import path
+
+    schema = SimpleNamespace(
+        graphql_schema=GraphQLSchema(
+            query=GraphQLObjectType(
+                "Q", {"text": GraphQLField(GraphQLString, resolve=lambda *_: "x")}
+            ),
+            directives=[*specified_directives, *all_directives],
+        )
+    )
+    urls = ModuleType("budget_two_urls")
+    urls.urlpatterns = [path("g/", view_class.as_view(schema=schema, batch=True))]  # type: ignore[attr-defined]
+    settings_override = {
+        "MAX_DIRECTIVE_OUTPUT_TOTAL": 100,
+        "MAX_BATCH_SIZE": 20,
+        "MIDDLEWARE": ["django_graphex.middleware.GraphQLDirectiveMiddleware"],
+    }
+    body = {"query": "{ text @center(width: 100) }"}
+    with override_settings(DJANGO_GRAPHEX=settings_override, ROOT_URLCONF=urls):
+        response = Client().post(
+            "/g/", data=json.dumps([body, body]), content_type="application/json"
+        )
+    return json.loads(response.content)  # type: ignore[no-any-return]
+
+
+def _dict_context_view() -> Any:
+    """Build a view class whose context is a plain dict.
+
+    Returns:
+        A GraphQLView subclass with a dict get_context.
+    """
+    from django_graphex.views import GraphQLView
+
+    class DictContextView(GraphQLView):
+        """View handing resolvers a dict instead of the request."""
+
+        def get_context(self, request: Any) -> Any:
+            """Return a dict context.
+
+            Args:
+                request: The incoming HTTP request.
+
+            Returns:
+                A new dict holding the request.
+            """
+            return {"request": request}
+
+    return DictContextView
+
+
+@pytest.mark.parametrize("dict_context", [False, True])
+def test_batch_shares_the_budget_for_any_mutable_context(dict_context: bool) -> None:
+    """Two items growing 99 characters each cannot both fit a budget of 100.
+
+    The default request context and a dict context both carry the counter.
+
+    Args:
+        dict_context: Whether the view hands resolvers a dict context.
+    """
+    from django_graphex.views import GraphQLView
+
+    view = _dict_context_view() if dict_context else GraphQLView
+    first, second = _post_two_items(view)
+    assert not first.get("errors")
+    assert "MAX_DIRECTIVE_OUTPUT_TOTAL" in second["errors"][0]["message"]
+
+
+def test_reused_dict_context_gets_a_fresh_budget_per_request() -> None:
+    """The same dict bound for a new request starts from zero again.
+
+    Each request binds a new budget object over the reused dict.
+    """
+    from types import SimpleNamespace
+
+    from django_graphex._execution_state import bind_request_budget, request_budget_of
+
+    context: dict[str, Any] = {}
+    seen = []
+    for _ in range(2):
+        request = SimpleNamespace()
+        bind_request_budget(request, context)
+        budget = request_budget_of(context)
+        assert budget is request_budget_of(request)
+        seen.append(budget)
+    assert seen[0] is not seen[1]
+
+
+def test_immutable_mapping_context_stays_per_execution() -> None:
+    """A mapping that cannot take the counter is not bound.
+
+    The execution then keeps its per-execution budget.
+    """
+    from types import MappingProxyType, SimpleNamespace
+
+    from django_graphex._execution_state import bind_request_budget, request_budget_of
+
+    context = MappingProxyType({})
+    bind_request_budget(SimpleNamespace(), context)
+    assert request_budget_of(context) is None
+
+
 def test_a_single_request_item_is_unchanged() -> None:
     """A batch of one behaves as before: its own budget.
 

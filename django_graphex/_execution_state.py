@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from collections.abc import MutableMapping
 from typing import Any, Callable
 
 from graphql import OperationType
@@ -100,8 +101,9 @@ def request_budget_of(context: Any) -> RequestBudget | None:
     """Return the request budget bound to a context, if any.
 
     The lookup reads the instance "__dict__" directly: "getattr" would trust a
-    context whose "__getattr__" invents values (a mock), and a dict or None has
-    no attributes at all.
+    context whose "__getattr__" invents values (a mock). A mutable mapping (a
+    dict context) carries the budget under the same private key; None has
+    nothing to read.
 
     Args:
         context: The execution context value.
@@ -110,9 +112,12 @@ def request_budget_of(context: Any) -> RequestBudget | None:
         The bound budget, or None.
     """
     try:
-        found = vars(context).get(REQUEST_BUDGET_ATTR)
+        carrier = vars(context)
     except TypeError:
-        return None
+        if not isinstance(context, MutableMapping):
+            return None
+        carrier = context
+    found = carrier.get(REQUEST_BUDGET_ATTR)
     return found if isinstance(found, RequestBudget) else None
 
 
@@ -120,8 +125,9 @@ def bind_request_budget(request: Any, context: Any) -> None:
     """Share one budget across every execution of an HTTP request.
 
     The budget lives on the request; a context that is a different object (a
-    custom "get_context") is bound to the same budget. A context without an
-    instance "__dict__" keeps the per-execution budget.
+    custom "get_context") is bound to the same budget. A mutable mapping
+    carries it under the private key; None, an immutable mapping or a
+    "__slots__" object keeps the per-execution budget.
 
     Args:
         request: The incoming HTTP request.
@@ -130,8 +136,13 @@ def bind_request_budget(request: Any, context: Any) -> None:
     try:
         shared = request_budget_of(request) or RequestBudget()
         vars(request)[REQUEST_BUDGET_ATTR] = shared
-        if context is not request:
+        if context is request:
+            return
+        try:
             vars(context)[REQUEST_BUDGET_ATTR] = shared
+        except TypeError:
+            if isinstance(context, MutableMapping):
+                context[REQUEST_BUDGET_ATTR] = shared
     except TypeError:
         return
 

@@ -64,7 +64,7 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 - Malformed model primary-key ids answer a field error with `extensions.code` `INVALID_ID` instead of `null` ([migration](UPGRADE-4.1.md#distinguish-malformed-ids-from-missing-objects)).
 - Library transformation directives declare only the `FIELD` location, and `@date`, `@number` and `@currency` keep `null` ([migration](UPGRADE-4.1.md#move-transformation-directives-from-fragments-to-fields); [migration](UPGRADE-4.1.md#review-null-values-under-numeric-formatting-directives); [migration](UPGRADE-4.1.md#review-nullable-fields-formatted-with-date)).
 - `@round`, `@floor`, `@ceil` and `@abs` compute exactly on `Decimal` and `BigInt` (`@round` rounds half to even) ([migration](UPGRADE-4.1.md#numeric-directives-on-decimal-and-bigint)).
-- `MAX_DIRECTIVE_OUTPUT_TOTAL` is one budget per HTTP request shared by every batch item; `COST_DIRECTIVE` is validated ([migration](UPGRADE-4.1.md#output-caps-for-directives)).
+- `MAX_DIRECTIVE_OUTPUT_TOTAL` is one budget per HTTP request shared by every batch item, also when `get_context` returns a dict or another mutable mapping; `COST_DIRECTIVE` is validated ([migration](UPGRADE-4.1.md#output-caps-for-directives)).
 - Exact `set[...]`, `dict[str, ...]`, `Union[int, str]`, `Literal` and nested-list input annotations compile to typed GraphQL inputs, which changes the SDL ([migration](UPGRADE-4.1.md#input-annotations)).
 - The enhanced `GraphQLView` answers an execution error through a non-null root field with HTTP 200 and `data: null` instead of HTTP 400 ([migration](UPGRADE-4.1.md#execution-errors-return-http-200)).
 - A `query` that is not a string and `variables` that are not an object (including `[]`) answer a clean HTTP 400; a masked internal error outside field execution answers HTTP 500 ([migration](UPGRADE-4.1.md#malformed-requests-and-server-faults)).
@@ -389,6 +389,10 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Share the directive output budget across a batch when `get_context` returns a
+  dict. `bind_request_budget` swallowed the `TypeError` of a context without an
+  instance `__dict__`, so each item got its own budget; a mutable mapping now
+  carries it under the private key `_graphex_request_budget`.
 - Make the cursor parity matrix independent of the database pk sequence. A decimal
   boundary such as `1e-999` compared as zero on SQLite but exactly in memory, so
   the pages differed whenever row pks were not `1..5`; both paths now refuse a
