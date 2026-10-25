@@ -90,6 +90,10 @@ def test_uploaded_media_is_served_while_debug_is_on(tmp_path: Any) -> None:
             response = Client().get("/media/hello.txt")
             assert response.status_code == 200
             assert b"".join(response.streaming_content) == b"hello media"
+            # Uploads are never rendered: a download, unsniffed and sandboxed.
+            assert response["Content-Disposition"] == "attachment"
+            assert response["X-Content-Type-Options"] == "nosniff"
+            assert response["Content-Security-Policy"] == "sandbox"
     finally:
         importlib.reload(config.urls)
         clear_url_caches()
@@ -155,3 +159,51 @@ def test_a_client_fault_keeps_its_actionable_message(client: Client) -> None:
     assert payload["ok"] is False
     assert payload["error"] != "Upload failed."
     assert "base64" in payload["error"].lower()
+
+
+def test_an_active_content_upload_is_refused_on_the_base64_path(
+    client: Client, tmp_path: Any
+) -> None:
+    """Assert an HTML upload answers "ok: false" and stores nothing.
+
+    Args:
+        client: The Django test client issuing the unauthenticated request.
+        tmp_path: The temporary "MEDIA_ROOT" that must stay empty.
+    """
+    data = base64.b64encode(b"<script>alert(1)</script>").decode()
+    query = (
+        'mutation { uploadDocument(name: "x", file: { filename: "a.html", '
+        f'data: "{data}", contentType: "text/html" }}) {{ ok error }} }}'
+    )
+
+    payload = _graphql(client, query)["data"]["uploadDocument"]
+
+    assert payload["ok"] is False
+    assert "extension" in payload["error"]
+    assert not list(tmp_path.rglob("*.html"))
+
+
+def test_an_active_content_upload_is_refused_on_the_multipart_path(
+    client: Client, tmp_path: Any
+) -> None:
+    """Assert a multipart HTML part is refused by the same allow-list.
+
+    Args:
+        client: The Django test client issuing the unauthenticated request.
+        tmp_path: The temporary "MEDIA_ROOT" that must stay empty.
+    """
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    response = client.post(
+        "/graphql/",
+        data={
+            "query": 'mutation { documentCreate(newDocument: { name: "x" }) '
+            "{ ok errors { field messages } } }",
+            "attachedFile": SimpleUploadedFile("a.html", b"<script></script>"),
+        },
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+    payload = response.json()["data"]["documentCreate"]
+    assert payload["ok"] is False, payload
+    assert not list(tmp_path.rglob("*.html"))

@@ -1320,6 +1320,12 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   development, log upload failures instead of echoing them, and add a `BigInt`
   field. The Playground tests and README commands now work as written.
 
+- Playground example: restrict `Document.attached_file` to an allow-list of inert
+  extensions on both upload paths, serve `MEDIA_URL` as a sandboxed download
+  (`attachment`, `nosniff`, `Content-Security-Policy: sandbox`) instead of
+  inline, and validate `registerUser` usernames with the `User` model's own
+  field rules. The Playground tests write uploads into a temporary `MEDIA_ROOT`.
+
 - Add a local, evidence-bounded disposition of the 100 original audit claims
   in [the 4.0.0 audit report](docs/audit-4.0.0.md). It separates scoped fixes,
   current contracts, recommendations, limited negative checks, and pending

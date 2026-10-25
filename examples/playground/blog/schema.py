@@ -1283,7 +1283,7 @@ class RegisterUser(Mutation):
         info: GraphQLResolveInfo,
         **kwargs: Any,
     ) -> "RegisterUser":
-        """Validate the password, hash it and return the safe user projection.
+        """Validate the username and password, hash it and return the safe user projection.
 
         Args:
             root: The parent resolver value, unused for this root mutation.
@@ -1292,11 +1292,19 @@ class RegisterUser(Mutation):
 
         Returns:
             registration: A successful payload containing the created user, or
-                "ok=False" with the password-policy messages, or with a
+                "ok=False" with the username or password-policy messages, or with a
                 generic message when the username is already taken.
         """
         model = get_user_model()
-        username = kwargs["username"]
+        try:
+            # The same normalisation and field rules the admin applies: the
+            # unicode-username validator (no spaces or NUL bytes), max_length
+            # and "blank". Uniqueness is left to the INSERT below.
+            username = model._meta.get_field("username").clean(
+                model.normalize_username(kwargs["username"]), None
+            )
+        except ValidationError as exc:
+            return cls(ok=False, user=None, error=" ".join(exc.messages))
         try:
             # The candidate instance lets UserAttributeSimilarityValidator
             # compare the password with the requested username.
@@ -1489,11 +1497,15 @@ class UploadDocument(Mutation):
             # The global MAX_UPLOAD_SIZE from settings also applies when
             # max_size is not passed — both are checked.
             uploaded = upload_input.to_uploaded_file()  # uses MAX_UPLOAD_SIZE
+            # The same allow-list "documentCreate" applies to a multipart part.
+            Document._meta.get_field("attached_file").run_validators(uploaded)
             doc = Document(name=name)
             doc.attached_file.save(uploaded.name, uploaded, save=True)
             # Pass every payload field explicitly (incl. error=None): native does
             # not auto-default unset payload fields.
             return cls(ok=True, name=doc.name, document=doc, error=None)
+        except ValidationError as exc:
+            return cls(ok=False, name=name, document=None, error=exc.messages[0])
         except GraphQLError as exc:
             # The library's own validation (bad base64, over the size cap) is
             # written for the caller and safe to show.

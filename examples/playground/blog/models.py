@@ -13,6 +13,7 @@ change is needed — only a migration ("make migrate" / "make reset").
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
+from django.core.validators import FileExtensionValidator
 from django.db import models
 
 
@@ -237,6 +238,9 @@ class Attachment(models.Model):
 # attribute, and a one-word name spells those identically, so it can never     #
 # show the reader that both work.                                              #
 # --------------------------------------------------------------------------- #
+ALLOWED_UPLOAD_EXTENSIONS = ["txt", "pdf", "png", "jpg", "jpeg", "gif"]
+
+
 class Document(models.Model):
     """A simple document with a file attachment — demos both upload paths.
 
@@ -255,7 +259,14 @@ class Document(models.Model):
     """
 
     name = models.CharField(max_length=200)
-    attached_file = models.FileField(upload_to="documents/", blank=True)
+    # An allow-list, not a block-list: uploads are open to anonymous callers, so
+    # only inert document and image types are accepted (no .html / .svg, which a
+    # browser would run). Both upload paths apply it.
+    attached_file = models.FileField(
+        upload_to="documents/",
+        blank=True,
+        validators=[FileExtensionValidator(ALLOWED_UPLOAD_EXTENSIONS)],
+    )
     created = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

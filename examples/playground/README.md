@@ -498,7 +498,9 @@ mutation {
 The password goes through Django's `AUTH_PASSWORD_VALIDATORS` (set in
 `config/settings.py`) before the account exists, so `password: "x"` answers
 `ok: false` with the validator messages ("This password is too short…") and
-creates nothing. A **taken username** answers `ok: false` with the generic
+creates nothing. The username goes through the `User` model's own field rules
+first (no spaces or NUL bytes, at most 150 characters, not blank, NFKC-normalised
+like the admin), and a refusal is `ok: false` with Django's message. A **taken username** answers `ok: false` with the generic
 `Registration failed. Try different details.`, never the raw database error. That
 removes the table name and the verbatim "already exists" text, but a public
 sign-up still lets someone who tries a strong password tell a free name from a
@@ -908,6 +910,19 @@ Three things that request teaches, each of which the suite pins:
 The same column also accepts a **base64** upload inside the JSON body
 (`uploadDocument`, v1.3.0), which is the path GraphiQL can drive. One column,
 two ways in — compare them side by side in `blog/schema.py`.
+
+**Uploads are open to anonymous callers, so the column is an allow-list.**
+`Document.attached_file` accepts only `.txt`, `.pdf`, `.png`, `.jpg`, `.jpeg`
+and `.gif` (`FileExtensionValidator`, applied by both paths); anything else —
+an `.html` or `.svg` page, say — answers `ok: false` and stores nothing. While
+`DEBUG` is on, `config/urls.py` serves `MEDIA_URL` through a small view that
+adds `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: sandbox`, so even an allowed file is a download and
+never a page on the same origin as `/admin`. **In production, never serve user
+uploads from your application's origin:** put them on a separate domain or CDN
+(object storage) with the same headers, and add antivirus and size limits as the
+data requires. The tests write into a temporary `MEDIA_ROOT`, so a run leaves no
+files behind.
 
 ---
 

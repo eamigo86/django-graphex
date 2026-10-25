@@ -119,3 +119,41 @@ def test_a_valid_registration_still_succeeds(
     assert payload["user"] == {"username": "good-reader"}
     user = django_user_model.objects.get(username="good-reader")
     assert user.check_password("correct-horse-battery-staple")
+
+
+@pytest.mark.parametrize(
+    "username",
+    ["has space", "trailing ", "x" * 151, "nul\x00byte", "", "semi;colon"],
+)
+def test_an_invalid_username_is_refused_with_a_clean_message(
+    client: Client, django_user_model: type[AbstractBaseUser], username: str
+) -> None:
+    """Assert the User model's username rules run before anything is saved.
+
+    Args:
+        client: The Django test client issuing the request.
+        django_user_model: The active user model, used to check nothing was created.
+        username: A username the model's field must refuse.
+    """
+    payload = _register(client, username, "a-long-unrelated-passphrase-9")
+
+    assert payload["ok"] is False
+    assert payload["user"] is None
+    assert payload["error"]
+    assert "must be set" not in payload["error"]
+    assert not django_user_model.objects.exists()
+
+
+def test_a_valid_username_is_normalised_like_django_does(
+    client: Client, django_user_model: type[AbstractBaseUser]
+) -> None:
+    """Assert a username is stored in its NFKC-normalised form.
+
+    Args:
+        client: The Django test client issuing the request.
+        django_user_model: The active user model, used to read the stored name.
+    """
+    payload = _register(client, "ｒｅａｄｅｒ", "a-long-unrelated-passphrase-9")
+
+    assert payload["ok"] is True, payload
+    assert django_user_model.objects.get().username == "reader"
