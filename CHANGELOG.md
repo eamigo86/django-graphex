@@ -349,6 +349,13 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Keep coercion-time server faults internal. A scalar that raised any exception
+  while coercing variables or literals (a database outage inside an id-lookup
+  scalar, say) was answered as a silent client error with no log. Only
+  `GraphQLError`, `ValueError` and `TypeError` (and subclasses) raised before
+  execution are client errors now; any other exception keeps the production
+  mask, the `errorId` and the ERROR log.
+
 - Reject non-finite floats inside every container the JSON encoder emits. The
   `JSON` scalar's finite-number check only looked inside `dict` and `list`, so
   `(1, nan)`, an `OrderedDict` holding `inf`, a namedtuple or a set still

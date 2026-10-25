@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from django.db import OperationalError
 from django.test import RequestFactory, override_settings
 from graphql import (
     GraphQLArgument,
@@ -43,6 +44,16 @@ _DATE = GraphQLScalarType(
     parse_literal=lambda node, variables=None: _parse_date(node.value),
     serialize=str,
 )
+
+
+def _lookup(value: Any) -> Any:
+    """Fail like an id-lookup scalar whose database is down."""
+    raise OperationalError(f"connection to {_SECRET} refused")
+
+
+_DB_SCALAR = GraphQLScalarType(
+    "DbId", parse_value=_lookup, parse_literal=lambda node, variables=None: _lookup(1)
+)
 _FILTER = GraphQLInputObjectType("DateFilter", {"on": GraphQLInputField(_DATE)})
 _QUERY = GraphQLObjectType(
     "Query",
@@ -53,6 +64,7 @@ _QUERY = GraphQLObjectType(
                 "on": GraphQLArgument(_DATE),
                 "many": GraphQLArgument(GraphQLList(_DATE)),
                 "f": GraphQLArgument(_FILTER),
+                "db": GraphQLArgument(_DB_SCALAR),
             },
             resolve=lambda root, info, **kw: "ok",
         ),
@@ -161,5 +173,40 @@ def test_execution_time_value_error_is_still_masked_and_logged(
     assert response.status_code == 200
     assert error["message"] == "An internal error occurred."
     assert error["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
+    assert _SECRET not in response.content.decode()
+    assert [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
+@pytest.mark.parametrize("view_class", (BaseGraphQLView, GraphQLView))
+@pytest.mark.parametrize(
+    "body",
+    (
+        {"query": "query($v: DbId) { d(db: $v) }", "variables": {"v": "1"}},
+        {"query": "{ d(db: 1) }"},
+    ),
+)
+@override_settings(DEBUG=False)
+def test_non_input_exception_in_coercion_is_masked_and_logged(
+    view_class: type[BaseGraphQLView],
+    body: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A scalar raising a database error is an internal error, not a client one.
+
+    Only ValueError, TypeError and GraphQLError mean "invalid input"; anything
+    else raised while coercing is a server fault and must keep the mask, the
+    error id and the ERROR log.
+
+    Args:
+        view_class: The view under test.
+        body: The request body.
+        caplog: The log capture fixture.
+    """
+    caplog.set_level(logging.DEBUG, logger="django_graphex.internal_errors")
+    response = _post(view_class, body)
+    (error,) = json.loads(response.content)["errors"]
+
+    assert error["extensions"]["code"] == "DATA_ACCESS_ERROR"
+    assert "errorId" in error["extensions"]
     assert _SECRET not in response.content.decode()
     assert [r for r in caplog.records if r.levelno == logging.ERROR]

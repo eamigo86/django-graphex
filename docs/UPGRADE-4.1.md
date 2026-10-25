@@ -920,7 +920,10 @@ or `TypeError`) while parsing, validating or coercing variables are classified
 as validation errors in production: graphql-core's message is kept without the
 raw exception text (unless `DEBUG`), the response is a client error, and there is
 no ERROR log. Before, they answered HTTP 400 with `INTERNAL_SERVER_ERROR` and
-logged a traceback. Errors raised during execution keep their masking and log.
+logged a traceback. Errors raised during execution keep their masking and log,
+and so does any other exception type a scalar raises while coercing (for
+example a database error): only `ValueError`, `TypeError` and `GraphQLError`
+mean invalid input.
 With `DEBUG=False`, unexpected resolver exceptions on the built-in HTTP views
 answer with `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR` and an opaque
 `errorId` correlated with server logs; clients must not rely on raw exception

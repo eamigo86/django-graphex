@@ -2036,9 +2036,14 @@ class BaseGraphQLView(View):
         cause = _internal_error_cause(error)
         if cause is None:
             return formatted
-        if getattr(error, _CLIENT_ERROR_ATTR, False):
+        if getattr(error, _CLIENT_ERROR_ATTR, False) and isinstance(
+            cause, (ValueError, TypeError)
+        ):
             # Invalid client input (parse, validate, variable coercion): keep the
-            # validation contract, but never echo the raw exception text.
+            # validation contract, but never echo the raw exception text. Only
+            # ValueError and TypeError mean "invalid input"; any other exception a
+            # scalar raises (a database outage, say) is a server fault and falls
+            # through to the internal-error mask below.
             formatted["message"] = _scrub_cause_text(formatted["message"], cause)
             return formatted
 
