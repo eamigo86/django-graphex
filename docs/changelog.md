@@ -1330,13 +1330,18 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   validators in `registerUser` and answer a duplicate username generically;
   suggest a measured `MAX_QUERY_COST` (10,000,000, not 200); serve media in
   development, log upload failures instead of echoing them, and add a `BigInt`
-  field. The Playground tests and README commands now work as written.
+  field. Several Playground README commands and examples were corrected in
+  follow-up entries below.
 
 - Playground example: restrict `Document.attached_file` to an allow-list of inert
   extensions on both upload paths, serve `MEDIA_URL` as a sandboxed download
   (`attachment`, `nosniff`, `Content-Security-Policy: sandbox`) instead of
   inline, and validate `registerUser` usernames with the `User` model's own
   field rules. The Playground tests write uploads into a temporary `MEDIA_ROOT`.
+  The README `BigInt` and `Decimal` examples now return the values they quote
+  (a test pins them), the `wscat` command sends the required `Origin`, the
+  `registerUser` accounts are documented as unable to log in, and the seed
+  summary no longer claims multiple pages for a small dataset.
 
 - Add a local, evidence-bounded disposition of the 100 original audit claims
   in [the 4.0.0 audit report](audit-4.0.0.md). It separates scoped fixes,

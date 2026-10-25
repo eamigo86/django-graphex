@@ -134,12 +134,34 @@ uv run python manage.py seed --scale 2                 # doubles authors + posts
 ### Authenticating (private fields)
 
 Auth is **Django session-based**. Private fields (`me`, `myNotes`, the note
-mutations, `noteSubscription`) require a logged-in user:
+and comment writes, `noteSubscription`) and the private mutations `postUpdate`,
+`postDelete` and `documentUpdate` require a logged-in user. Exactly these
+writes are deliberately open to anonymous callers, so you can compare a gated
+write with an ungated one:
+
+| Open mutation | Why it is open |
+|---|---|
+| `postCreate` | Drives the public `postSubscription` demo without a session |
+| `postWithCommentsCreate` (no `comments`) | Behaves like `postCreate`; with comments the child's `IsOwnerOrReadOnly` gate applies |
+| `createCategory` | Hand-written mutation demo (duplicate names return `ok: false`) |
+| `documentCreate` | The multipart `curl` demo needs no session |
+| `uploadDocument` | The base64 upload demo |
+| `registerUser` | Account registration is public by nature |
+
+The destructive or modifying siblings are mounted under `PrivateMutation`
+(`private_mutation=` on `DjangoGraphQLSchema`), so an anonymous call answers
+`Authentication required.`. To log in:
 
 1. Open <http://127.0.0.1:8000/admin/> and log in as `demo` / `demo12345`.
 2. Return to GraphiQL — it shares the session cookie.
 
-Log out of `/admin` to test the anonymous (public) behaviour again.
+Log out of `/admin` to test the anonymous (public) behaviour again. An account
+made with `registerUser` is not staff and cannot log in anywhere here: the
+admin login accepts staff only and the playground ships no other login view.
+
+The ids in the examples (`id: 1`, `author: 1`) assume a fresh database from
+`make reset`; re-running `make seed` on existing rows creates new ids, so look
+one up first.
 
 !!! tip "Anonymous users see fewer posts — on purpose"
     `PostType.get_queryset` scopes the base queryset per request: anonymous
@@ -371,6 +393,13 @@ curl -s http://127.0.0.1:8000/graphql/ \
 {"data":{"documentCreate":{"ok":true,"document":{"id":"1","name":"Notes","attachedFile":"documents/notes.txt"}}}}
 ```
 
+The file column is an allow-list (`.txt`, `.pdf`, `.png`, `.jpg`, `.jpeg`,
+`.gif`), applied by both upload paths: an `.html` or `.svg` upload answers
+`ok: false`. While `DEBUG` is on, uploaded files are served as downloads
+(`Content-Disposition: attachment`, `nosniff`, `Content-Security-Policy:
+sandbox`); in production serve user uploads from a separate domain or CDN, never
+from the application's own origin.
+
 Three variations worth running, because each one teaches a rule:
 
 | Change | What happens |
@@ -378,6 +407,25 @@ Three variations worth running, because each one teaches a rule:
 | rename the part to `attached_file` | same landing column — the part name is matched against **both** the camelCase alias the SDL publishes and the model attribute. The stored path picks up a uniqueness suffix (`documents/notes_ciyKdvA.txt`) only because the first upload already took `documents/notes.txt` |
 | misspell the part (`attachedFyle`) | `ok: true` with `attachedFile: ""` — a part matching no exposed input field is ignored, so a typo looks exactly like success |
 | drop `-H 'X-Requested-With: …'` | **HTTP 403**, `This content type requires the X-Requested-With header. …`, before the body is read |
+
+## `BigInt` and `Decimal` over the wire
+
+Both scalars travel as strings, so a value past 2**53 or a money amount never
+passes through a JSON float. Log in first (the `BigInt` post is a seeded draft)
+and run:
+
+```graphql
+{ postsFlat(ordering: "-viewCount", limit: 1) { id viewCount } }
+```
+
+It answers `"9007199254740993"`. The `Decimal` side needs no login:
+
+```graphql
+{ attachments { results { target { ... on AccountType { balance } } } } }
+```
+
+answers `balance: "1200.50"` for the first account. A test pins both documents
+against the project `README.md`.
 
 ## Two settings that ship on, and are invisible until they bite
 
@@ -458,7 +506,7 @@ More things to try:
 The playground ships genuine end-to-end tests that drive the same consumer,
 SSE view and schema the server runs — a WS round-trip (subscribe → ORM
 `Post.objects.create()` → `next` frame received) and the equivalent SSE
-round-trip, the multipart upload in all four spellings, the projection boundary
+round-trip, the multipart upload with both spellings of the part name, the projection boundary
 on every axis it can reach, both arms of the relation hatch, and the two
 settings that ship on:
 

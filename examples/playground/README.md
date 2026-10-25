@@ -325,8 +325,8 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | SSE heartbeat (`SSE_HEARTBEAT_ENABLED`) | not demonstrated | Commented, off by default in `config/settings.py`; needs no Redis, so you can uncomment it. Not exercised by the suite |
 | SSE connection lease (`SSE_CONNECTION_LIMIT_ENABLED`, per-account cap) | not demonstrated | Commented in `config/settings.py`; it needs a shared Redis URL, which a local playground does not run. See the [subscription guide](../../docs/usage/subscriptions.md#sse-connection-controls) for lease expiry and failover limits |
 | WS `on_connect` credential hook | not demonstrated | `AppWSConsumer` uses the default session auth; the hook needs a project-specific token verifier. See [Optional connection authentication](../../docs/usage/subscriptions.md#optional-connection-authentication) |
-| `BigInt` scalar (4.1) | ✅ | `models.py` — `Post.view_count` (`BigIntegerField`); the seed gives the first post `2**53 + 1`, so `{ posts { results { viewCount } } }` answers it as a string (`"9007199254740993"`) and `viewCount: "…"` is the matching input |
-| `Decimal` scalar (4.1) | ✅ | `Account.balance` / `Invoice.amount` (`DecimalField`) serialize as strings: the typed union query answers `balance: "1250.50"`, not a float |
+| `BigInt` scalar (4.1) | ✅ | `models.py` — `Post.view_count` (`BigIntegerField`); the seed gives the first post `2**53 + 1` and leaves it a **draft**, so log in first (anonymous callers never see drafts) and run `{ postsFlat(ordering: "-viewCount", limit: 1) { id viewCount } }`: it answers the string `"9007199254740993"`, and `viewCount: "…"` is the matching input |
+| `Decimal` scalar (4.1) | ✅ | `Account.balance` / `Invoice.amount` (`DecimalField`) serialize as strings: `{ attachments { results { target { ... on AccountType { balance } } } } }` answers `balance: "1200.50"`, not a float |
 
 ---
 
@@ -478,6 +478,12 @@ serves them.
 
 ## Example GraphQL operations
 
+> **Ids in the examples assume a fresh database** (`make reset`, which drops the
+> database, migrates and seeds). `make seed` on a database that already has rows
+> deletes and recreates them, and SQLite keeps counting, so the new ids no longer
+> start at 1. Look the id up first (`{ postsFlat(limit: 1) { id title } }`) and
+> substitute it where an example says `id: 1` or `author: 1`.
+
 ### 0. Safe account registration and authenticated reads
 
 Account creation is a purpose-built mutation on the public `/graphql/`
@@ -507,8 +513,10 @@ sign-up still lets someone who tries a strong password tell a free name from a
 taken one, so add rate limiting or e-mail verification before exposing it.
 
 There is deliberately no generated `userCreate`, `userUpdate`, or
-`userDelete`. Read the current user through `/graphql/secure/`, after logging in
-with a Django session:
+`userDelete`. Read the current user after logging in with a Django session.
+Any logged-in user can run `me` on `/graphql/`; `/graphql/secure/` serves it
+only to a caller whose pruned schema includes it (the seeded `demo` superuser
+always does, an ordinary user does not):
 
 ```graphql
 {
@@ -520,6 +528,13 @@ with a Django session:
 cannot select `password`, `isStaff`, `isSuperuser`, groups, permissions, or
 login metadata. The public route remains available because it also hosts the
 registration demo; application user reads belong on the authenticated route.
+
+**An account made by `registerUser` cannot log in anywhere in this project.**
+It is not staff, the Django admin login accepts staff only, and the playground
+ships no other login view, so the registration demo ends at `ok: true`. To
+read `me` as a session user, log in at `/admin` as the seeded `demo` /
+`demo12345` (or as a staff user you create with `manage.py createsuperuser`, or
+as `editor` from [section 6](#6-a-schema-pruned-to-the-caller-22)).
 
 ### 1. Nested lists with all three paginators
 
@@ -1034,7 +1049,12 @@ The easiest way to try them is the built-in browser client at
 3. Trigger a change (create a `Post` via `postCreate`) — the event arrives
    instantly.
 
-Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws`):
+Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws -o http://127.0.0.1:8000`):
+
+Keep the `-o` (Origin) option too: the route sits behind
+`AllowedHostsOriginValidator`, which refuses a handshake that sends no `Origin`
+header with HTTP 403, and `wscat` sends none unless told to. The value must be
+one of the `ALLOWED_HOSTS` (`127.0.0.1`, `localhost`); a browser always sends it.
 
 Keep the `-s graphql-transport-ws` option: the server rejects a WebSocket
 handshake without that offered subprotocol before it can read
