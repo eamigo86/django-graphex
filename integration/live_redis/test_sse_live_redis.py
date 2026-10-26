@@ -332,6 +332,10 @@ async def test_real_lua_unknown_acquire_reply_releases_committed_token(
     Args:
         redis_case: The freshly cleared owned Redis instance.
         monkeypatch: Injects a lost reply after the real Lua command commits.
+
+    Raises:
+        AssertionError: If the committed token remains after the expected
+            lost-reply error has been caught.
     """
     import redis
 
@@ -547,6 +551,10 @@ async def test_public_sse_live_source_start_failure_releases_lease(
     Args:
         redis_case: The freshly cleared owned Redis instance.
         monkeypatch: Injects a source-start error after real admission.
+
+    Raises:
+        AssertionError: If the admitted lease remains after the expected
+            source-start error has been caught.
     """
     _, url, client, _ = redis_case
     monkeypatch.setattr(
