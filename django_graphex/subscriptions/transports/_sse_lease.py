@@ -14,6 +14,7 @@ import hashlib
 import logging
 import threading
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -201,13 +202,15 @@ def _shared_client(redis_cls: Any, url: str) -> Any:
     with _clients_lock:
         cached = _clients.get(url)
         if cached is None or cached[0] is not redis_cls:
-            client = redis_cls.from_url(
-                url,
-                socket_connect_timeout=_REDIS_TIMEOUT_SECONDS,
-                socket_timeout=_REDIS_TIMEOUT_SECONDS,
-                socket_keepalive=True,
-                health_check_interval=_HEALTH_CHECK_SECONDS,
-            )
+            options = {
+                "socket_connect_timeout": _REDIS_TIMEOUT_SECONDS,
+                "socket_timeout": _REDIS_TIMEOUT_SECONDS,
+                "health_check_interval": _HEALTH_CHECK_SECONDS,
+            }
+            # redis-py accepts keepalive for TCP/TLS, not Unix socket connections.
+            if urlsplit(url).scheme != "unix":
+                options["socket_keepalive"] = True
+            client = redis_cls.from_url(url, **options)
             cached = _clients[url] = (redis_cls, client)
         return cached[1]
 

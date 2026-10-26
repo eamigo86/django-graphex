@@ -43,7 +43,45 @@ class _User:
 
 
 def _line(process: subprocess.Popen[bytes], timeout: float = 5.0) -> dict[str, Any]:
-    """Read one newline-delimited child result without an unbounded wait."""
+    """Read one child result and retain bounded stderr on failure.
+
+    Args:
+        process: Child process expected to write a result line.
+        timeout: Maximum seconds to wait for the result.
+
+    Returns:
+        The decoded child result.
+
+    Raises:
+        AssertionError: If the child exits or fails to report in time.
+    """
+
+    def failure(reason: str) -> AssertionError:
+        """Include available child stderr without blocking on a live child.
+
+        Args:
+            reason: Reason the result was unavailable.
+
+        Returns:
+            An assertion with bounded diagnostic output.
+        """
+        assert process.stderr is not None
+        error_fd = process.stderr.fileno()
+        os.set_blocking(error_fd, False)
+        chunks = bytearray()
+        while len(chunks) < 8192:
+            try:
+                part = os.read(error_fd, 8192 - len(chunks))
+            except BlockingIOError:
+                break
+            if not part:
+                break
+            chunks.extend(part)
+        return AssertionError(
+            f"{reason}; child stderr (up to 8192 bytes): "
+            f"{chunks.decode(errors='replace')}"
+        )
+
     assert process.stdout is not None
     deadline = time.monotonic() + timeout
     data = bytearray()
@@ -56,11 +94,11 @@ def _line(process: subprocess.Popen[bytes], timeout: float = 5.0) -> dict[str, A
             time.sleep(0.01)
             continue
         if not part:
-            raise AssertionError(f"child exited before result: {process.poll()}")
+            raise failure(f"child exited before result: {process.poll()}")
         if part == b"\n":
             return json.loads(data)
         data.extend(part)
-    raise AssertionError("child did not report within five seconds")
+    raise failure("child did not report within five seconds")
 
 
 def _stop_child(process: subprocess.Popen[bytes]) -> None:
@@ -197,18 +235,33 @@ def live_redis() -> Iterator[tuple[str, str, Any, Path, subprocess.Popen[bytes]]
 @pytest.fixture
 def redis_case(
     live_redis: tuple[str, str, Any, Path, subprocess.Popen[bytes]],
-) -> tuple[str, str, Any, Path]:
-    """Clear only the database of the newly owned server between cases.
+) -> Iterator[tuple[str, str, Any, Path]]:
+    """Isolate client pools and clear the newly owned database between cases.
 
     Args:
         live_redis: The owned session fixture.
 
-    Returns:
+    Yields:
         The two URLs, client, and private directory for this case.
     """
     unix_url, tcp_url, client, private, _ = live_redis
+
+    # The server URL is constant for this session. A client cached by a previous
+    # case would bypass a later case's monkeypatched from_url failure wrapper.
+    def clear_case_clients() -> None:
+        """Close only clients cached for the test-owned Redis endpoints."""
+        with _sse_lease._clients_lock:
+            cached = [_sse_lease._clients.pop(url, None) for url in (unix_url, tcp_url)]
+        for entry in cached:
+            if entry is not None:
+                entry[1].close()
+
+    clear_case_clients()
     client.flushdb()
-    return unix_url, tcp_url, client, private
+    try:
+        yield unix_url, tcp_url, client, private
+    finally:
+        clear_case_clients()
 
 
 def _request(pk: int = 42) -> Any:
@@ -406,7 +459,14 @@ async def test_real_lua_double_cancellation_waits_for_commit_then_releases(
     )
     acquire = asyncio.create_task(_sse_lease._acquire(_User(), url, 1))
     try:
-        assert await asyncio.wait_for(asyncio.to_thread(committed.wait, 2), 3)
+        committed_in_time = await asyncio.wait_for(
+            asyncio.to_thread(committed.wait, 2), 3
+        )
+        if not committed_in_time:
+            error = None
+            if acquire.done() and not acquire.cancelled():
+                error = repr(acquire.exception())
+            assert committed_in_time, f"acquire did not commit; task exception: {error}"
         assert client.zcard(_sse_lease._principal_key(_User())) == 1
         acquire.cancel()
         acquire.cancel()

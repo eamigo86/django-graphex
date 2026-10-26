@@ -1042,13 +1042,25 @@ async def test_acquire_retries_once_after_a_connection_error(
         await _acquire(_User(), "redis://stale/0", 1)
 
 
+@pytest.mark.parametrize(
+    ("url", "keepalive"),
+    [
+        ("redis://options/0", True),
+        ("rediss://options/0", True),
+        ("unix:///private/tmp/options.sock", False),
+    ],
+)
 def test_shared_client_is_configured_for_long_lived_pools(
     monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    keepalive: bool,
 ) -> None:
-    """The shared client pings idle connections and keeps sockets alive.
+    """Use transport-compatible socket options on long-lived pools.
 
     Args:
         monkeypatch: Captures the options passed to "from_url".
+        url: Redis connection URL under test.
+        keepalive: Whether TCP keepalive is supported by this transport.
     """
     from django_graphex.subscriptions.transports._sse_lease import _shared_client
 
@@ -1069,6 +1081,11 @@ def test_shared_client_is_configured_for_long_lived_pools(
             options.update(kwargs)
             return object()
 
-    _shared_client(_Redis, "redis://options/0")
+    _shared_client(_Redis, url)
     assert options["health_check_interval"] > 0
-    assert options["socket_keepalive"] is True
+    assert options["socket_connect_timeout"] == 2.0
+    assert options["socket_timeout"] == 2.0
+    if keepalive:
+        assert options["socket_keepalive"] is True
+    else:
+        assert "socket_keepalive" not in options

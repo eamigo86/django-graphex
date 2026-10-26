@@ -1300,7 +1300,10 @@ server/gateway connection limit as a separate safeguard.
 
 Maintainers can run the explicit real-Redis SSE integration suite using the
 isolated setup in `integration/live_redis/README.md`. It is separate from the
-default test suite, which does not require a Redis service.
+default test suite, which does not require a Redis service. Its direct Lua
+checks use a private Unix socket, where the shared client retains the same
+timeouts and idle health checks but omits TCP-only socket keepalive. This does
+not add Unix URLs to the public `SSE_CONNECTION_REDIS_URL` setting.
 
 ### GraphQL execution middleware
 
