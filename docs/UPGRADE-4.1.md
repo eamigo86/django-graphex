@@ -468,13 +468,18 @@ database path too when `USE_TZ` is on. Cursors issued by the server are
 unchanged.
 
 A `DecimalField` cursor with more fractional digits than the field's
-`decimal_places` is valid and compared exactly. No stored value can equal it, so
-the database path turns `> c` into `>= ceil(c)` and `< c` into `<= floor(c)` at
-the column scale (ascending and descending, with or without a pk), and the
-in-memory path compares the exact Decimal. Both answer the same page; before, the
-database rounded it (`1e-999` compared as zero on SQLite). Lists whose Decimal
-values are computed in Python keep paging. Huge magnitudes stay valid, and
-annotation orderings are unchanged.
+`decimal_places` remains valid. On SQLite, stored numeric values can have finer
+precision than the field declaration: a two-place field may physically store
+`1.075`. A cursor at `1.074` now includes that row rather than snapping its
+boundary to `1.08`. The database comparison uses the neighboring SQLite REAL
+or INTEGER values; an exactly representable boundary keeps the pk tiebreak.
+Other databases retain the column-scale comparison, while in-memory lists use
+the exact Decimal. A tiny boundary such as `1e-999` still does not become zero.
+SQLite can read the physical `1.075` back through Django as `1.08`, so a
+materialized list can differ from a database query at a boundary such as
+`1.076`; this is a storage/ORM rounding limit, not a cursor-format change.
+Lists with Python-computed Decimal values keep paging. Huge magnitudes stay
+valid, and annotation orderings are unchanged.
 
 ### Nullable ordering in offset and page results
 
@@ -901,11 +906,13 @@ replacement, is a GraphQL field error, and a result at the cap stays valid. New
 further directive uses become field errors. The budget is shared by every item
 of a batch (the GraphQL view carries one counter in a context variable for the
 whole HTTP request, whatever `get_context` returns, and never writes to the context),
-restarts for each subscription event, and is per execution for anything the view does
-not run (a direct `execute` call, a transport). Many aliases and rows each under the
-per-field cap can no longer produce hundreds of megabytes. Raise either setting
-or set it to `None` if you legitimately transform very large text. The opt-in
-`COST_DIRECTIVE` setting (default `0`) adds cost per custom directive use, so
+restarts for each subscription event, and is per execution for calls outside a
+view request (a direct `execute` call, a transport). A nested `graphql_sync`
+call in a resolver inherits the view request's budget. Many aliases and rows
+each under the per-field cap can no longer produce hundreds of megabytes. Raise
+either setting or set it to `None` if you legitimately transform very large
+text. The opt-in `COST_DIRECTIVE` setting (default `0`) adds cost per custom
+directive use, so
 aliases times directives counts toward `MAX_QUERY_COST`; the default does not
 change existing costs.
 

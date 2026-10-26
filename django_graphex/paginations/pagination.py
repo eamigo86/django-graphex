@@ -16,7 +16,9 @@ from uuid import UUID
 
 from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist, ValidationError
+from django.db import connections
 from django.db.models import (
+    BigIntegerField,
     BooleanField,
     DateField,
     DateTimeField,
@@ -27,6 +29,7 @@ from django.db.models import (
     QuerySet,
     TimeField,
     UUIDField,
+    Value,
 )
 from django.db.models.expressions import OrderBy
 from graphql import (
@@ -213,10 +216,11 @@ def _decimal_scale_bounds(
 ) -> tuple[Decimal, Decimal] | None:
     """Return the column-scale neighbours of a boundary finer than the column.
 
-    No stored value can equal a boundary with more fractional digits than the
-    column keeps, so a strict comparison is exact against its ceiling (for
-    "greater than") or floor (for "less than") at the column scale. Trailing
-    zeros do not count, so "2.50" and "2.5" both fit two places.
+    On backends that enforce the declared column scale, no stored value can
+    equal a finer boundary; its ceiling or floor gives an exact inclusive
+    comparison. SQLite does not enforce that scale: this function only detects
+    finer input there, before SQLite-specific numeric bounds are calculated.
+    Trailing zeros do not count, so "2.50" and "2.5" both fit two places.
 
     Args:
         number: The finite boundary already coerced to a Decimal.
@@ -240,6 +244,60 @@ def _decimal_scale_bounds(
     return (
         number.quantize(step, rounding=ROUND_CEILING, context=context),
         number.quantize(step, rounding=ROUND_FLOOR, context=context),
+    )
+
+
+def _sqlite_numeric_bounds(number: Decimal) -> tuple[int | float, int | float, bool]:
+    """Bracket a Decimal by SQLite's representable numeric values.
+
+    SQLite stores numeric affinity values as binary64 REAL or signed int64
+    INTEGER, regardless of a DecimalField's declared scale. The nearest
+    representable value on either side is therefore chosen from both sets.
+
+    Args:
+        number: A finite Decimal cursor boundary finer than the field scale.
+
+    Returns:
+        The upper and lower bounds, and whether the boundary is representable.
+    """
+    minimum, maximum = -(1 << 63), (1 << 63) - 1
+    nearest = float(number)
+    if math.isinf(nearest):
+        lower, upper = (
+            (math.nextafter(math.inf, -math.inf), math.inf)
+            if number > 0
+            else (-math.inf, math.nextafter(-math.inf, math.inf))
+        )
+    else:
+        represented = Decimal.from_float(nearest)
+        if represented == number:
+            return nearest, nearest, True
+        lower = nearest if represented < number else math.nextafter(nearest, -math.inf)
+        upper = nearest if represented > number else math.nextafter(nearest, math.inf)
+
+    if number > minimum:
+        lower_integer = maximum if number > maximum else math.floor(number)
+        if lower == -math.inf or Decimal(lower_integer) > Decimal.from_float(lower):
+            lower = lower_integer
+    if number < maximum:
+        upper_integer = minimum if number < minimum else math.ceil(number)
+        if upper == math.inf or Decimal(upper_integer) < Decimal.from_float(upper):
+            upper = upper_integer
+    return upper, lower, False
+
+
+def _numeric_bound_value(bound: Any) -> Any:
+    """Bind a SQLite numeric bound without DecimalField preparation.
+
+    Args:
+        bound: A native binary64 or signed int64 bound.
+
+    Returns:
+        A typed ORM value expression for the numeric parameter.
+    """
+    return Value(
+        bound,
+        output_field=FloatField() if isinstance(bound, float) else BigIntegerField(),
     )
 
 
@@ -1877,7 +1935,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         descending: bool,
         value: Any,
         pk: Any,
-        bounds: tuple[Decimal, Decimal] | None = None,
+        bounds: tuple[Any, Any, bool] | None = None,
     ) -> Any:
         """Build the compound keyset Q predicate for "rows after the cursor".
 
@@ -1906,10 +1964,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             descending: Whether the ordering is descending.
             value: The boundary row's ordering value ("None" for a NULL boundary).
             pk: The boundary row's primary key.
-            bounds: The (ceiling, floor) of a Decimal boundary finer than its
-                column, from "_validate_boundary". No stored value equals such a
-                boundary, so the comparison turns inclusive on the neighbour
-                and the pk tiebreak is dropped.
+            bounds: Upper and lower neighbours of a finer Decimal boundary,
+                with a flag indicating whether a stored value can equal it.
 
         Returns:
             A Django Q object selecting the rows strictly after the boundary.
@@ -1931,9 +1987,10 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             return within_null_group
 
         # Boundary row's ordering value is NOT NULL.
-        if bounds is None:
-            strictly_beyond = Q(**{f"{field_name}__{cmp}": value})
-            pk_tied = Q(**{field_name: value, f"pk__{cmp}": pk})
+        if bounds is None or bounds[2]:
+            boundary = value if bounds is None else bounds[0]
+            strictly_beyond = Q(**{f"{field_name}__{cmp}": boundary})
+            pk_tied = Q(**{field_name: boundary, f"pk__{cmp}": pk})
         else:
             strictly_beyond = Q(
                 **{f"{field_name}__{cmp}e": bounds[1] if descending else bounds[0]}
@@ -2129,7 +2186,9 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             #      produce a clean GraphQLError, not an unhandled HTTP 500.
             try:
                 value, pk = self.decode_cursor_parts(cursor)
-                bounds = self._validate_boundary(qs.model, field_name, value)
+                bounds = self._validate_boundary(
+                    qs.model, field_name, value, connections[qs.db].vendor
+                )
                 if pk is None:
                     # Legacy value-only cursor: fall back to the plain value
                     # boundary (no pk tiebreak available). A NULL boundary value
@@ -2153,8 +2212,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
     @staticmethod
     def _validate_boundary(
-        model: Any, field_name: str, value: str | None
-    ) -> tuple[Decimal, Decimal] | None:
+        model: Any, field_name: str, value: str | None, vendor: str | None = None
+    ) -> tuple[Any, Any, bool] | None:
         """Apply the shared cursor rule to the ordering column's boundary.
 
         The in-memory path coerces the boundary with the same function
@@ -2166,10 +2225,11 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             model: The model whose column is the ordering field.
             field_name: The bare ordering-field name.
             value: The decoded boundary ordering value ("None" for NULL).
+            vendor: The selected queryset database vendor.
 
         Returns:
-            The (ceiling, floor) at the column scale when the boundary is a
-            Decimal finer than a DecimalField column, otherwise None.
+            Upper and lower comparison bounds plus an equality flag for a finer
+            Decimal boundary, otherwise None.
 
         Raises:
             ValueError: If the boundary is not valid for the column.
@@ -2185,7 +2245,16 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             aware = bool(settings.USE_TZ) if kind is datetime.datetime else False
             number = _coerce_cursor_component(value, kind, aware)
             if kind is Decimal:
-                return _decimal_scale_bounds(number, field)
+                scale_bounds = _decimal_scale_bounds(number, field)
+                if scale_bounds is not None:
+                    if vendor == "sqlite":
+                        upper, lower, exact = _sqlite_numeric_bounds(number)
+                        return (
+                            _numeric_bound_value(upper),
+                            _numeric_bound_value(lower),
+                            exact,
+                        )
+                    return *scale_bounds, False
         return None
 
     @staticmethod
@@ -2193,7 +2262,7 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         field_name: str,
         descending: bool,
         value: Any,
-        bounds: tuple[Decimal, Decimal] | None = None,
+        bounds: tuple[Any, Any, bool] | None = None,
     ) -> Any:
         """Build the pk-less (legacy) "rows after the cursor" predicate.
 
@@ -2209,8 +2278,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             field_name: The bare ordering-field name.
             descending: Whether the ordering is descending.
             value: The boundary ordering value ("None" for a NULL boundary).
-            bounds: The (ceiling, floor) of a Decimal boundary finer than its
-                column; the comparison then turns inclusive on the neighbour.
+            bounds: Upper and lower neighbours of a finer Decimal boundary,
+                with a flag indicating whether a stored value can equal it.
 
         Returns:
             A Django Q object selecting the rows after the value boundary.
@@ -2221,11 +2290,12 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # Ascending NULLs last: nothing follows a NULL boundary without a
             # pk tiebreak. Descending NULLs first: the entire non-NULL body does.
             return Q(**{f"{field_name}__isnull": False}) if descending else Q(pk__in=[])
-        if bounds is not None:
+        if bounds is not None and not bounds[2]:
             lookup = f"{field_name}__{'lte' if descending else 'gte'}"
             return Q(**{lookup: bounds[1] if descending else bounds[0]})
         lookup = f"{field_name}__{'lt' if descending else 'gt'}"
-        return Q(**{lookup: value})
+        boundary = value if bounds is None else bounds[0]
+        return Q(**{lookup: boundary})
 
     @staticmethod
     def _inmemory_keyset_order(
@@ -2365,7 +2435,9 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # decode_cursor_parts (malformed base64) or at filter() (type coercion).
             try:
                 value, pk = self.decode_cursor_parts(cursor)
-                bounds = self._validate_boundary(qs.model, field_name, value)
+                bounds = self._validate_boundary(
+                    qs.model, field_name, value, connections[qs.db].vendor
+                )
                 if pk is None:
                     page_qs = page_qs.filter(
                         self._legacy_value_predicate(

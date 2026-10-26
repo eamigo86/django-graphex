@@ -700,14 +700,24 @@ page's last row — so it stays fast and stable. The list type also exposes a
 
     A cursor emitted for a FloatField, DecimalField, or UUIDField ordering
     value can be reused on a nested list that has been materialized in memory.
-    Its next page matches the database-backed list for the same ordering; no
-    client-side cursor conversion is needed.
+    Its next page normally matches the database-backed list for the same
+    ordering; no client-side cursor conversion is needed. The SQLite Decimal
+    storage exception is described below.
 
     Cursors are **opaque**: treat them as an implementation detail returned by
     the server (`pageInfo.startCursor` / `pageInfo.endCursor`) and never build
     or edit one client-side. Corrupted base64, a wrong internal prefix, or a
     decoded value that cannot convert to the ordering field's type
     raises `GraphQLError("Invalid cursor")`.
+
+!!! note "SQLite Decimal storage and cursor boundaries"
+
+    SQLite can store more fractional digits than a `DecimalField` declares. A
+    two-place field can physically hold `1.075` even though Django reads it as
+    `1.08`. A finer cursor boundary such as `1.074` includes the stored row on
+    the database path. If you materialize the rows into a Python list, pagination
+    compares Django's rounded Decimal objects instead; the two paths are not
+    guaranteed to agree at every boundary near a stored finer-precision value.
 
 ### Null ordering across paginator types
 

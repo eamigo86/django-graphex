@@ -41,7 +41,7 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 - Subscription WebSocket handshakes without `graphql-transport-ws` are rejected before accept ([migration](docs/UPGRADE-4.1.md#websocket-subprotocol-is-required)).
 - Generated database error messages are generic ([migration](docs/UPGRADE-4.1.md#database-error-messages-are-generic)).
 - Primary-key tie-break can reorder tied rows ([migration](docs/UPGRADE-4.1.md#ties-are-ordered-by-primary-key)).
-- Cursors are validated by one rule on the database and in-memory paths: tampered cursors answer `Invalid cursor`, finite decimals above float range are valid, a naive datetime cursor is refused when the column is timezone-aware, and a `DecimalField` cursor finer than `decimal_places` is valid and compared exactly on both paths ([migration](docs/UPGRADE-4.1.md#tampered-and-unconvertible-cursors)).
+- Cursors are validated by one rule on the database and in-memory paths: tampered cursors answer `Invalid cursor`, finite decimals above float range are valid, a naive datetime cursor is refused when the column is timezone-aware, and a `DecimalField` cursor finer than `decimal_places` is valid (with SQLite storage-aware bounds and exact in-memory comparisons) ([migration](docs/UPGRADE-4.1.md#tampered-and-unconvertible-cursors)).
 - `page: null` on a page-number list is the first page instead of an error ([migration](docs/UPGRADE-4.1.md#explicit-page-null-is-the-first-page)).
 - Nullable columns order NULL last ascending and first descending in offset and page results ([migration](docs/UPGRADE-4.1.md#nullable-ordering-in-offset-and-page-results)).
 - `Meta.name` is honored as the GraphQL name of an `InputType`, and two types made by one factory are distinct types, not a re-executed declaration ([migration](docs/UPGRADE-4.1.md#one-public-output-type-per-model-and-registry)).
@@ -423,13 +423,15 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   written to the context any more. A subscription event and an execution started
   outside a view request keep their own per-execution counter; one nested inside
   a request (a resolver calling `graphql_sync`) shares that request's budget.
-- Compare a `DecimalField` cursor finer than the column exactly on both paths. A
-  boundary such as `1e-999` compared as zero on SQLite but exactly in memory, so
-  the pages differed whenever row pks were not `1..5`. The database path now
-  rewrites the comparison at the column scale (`> c` as `>= ceil(c)`, `< c` as
-  `<= floor(c)`, no tiebreak, since no stored value equals `c`); memory compares
-  the exact Decimal. Lists with values computed in Python keep paging, and the
-  parity test no longer depends on the pk sequence.
+- Compare a `DecimalField` cursor finer than the declared scale without losing
+  SQLite rows stored at finer precision. SQLite uses the neighboring numeric
+  values representable as REAL or INTEGER; a representable boundary retains its
+  pk tiebreak, while a boundary between stored values uses an inclusive bound.
+  Other databases keep the column-scale comparison, and in-memory lists compare
+  exact Decimals. A tiny boundary such as `1e-999` still does not become zero.
+  SQLite may return a quantized Decimal through the ORM even when its physical
+  value is finer (for example, stored `1.075` reads as `1.08` in a two-place
+  field), so physical SQLite and materialized-list pages need not always agree.
 - Correlate reverse-FK filters on the column the foreign key targets. A child FK
   with `to_field` pointing at a non-pk column was compared with the parent `pk`, so
   `not`, `or` and destination-scoped relation filters returned the wrong parents
@@ -580,13 +582,14 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
   was counted per execution, so a 10-item batch got ten times the budget; it is
   now per HTTP request (the GraphQL view carries one counter in a context
   variable, and every batch item draws from it). A subscription event keeps its own budget.
-  Executions the view does not start use a per-execution counter in one bounded
-  table that no longer evicts live counters at 64 concurrent executions (limit
-  1,024), and the request counter is never read from the context, so a context
-  whose `__getattr__` invents values (a mock) can no longer disable it.
-  The optimizer work budget shares the same table and stays per execution
-  (each batch item plans its own selection); it also no longer depends on the
-  context type.
+  Outside a view request, execution state is weakly keyed by the graphql-core
+  executor and is not evicted while it remains live. Only executor-less fallback
+  state uses a bounded 1,024-entry table. A nested `graphql_sync` call inside a
+  view request inherits the request budget; subscriptions restart it per event.
+  The request counter is never read from the context, so a context whose
+  `__getattr__` invents values (a mock) cannot disable it. The optimizer work
+  budget stays per execution (each batch item plans its own selection) and also
+  does not depend on the context type.
 
 - Fix `@round` on `Decimal` values. The precision clamp turned a zero or
   negative precision into a positive one (`0.0004` gave `0.00` instead of `0`,
