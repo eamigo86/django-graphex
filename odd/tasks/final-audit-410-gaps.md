@@ -21,8 +21,8 @@ The 4.1.0 final report claimed every finding was closed. The parent re-ran each 
 - Authorized by the user on 2026-10-25: fix all six with TDD.
 - User decision for REV-05 (first): reject a finer-than-column Decimal cursor. REVISED by the user on 2026-10-25 after the re-audit showed it breaks in-memory lists with computed values (and the parent's earlier description of the quantize option was inaccurate): exact comparison. On the DB path a finer cursor compares against the exact ceiling (ascending) or floor (descending) at the column scale; the memory path compares exactly as before; no new error; the rejection from c18e739 is withdrawn (T13).
 - Parent defaults, which are not wire changes:
-  - A dict (MutableMapping) context carries the request budget under the private key `_graphex_request_budget`.
-  - The per-execution state is keyed by the graphql-core executor through a weak reference, with the old LRU kept as the fallback for objects that are not resolve infos.
+  - A dict (MutableMapping) context carried the request budget under a private key (`1bdbd37`). SUPERSEDED by `ed0327e`: a ContextVar set per HTTP request, and the user's context is never mutated.
+  - The per-execution state is keyed by the graphql-core executor through a weak reference; subscription events are told apart by their root `Path` (`51ff888`). The old LRU stays only as the fallback for infos without an executor (test doubles).
 - Standing rules: no PR, tag, publish or push; ask before any incompatible public API or wire change; coverage above 95.01 %; Conventional Commits without AI attribution; stage explicit paths only (never `.codegraph/` or the root audit reports).
 - Branch: `codex/audit-400-remediation`. RDD is off globally (checked 2026-10-25).
 - TDD: strict (global CLAUDE.md). Runner: `$S/venv-head/bin/pytest` from the repo root, where `S` is the session scratchpad. Same gates as `odd/tasks/reaudit-400-fixes.md`.
@@ -52,8 +52,8 @@ Route: D = delegated writer (sonnet), I = inline.
 - 2026-10-25: all six gaps reproduced by the parent; tracker created.
 - 2026-10-25: W1 closed T01-T04; parent re-ran repros REV-01/02/05.
 - 2026-10-25: W2 closed T05 and T07, plus T06 for non-subscription executions. Parent found that SSE/WS leak raw internal exception text when DEBUG=False (scratchpad rev/test_mask.py); the user approved aligning with HTTP (T11).
-- 2026-10-25: re-audit found 7 defects; T12 (`ed0327e`, `061729b`, `51ff888`) and T13 (`577bdcc`, user-revised REV-05) fixed 5; the second re-audit pass found only a docs sentence (fixed in `52823a9`). Final: seeds 2046755919 and 777 each 7748 passed / 6 skipped, cov 97.61 %; gates clean; docs build clean; Playground 94 passed. Interleaved A/B 80c343d vs 52823a9 (10 alternations x 400 iterations, load 5.2-6.6): all deltas within noise, identical SQL, cold import 49.5 vs 49.0 ms.
 - 2026-10-25: T11 done in three commits. Static gates, strict docstrings, docs build and Playground (94 passed) are clean; full suite on seeds 2046755919 and 424242 and the independent re-audit are running.
+- 2026-10-25: re-audit found 7 defects; T12 (`ed0327e`, `061729b`, `51ff888`) and T13 (`577bdcc`, user-revised REV-05) fixed 5; the second re-audit pass found only a docs sentence (fixed in `52823a9`). Final: seeds 2046755919 and 777 each 7748 passed / 6 skipped, cov 97.61 %; gates clean; docs build clean; Playground 94 passed. Interleaved A/B 80c343d vs 52823a9 (10 alternations x 400 iterations, load 5.2-6.6): all deltas within noise, identical SQL, cold import 49.5 vs 49.0 ms.
 
 ## Known limitations (not fixed, documented)
 
