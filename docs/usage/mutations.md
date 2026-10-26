@@ -1,5 +1,14 @@
 # Mutations
 
+Generated inputs for `BigIntegerField` and `PositiveBigIntegerField` use
+`BigInt` decimal strings, not GraphQL `Int` numbers. This preserves the full
+64-bit value through validation and the ORM; see
+[64-bit integers](types.md#bigint-64-bit-integers) for the wire contract and
+client migration.
+Relation IDs retain their generated `ID` input (including relations to regular
+BigInteger primary keys), accepting string and integer ID values. A positive
+BigInteger field with `choices` retains its generated Enum input.
+
 GraphQL mutations allow you to modify data on your server. `django-graphex` provides powerful tools to create mutations from Django models, making CRUD operations simple and consistent.
 
 ## DjangoModelMutation
@@ -59,6 +68,14 @@ from an ordinary Django model. Read fields belong on `DjangoObjectType` /
 
     schema = DjangoGraphQLSchema(query=Query, mutation=Mutation)
     ```
+
+!!! note "Native mutation field identity"
+    Generated native mutation fields are recognized by their live field objects,
+    including an earlier field when a later mutation class replaces the same
+    model-and-operation registry slot. An expired field leaves no lasting
+    integer identity marker that could match an unrelated raw GraphQL field.
+    This internal correction does not change mutation SDL or root declarations;
+    it is not a guarantee that all schema or registry objects are released.
 
 !!! tip "Deprecating a mutation field"
     Every mutation-field builder (`CreateField`, `UpdateField`, `DeleteField`,
@@ -237,6 +254,21 @@ A row outside the scope answers exactly as a missing one (`ok: false`,
 `<Model> with id <pk> does not exist.`), so the response cannot be used to probe
 which primary keys exist. `create` has no target row, so nothing is scoped there.
 
+The model's registered public output type is a second scope. When the request
+schema registers a `DjangoObjectType` for the model that overrides
+`get_queryset`, `update` and `delete` (on both `DjangoModelMutation` and
+`DjangoModelType`) also require the target row to be visible there: the host
+scope and the output type scope are intersected in a single query. A row the
+output type hides on reads can therefore no longer be edited or deleted by id;
+it answers exactly like a missing one. An output type that keeps the default
+hook, or a model with no registered output type, adds no query. The same rule
+applies to a nested child payload that writes fields of an existing child
+(reverse `ForeignKey`, reverse `OneToOneField`, many-to-many, or a forward
+relation carrying the current target's `id` plus field data): the child's
+output type scope is intersected with the child host scope, and a hidden child
+answers like a missing one. An `id`-only re-send of a forward relation's
+current target writes nothing and is not re-scoped.
+
 #### Permissions are `DjangoModelType`-only
 
 The two hosts are **not** symmetric on authorization. `permission_classes` /
@@ -245,7 +277,8 @@ The two hosts are **not** symmetric on authorization. `permission_classes` /
 `DjangoModelMutation` reads the name nowhere.
 
 Declaring `permission_classes` on a `DjangoModelMutation` therefore raises
-`ImproperlyConfigured` at class definition. It used to be worse than a no-op:
+`ImproperlyConfigured` at class definition without registering a model output
+type. It used to be worse than a no-op:
 the plain assignment tripped a raw Pydantic error telling you to annotate the
 attribute `ClassVar`, and taking that advice produced a class that builds fine
 with a permission that never fires. Reach for `DjangoModelType` when you need
@@ -291,6 +324,13 @@ else — a number, a list, an object — comes back as a normal validation error
 and a path longer than the column's `max_length` is rejected before it reaches
 the database.
 
+If [`MAX_UPLOAD_SIZE`](settings.md#file-uploads) is configured, **every
+received file part** must fit that per-file byte limit, including unused parts
+and repeated parts with the same name. An oversized part returns JSON HTTP 413
+before any resolver runs; a file exactly at the limit is allowed. `None`
+leaves multipart files without this per-file cap. The separate
+`MAX_REQUEST_BODY_SIZE` still limits the whole request and can reject earlier.
+
 !!! warning "A multipart POST must carry `X-Requested-With`"
 
     `multipart/form-data` is a CORS-*simple* content type: a browser posts it
@@ -325,7 +365,8 @@ the database.
     on `Profile.profile_photo`, so there is nothing to remember. A part
     matching no exposed input field is ignored — the mutation still answers
     `ok: true` and simply saves no file — so a misspelled part name looks like
-    success with nothing written.
+    success with nothing written when the file fits the configured size limit.
+    An oversized unmatched part is rejected before input mapping.
 
     A field the type projects away with `Meta.exclude_fields`, or leaves out of
     `Meta.only_fields`, is not an exposed input field: a part named after it is
@@ -383,6 +424,93 @@ Example error response:
   }
 }
 ```
+
+An `ok: false` result is structured mutation data, not a GraphQL execution
+error. It rolls back that generated mutation's own failed write, but does not
+undo an earlier successful sibling root mutation. With `ATOMIC_MUTATIONS=True`,
+a GraphQL execution error in any sibling root field instead rolls back the
+entire mutation operation on the default database. Django's `ATOMIC_REQUESTS`
+also rolls back the default-database request transaction on GraphQL execution
+errors. The response can retain partial data for writes that were rolled back;
+do not treat partial response data as proof that a row was committed.
+
+For generated `PositiveIntegerField` and `PositiveSmallIntegerField` inputs, a
+supplied negative value now returns `ok: false` with an error on that field
+before SQL persistence. This also changes the transaction result for an earlier
+successful sibling root: even with `ATOMIC_MUTATIONS=True`, the earlier write
+commits because this is structured mutation data, not a GraphQL execution
+error. For example, `createA` remains saved when a later `createB` returns
+`{ ok: false, errors: [{ field: "quantity", ... }] }`. If clients require the
+two root writes to succeed or fail together, they must coordinate that business
+operation explicitly; `ATOMIC_MUTATIONS` still rolls back on actual GraphQL
+execution errors. Zero, positive values, GraphQL `Int` bounds, and existing
+choice Enum names are unchanged.
+
+Generated `DjangoModelMutation.DeleteField()` and
+`DjangoModelType.DeleteField()` return a **GraphQL execution error** when
+deletion is blocked by a Django `PROTECT` or `RESTRICT` relation. The message is
+`Deletion blocked by related objects.`; it does not expose related model names
+or row identifiers. For example, the delete field is `null` and the error has
+the field path rather than an `ok: false` mutation payload:
+
+```json
+{
+  "data": {"deleteCategory": null},
+  "errors": [{
+    "message": "Deletion blocked by related objects.",
+    "locations": [{"line": 2, "column": 3}],
+    "path": ["deleteCategory"]
+  }]
+}
+```
+
+The location reflects the caller's query. The HTTP status remains the normal
+GraphQL execution-response status (200 for a valid request). A previous sibling
+write still commits with `ATOMIC_MUTATIONS=False` and rolls back with
+`ATOMIC_MUTATIONS=True` or a request-wide `ATOMIC_REQUESTS` transaction. A
+missing or out-of-scope row continues to use the structured `ok: false`
+not-found response. If clients previously inspected Django's blocked-delete
+collector message, migrate to the generic message and GraphQL error path;
+neither the protected relation nor its row IDs are disclosed.
+
+Generated create, update, and delete fields also hide an unclassified Django
+`IntegrityError` that reaches GraphQL execution, including one from a nested
+child. Instead of exposing SQL constraint, table, or column names, the field is
+`null` and the top-level error message is
+`A database constraint prevented this operation.` The error keeps its normal
+GraphQL path and location, and a valid request retains the normal execution
+response status (typically HTTP 200). For example, a database-only check that
+previously surfaced `CHECK constraint failed: private_constraint` now returns:
+
+```json
+{
+  "data": {"createItem": null},
+  "errors": [{
+    "message": "A database constraint prevented this operation.",
+    "locations": [{"line": 2, "column": 3}],
+    "path": ["createItem"]
+  }]
+}
+```
+
+Nested parent/child writes still roll back together, and an earlier sibling
+write rolls back when `ATOMIC_MUTATIONS=True` (or a request-wide
+`ATOMIC_REQUESTS` transaction applies). With both off, that sibling can still
+commit. This is **not** an `ok: false` conversion: supported field-level
+unique, foreign-key, and many-to-many conflicts still use structured
+`errors[]`, while an unclassified integrity failure does not. Direct backend
+calls still raise the original exception. Model field validators run on written fields
+(see [Model field validation](backends.md#model-field-validation)), but no
+`Model.clean()`, constraint pre-scan, or automatic upsert is added. Clients
+inspecting raw database messages must migrate to the fixed message and
+GraphQL error path.
+
+An **unhandled** database exception outside this generated-field adapter
+(including a hand-written mutation) is different: the default HTTP formatter
+with `DEBUG=False` returns `DATA_ACCESS_ERROR`, a safe category message, and
+an opaque `errorId` for restricted server-log correlation. It does not turn
+the failure into `ok: false` or change transaction behavior. See
+[Production execution errors](views.md#production-execution-errors).
 
 !!! tip "FK checks stay inside the mutation's rollback boundary"
     In true autocommit, a valid plain mutation issues a single `INSERT` or
@@ -537,9 +665,24 @@ Here's a complete example showing all features:
 related objects alongside the parent. The same engine backs both
 `DjangoModelMutation` and `DjangoModelType`.
 
-- **Atomic** — the whole operation runs in a `transaction.atomic()` block. If the
-  parent *or* any child fails validation, **everything rolls back** (no orphan
-  rows) and the response is `ok: false` with the errors.
+- **Atomic on the selected alias with the included Django backend** — when
+  nested work is present, a create prepares one populated, unsaved parent
+  before the first write. The router receives that instance, so a rule such
+  as `instance.region == "east"` can select the secondary alias. Native
+  parent and child saves use that alias within one transaction; a later child
+  validation failure rolls back earlier same-alias writes and suppresses their
+  commit callbacks. An update keeps the existing parent's database alias.
+  The routing hint is populated from supplied scalar fields and model defaults
+  before backend validation; validation and model construction are not replayed.
+  A create without nested work retains its direct-save behavior. Custom
+  serializer backends keep their existing `save_object(instance=None)` create
+  contract. For M2M links, an explicitly divergent through-model route is
+  rejected before the first write. If the route diverges only after a generated
+  parent ID, a second check rejects it before linking and rolls back preceding
+  selected-alias writes and commit callbacks. Route through models to the
+  parent's alias; transactions do **not** coordinate database aliases, and a
+  stateful router that changes between the check and Django's link operation
+  is outside this bounded guarantee.
 - **Relation-aware** — the relation is introspected from the model:
 
     | Relation | Order | Behavior |
@@ -679,6 +822,117 @@ related objects alongside the parent. The same engine backs both
   compare against. Those two relations are protected by the **link rule**
   above instead — the row is attached, never rewritten.
 
+#### Adopting an existing reverse-FK or reverse-OneToOne orphan by ID
+
+An existing child whose **nullable reverse foreign key or one-to-one key is null** is different
+from a new child. Naming that row's `id` in a generated parent update
+adopts and writes the child. The operation now requires at least one registered
+child `DjangoModelType` or `DjangoModelMutation` that serves **update**. Each
+applicable host's existing row scope and authorization must admit the child.
+The parent mutation's registry and the intentional global registry contribute
+hosts; an unrelated private registry cannot authorize this write. A plain
+read-only output type or a create-only child host does not serve update.
+
+For example, assume `Address.customer` is nullable, `Address.tenant_id` exists,
+and `CustomerMutation` declares `nested_fields = {"addresses": Address}`. This
+child write host lets a tenant adopt only its visible orphans:
+
+```python
+from typing import Any
+
+from django.db.models import QuerySet
+from graphql import GraphQLResolveInfo
+
+from django_graphex.mutation import DjangoModelMutation
+
+from .models import Address
+
+
+class AddressMutation(DjangoModelMutation):
+    class Meta:
+        model = Address
+        model_operations = ("update",)
+
+    @classmethod
+    def filter_queryset(
+        cls,
+        qs: QuerySet[Address],
+        info: GraphQLResolveInfo,
+        **kwargs: Any,
+    ) -> QuerySet[Address]:
+        """Limit child updates to the request tenant.
+
+        Args:
+            qs: Candidate address rows.
+            info: Current GraphQL request.
+            **kwargs: Additional filtering context.
+
+        Returns:
+            Addresses in the request tenant.
+        """
+        return qs.filter(tenant_id=info.context.user.tenant_id)
+```
+
+Before this guard, the following existing-orphan ID could be adopted with no
+child update host. Now, with no eligible host, it returns a structured error
+and rolls back the entire parent mutation, including earlier sibling writes:
+
+```graphql
+mutation {
+  updateCustomer(newCustomer: {
+    id: "1"
+    addresses: [{ id: "3", street: "789 Elm St" }]
+  }) {
+    ok
+    errors { field messages }
+  }
+}
+```
+
+```json
+{
+  "data": {
+    "updateCustomer": {
+      "ok": false,
+      "errors": [{
+        "field": "addresses",
+        "messages": ["Adopting an existing child by ID requires a registered child update host."]
+      }]
+    }
+  }
+}
+```
+
+**Migration:** find parent update mutations that name an existing unowned child
+by `id`. Register a child update-serving host before schema construction, then
+make its queryset/permission checks express the intended visible and writable
+rows. Review callers that intentionally adopted read-hidden children; they
+must use an explicitly authorized child workflow instead. Registering a host
+does not infer tenant ownership or grant blanket access. A child hidden by its
+host still receives the usual not-found response; a permission refusal retains
+the child's existing permission error. No host is needed for creating a **new**
+child without an existing ID (including generated parent create), or updating a
+child already owned by this parent. The generated nested-create input does not
+accept an existing child ID.
+Adoption from a **different** parent remains forbidden. A nested child payload
+that names an `id` which does not resolve to a visible child (hidden by its
+host or output scope, or nonexistent) is refused with the same
+`<Model> with id <pk> does not exist.` error and writes nothing, so the
+response cannot reveal which ids exist; only a payload **without** an `id`
+creates a new child. This applies to reverse `ForeignKey`, reverse
+`OneToOneField` and many-to-many nested payloads. A many-to-many
+or forward foreign-key `id` link (an existing row the parent is not yet linked
+to) is scoped the same way: an id hidden only by the child's update host is
+refused exactly like a nonexistent one, so it cannot be probed. Re-sending only
+the `id` of a forward relation's current target writes nothing (no `save()`, no
+signals). The rule is the same for a
+reverse `OneToOneField` (for example `parent = OneToOneField(..., null=True,
+related_name="child")`) as for a reverse `ForeignKey`. Generic relations are
+outside this rule. Unlike the separate [FK/M2M ID-link scope](#migrating-id-links-hidden-by-a-destination-scope),
+this is a **child write** and its host checks apply; automatic relation reads
+and relation-filter joins retain separate boundaries; nested forward-FK
+filters have their own destination-hook rule.
+
 !!! warning "Reverse child re-parenting"
     Attempting to assign an existing reverse child (by pk) to a new parent via
     the nested write path will fail with a validation error if the child's FK or
@@ -693,13 +947,112 @@ related objects alongside the parent. The same engine backs both
     mutation on the child model directly, or attach it first and edit it in a
     second call.
 
-!!! info "The link paths are deliberately not gated"
-    Attaching an existing row through a **forward** `ForeignKey` /
-    `OneToOneField` or a `ManyToManyField` by pk (the **link rule** above) is
-    not a write on the child, so it does not run the child's permissions or
-    scoping. It is the same reachability the plain `category: ID` surface has
-    always offered — a nested payload cannot do anything there that a plain id
-    reference could not.
+!!! info "ID links use the destination's public row scope"
+    A generated create or update now checks **forward `ForeignKey` and
+    `OneToOneField` IDs** and **`ManyToManyField` ID lists** against the destination
+    `DjangoObjectType.get_queryset` for the **current request schema**. This
+    includes nested link operations such as `{"id": "7"}`. When the existing
+    link rule ignores extra child attributes, that operation is checked too;
+    the attributes still do not write the child. A hidden ID and
+    a nonexistent ID both return the ordinary structured relation error:
+    `Invalid pk "7" - object does not exist.` The parent and its other nested
+    objects are not saved on that validation failure. The link still does not
+    WRITE the child and does not run child add/change permissions.
+
+    This is an output-type **row-scope** check, not global model row-level
+    security. If the request schema has no registered destination output type
+    with an overridden `get_queryset`, the existing ID-link path is unchanged
+    and adds no lookup. The hook must synchronously return a Django
+    `QuerySet` for the destination's concrete model; a proxy queryset for the
+    same table is valid, but a multi-table-inheritance parent queryset is not.
+    Class methods, static methods, plain functions, and callable-object hooks
+    follow the same rule. A broader returned queryset cannot authorize an ID
+    absent from it. A JOIN may repeat a visible row, and an ordered slice only
+    authorizes rows inside its window: both remain valid hook results. All
+    distinct IDs requested for one relation under an active hook are checked
+    with a single membership query.
+    Omitted relations stay untouched;
+    nullable `null` and empty nested inputs keep their existing meanings.
+
+    Generic relations and payloads
+    that actually CREATE or UPDATE a child retain their separate existing
+    rules. A nested M2M payload that names an ID is never a creation: an ID
+    that is not visible (hidden or missing) gets the error above, and only a
+    payload without an ID creates a child. This does not
+    change automatic relation expansion on reads or relation-filter joins;
+    automatic FK/reverse-FK output reads and nested forward-FK filters have
+    their own bounded destination-hook rules;
+    see [row-scope boundaries](types.md#relation-scope-hatch).
+
+#### Migrating ID links hidden by a destination scope
+
+Suppose `AuthorType.get_queryset` excludes the author with ID `7`, while
+`PostType` generates mutations for `Post.author` and `Post.tags`:
+
+```python
+from django.db.models import QuerySet
+from graphql import GraphQLResolveInfo
+from django_graphex.types import DjangoModelType, DjangoObjectType
+from .models import Author, Post
+
+
+class AuthorType(DjangoObjectType):
+    class Meta:
+        model = Author
+
+    @classmethod
+    def get_queryset(
+        cls, queryset: QuerySet, info: GraphQLResolveInfo
+    ) -> QuerySet:
+        return queryset.exclude(name="HiddenAuthor")
+
+class PostType(DjangoModelType):
+    class Meta:
+        model = Post
+```
+
+Previously, a generated link to that hidden row could succeed. Now **both**
+generated operations reject its ID before saving the parent:
+
+```graphql
+mutation {
+  postCreate(newPost: {title: "Draft", body: "", author: "7"}) {
+    ok
+    errors { field messages }
+  }
+}
+
+mutation {
+  postUpdate(newPost: {id: "12", author: "7"}) {
+    ok
+    errors { field messages }
+  }
+}
+```
+
+For either operation, the relation error has the same shape as an absent row:
+
+```json
+{"ok": false, "errors": [{"field": "author", "messages": ["Invalid pk \"7\" - object does not exist."]}]}
+```
+
+An ID-only `tags: ["8"]` input follows the same rule for a registered
+`TagType`: its error uses `"field": "tags"`. Repeated IDs are checked once
+per distinct value, and the existing input order is otherwise preserved.
+
+Before upgrading:
+
+1. Identify generated create/update clients that link FK or M2M rows hidden
+   from their callers, including nested link payloads whose extra attributes
+   were already ignored by the link rule.
+2. Make authorized rows available through the destination type's
+   `get_queryset` for those requests, or expose a separate, explicitly
+   authorized workflow. Do **not** broaden a tenant scope merely to keep an
+   old ID-link request succeeding.
+3. Register the destination public type in the same schema `Registry` that
+   serves the mutation. A type in an unrelated Registry does not supply that
+   request's scope. Hand-written mutations must enforce their own relation
+   policy.
 
 #### The nested child input type
 
@@ -941,6 +1294,22 @@ mutation {
     deleted. Interpreting `null` as "delete every related child" would be dangerous and
     irreversible, so nested writes never clear on `null`. To remove nested children, target the
     child model directly.
+
+### Partial input is not a concurrency guarantee
+
+The mutation validates and assigns only the **supplied fields**, so an
+**omitted field** retains its value on the model instance loaded for this
+request. The backend then performs a **full save**: the resulting SQL `UPDATE`
+can write columns that were absent from the GraphQL input. If another writer
+changes an omitted column after this request loads a **stale instance**, this
+save can **overwrite** that separately changed value. Partial input does not
+provide changed-columns SQL or optimistic concurrency protection.
+
+Do not assume a blanket `update_fields` change would solve the contract:
+restricting saved fields can also alter `auto_now`, **custom save** hooks, and
+**derived fields**. If concurrent updates matter, coordinate them in your
+application's transaction and model workflow; this library does not add a
+locking or merge API for partial mutations.
 
 ### perform_mutate response shape
 
@@ -1257,6 +1626,202 @@ The `avatar` argument arrives in the resolver as a plain `dict` of the input
 fields; rehydrate it with `Base64FileInput(**kwargs["avatar"])` to get a validated
 instance with `.filename`, `.data`, `.content_type` attributes **and** a
 `.to_uploaded_file(*, max_size=None)` method that returns a `SimpleUploadedFile`.
+
+For hand-authored `InputType` fields, a zero-argument Pydantic
+`default_factory` runs for each **new coerced input object** when that field is
+omitted. It does not run while the schema is built and puts no fixed value in
+the SDL. For example, a `uid` factory renders `uid: String`, and each
+separately coerced `{}` input gets a fresh UID. Plain scalar and enum
+defaults render as SDL defaults; fixed JSON defaults have the representability
+rule below. Explicit values and `null` bypass a zero-argument factory. A resolver
+still receives a snake-keyed `dict`, not an automatically validated Pydantic
+instance. See the [input type default contract](../api/types.md#djangoinputobjecttype).
+
+### String Literal input enums and unsupported annotations
+
+An all-string `Literal` on a hand-authored input compiles to a GraphQL
+enum. For `ArticleInput.status: Literal["draft", "published"]`, the generated
+type is `ArticleInputStatusEnum` with `DRAFT` and `PUBLISHED` members. The
+compiler uses the **compiled input type name** and **public field alias**;
+for example, `CustomArticleInput.publishState` generates
+`CustomArticleInputPublishStateEnum`. A member collision after name
+normalization rejects the schema instead of assigning a positional suffix.
+A value starting with `__` (for example `Literal["__x"]`) is rejected too,
+because GraphQL reserves member names with that prefix; rename the value.
+`Optional`, list, nested, and inherited fields keep their existing wrapping
+and resolver names.
+
+Clients send inline values as enum members (`status: DRAFT`) and JSON
+variables by member name (`"status": "DRAFT"`); a string such as
+`status: "draft"` is not an enum member and fails input validation. A
+mutation resolver still receives the original string value (`"draft"`) in
+its plain input dictionary. A value outside the enum fails GraphQL input
+validation before the resolver. Fixed defaults render as enum members in SDL;
+factories still run for each newly coerced input object.
+
+An input field annotated `dict[str, int]` or `typing.Dict[str, int]` uses
+the existing raw GraphQL `JSON` scalar. Both spellings have the same strict
+input behavior. Send an object, not JSON-encoded text: inline `mapping: {count: 3}` or the JSON variable
+`"mapping": {"count": 3}`. Every key must be a string and every value must
+be a plain integer; `true`, `3.5`, `"3"`, nested containers, and non-object
+values fail before the mutation resolver. An empty object is accepted, and
+values follow Python `int` and JSON semantics, so integers beyond GraphQL
+`Int`'s 32-bit range are accepted. Error messages name the declared
+field without echoing supplied keys or values. Optionality, omission, list
+wrapping, and fixed or factory defaults follow the field's existing input
+contract. A bare `dict` remains permissive raw `JSON`.
+
+Exact `dict[str, str]` and `typing.Dict[str, str]` input fields also use the
+shared `JSON` scalar. Send an object such as
+`"mapping": {"name": "Ada"}` in variables or `mapping: {name: "Ada"}`
+inline. Object string keys and string values are required: numbers, booleans, null, nested
+containers, non-object values, and non-string keys fail before mutation
+resolution without conversion. Empty objects are valid. The same
+optional, list, nested, omission, fixed-default, factory-default, and
+permission-pruned input behavior applies; bare `dict` stays permissive.
+
+Exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation inputs
+use the same `JSON` scalar. Send a JSON object such as
+`"mapping": {"enabled": true}` or inline `mapping: {enabled: true}`;
+encoded JSON strings do not match the wire type. Every key must be a
+string and every value must be an exact Boolean (`true` or `false`): `1`,
+`0`, `"true"`, null and nested values fail before the resolver or omitted
+sibling factories run. Empty objects are valid. Outer Optional, alias and
+fixed/factory-default behavior, including malformed omitted legacy defaults,
+is unchanged. This is field-local validation, not a change to bare `dict`,
+other maps, list-wrapped maps or the global JSON scalar.
+
+!!! note "Fixed JSON defaults and schema metadata"
+
+    A fixed JSON default whose object keys are valid GraphQL Names (for
+    example, `{"views": 0}`) prints as `mapping: JSON = { views: 0 }`
+    and appears in default-value introspection. It still supplies the same
+    value to an omitted input, without JSON string encoding. Nested objects,
+    lists, and finite scalar values inside that JSON value follow the same
+    rule. This applies to JSON scalar fields, including those nested in an input
+    object. A fixed default for a list of JSON values also prints when the
+    outer value is a concrete list, every element is representable, and null
+    elements match the field type. The omitted input receives an equal outer
+    list copy with the same JSON elements. Malformed list defaults retain their
+    legacy runtime and metadata behavior.
+
+    Omitted fixed defaults remain separate from explicitly supplied values
+    under supported graphql-core 3.3 versions, including after a
+    permission-scoped schema clone. Mutable defaults are copied for each
+    execution; cloning does not restore hidden input fields or reuse a
+    coerced default when its nested input type has changed.
+
+    JSON objects may also contain keys that cannot be GraphQL Names, such as
+    `"x-y"`. Those existing runtime defaults remain accepted, but
+    `print_schema` and default-value introspection cannot render them as
+    valid GraphQL object literals. If schema metadata must render for such a
+    value, use `Field(default_factory=lambda: {"views": 0})` with a suitable
+    object instead. A factory supplies each omitted input without publishing
+    a fixed SDL default. Cyclic or non-JSON-native fixed values likewise gain
+    no new metadata support. Strings containing unpaired Unicode surrogates or
+    integers beyond Python's configured integer-to-string limit likewise keep
+    their legacy runtime defaults without new SDL metadata. A nullable `None`
+    default is unaffected.
+
+Exact `set[int]` and `typing.Set[int]` input fields expose `[Int!]!`.
+Send an integer list such as `"numbers": [2, 1, 2]` rather than an encoded
+string. GraphQL also accepts a singleton integer such as `"numbers": 3`
+and wraps it as a list. The resolver receives a Python `set`, so both inputs
+deduplicate (`{1, 2}` and `{3}` respectively) and iteration order is not
+part of the contract. Native `GraphQLInt` rejects booleans and numeric strings
+before the resolver; this does not add Pydantic validation or custom casts.
+Optional, required, and defaulted outer fields keep their existing behavior.
+Both spellings have the same resolver behavior. Other set leaves and sets
+inside lists remain unsupported.
+
+Exact `set[str]` and `typing.Set[str]` mutation inputs expose
+`[String!]!`. Send a string list such as
+`"colors": ["red", "red", "blue"]`; GraphQL also accepts the singleton
+`"colors": "ab"`. The resolver receives an actual Python set:
+`{"red", "blue"}` or `{"ab"}`, never the characters of `"ab"`.
+Duplicates are removed and iteration order is not part of the contract.
+Native `GraphQLString` rejects non-string values before resolution without
+custom casting. Optional, required, fixed-default and fresh-factory behavior
+remains unchanged. Other unapproved set leaves and sets inside lists still use the
+legacy warning/`String` fallback.
+
+Exact `set[bool]` and `typing.Set[bool]` mutation inputs expose
+`[Boolean!]!`. Send a boolean list such as
+`"flags": [true, false, true]`; GraphQL also accepts the singleton
+`"flags": false`. The resolver receives a Python set (`{True, False}`
+or `{False}`), with duplicates removed and no ordering guarantee.
+Native `GraphQLBoolean` rejects 0, 1, strings and null items before
+resolution; no truthiness cast or automatic Pydantic validation is added.
+Outer Optional, required, fixed-default and fresh-factory behavior remains.
+Other unapproved set leaves and nested sets retain the warning/`String` fallback.
+
+Exact `set[float]` and `typing.Set[float]` mutation inputs expose
+`[Float!]!`. Send a finite numeric list such as
+`"amounts": [1.5, 1.5, 2.0]` or a singleton integer such as
+`"amounts": 2`. Native `GraphQLFloat` converts the integer to `2.0` and
+rejects booleans, strings and null items; variable coercion also rejects
+nonfinite values. A field-local check rejects overflowing numeric literals
+such as `1e999` before resolution. The resolver receives an actual Python set (`{1.5, 2.0}` or `{2.0}`), with
+duplicates removed and no ordering guarantee. Outer Optional, required,
+fixed-default, fresh-factory, alias and pruning behavior remains established;
+no additional Pydantic or global validation is added. Other unapproved set
+leaves and nested sets retain the warning/`String` fallback.
+
+Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs expose
+`[UUID!]!`. Send UUID strings as a list, for example
+`"keys": ["12345678-1234-5678-1234-567812345678", "12345678123456781234567812345678"]`,
+or a singleton `"keys": "12345678123456781234567812345678"`.
+The existing native UUID scalar accepts canonical, uppercase and 32-hex
+strings, validates each item before resolution and supplies UUID objects.
+The resolver receives an actual deduplicated Python set, never the characters
+of a singleton string; iteration order is unspecified. Invalid UUIDs and
+null items are rejected before resolution. Outer Optional, defaults, aliases
+and permission pruning retain their established behavior. Other unapproved
+set leaves and nested sets retain the warning/`String` fallback.
+
+Exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]` mutation inputs
+expose `[Decimal!]!`. Send native Decimal values in a
+list, for example `"amounts": ["10.10", "10.10"]`, or a whole-value
+singleton `"amounts": "10.10"`. The existing Decimal scalar preserves
+precision and accepts its established finite representations; even a finite
+value such as `"1E+999999"` is not converted through float. The resolver
+receives `{Decimal("10.10")}` as an actual Python set, with duplicates removed
+and no ordering guarantee. A field-local check rejects supplied NaN, sNaN and
+positive/negative Infinity before the mutation and omitted sibling factories;
+null items still fail native list-item validation. Existing outer Optional,
+fixed/factory defaults, aliases and permission pruning remain unchanged,
+including malformed legacy omitted defaults. The global Decimal scalar and
+other unapproved set forms are unchanged.
+
+Exact direct `typing.Union[int, str]`, `int | str`, and reversed-order
+annotations expose the shared `IntOrString` input scalar. A required field is `IntOrString!`; an outer nullable union is
+`IntOrString`. Send `value: 123` or a JSON variable `{"value": 123}` for
+a Python integer, and `value: "123"` or `{"value": "123"}` for a Python
+string. The resolver receives the same branch without an implicit cast.
+Only signed 32-bit integers are accepted; booleans, all floats (including
+`1.0`), objects, lists, and out-of-range integers reject before resolution.
+Declare variables as `$value: IntOrString!` (or nullable `IntOrString`)
+and regenerate typed client bindings. Existing omitted fixed and factory defaults remain unchanged,
+including malformed legacy defaults. This does not change the global `Int`,
+`String`, `ID`, or `JSON` scalars, and does not support list-wrapped or other
+Union leaves.
+
+Numeric or mixed `Literal` and other Union annotations
+remain unsupported and warn when they fall back to GraphQL `String`. Other
+parameterized dictionaries remain unsupported and use the same warning and
+`String` fallback. They are **not** automatically validated as Pydantic models. For
+other string-valued fields, annotate `str` and explicitly call the input
+model's `model_validate()` in the resolver if narrower validation is needed.
+A supported `int | None` remains `Int`, and `list[int]` remains `[Int!]!`.
+Nested lists of already-supported input leaves preserve each list and nullable
+position. For example, `rows: list[list[int]]` exposes `rows: [[Int!]!]!`,
+accepts `[[1, 2], [3]]`, and uses ordinary GraphQL list coercion: `[1, 2]`
+becomes `[[1], [2]]` and `1` becomes `[[1]]`. GraphQL rejects invalid leaves
+before the resolver; it does not cast strings to integers. This also applies
+to supported JSON and strict typed-map leaves, all-string `Literal` enums,
+and nested input models. A nested list ending in an unsupported type still
+follows the earlier warning and `String` fallback, without automatic Pydantic
+validation.
 
 !!! warning "Compile the input type before you declare the mutation"
     `Field(Base64FileInput, ...)` needs `Base64FileInput._meta.graphql_input_type`

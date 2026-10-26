@@ -19,14 +19,39 @@ LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")
 OPERATIONS = ("flat_list", "nested", "single", "filtered", "create_comment")
 EXPECTED_SURFACE = {
     "Author": ["bio", "email", "id", "name", "posts"],
-    "Post": ["author", "body", "comments", "createdAt", "id", "status", "title", "viewsCount"],
+    "Post": [
+        "author",
+        "body",
+        "comments",
+        "createdAt",
+        "id",
+        "status",
+        "title",
+        "viewsCount",
+    ],
     "Comment": ["authorName", "createdAt", "id", "isApproved", "text"],
 }
 EXPECTED_VERSIONS = {
     "graphex": {"django-graphex": "3.1.0", "django": "6.0.6", "graphql-core": "3.2.11"},
-    "graphene": {"graphene-django": "3.2.3", "graphene": "3.4.3", "django": "6.0.6", "graphql-core": "3.2.11", "django-filter": "25.2"},
-    "strawberry": {"strawberry-graphql-django": "0.86.4", "django": "6.0.6", "strawberry-graphql": "0.320.1", "graphql-core": "3.2.11"},
-    "ariadne": {"ariadne": "1.1.0", "ariadne-django": "0.3.0", "django": "6.0.6", "graphql-core": "3.2.11"},
+    "graphene": {
+        "graphene-django": "3.2.3",
+        "graphene": "3.4.3",
+        "django": "6.0.6",
+        "graphql-core": "3.2.11",
+        "django-filter": "25.2",
+    },
+    "strawberry": {
+        "strawberry-graphql-django": "0.86.4",
+        "django": "6.0.6",
+        "strawberry-graphql": "0.320.1",
+        "graphql-core": "3.2.11",
+    },
+    "ariadne": {
+        "ariadne": "1.1.0",
+        "ariadne-django": "0.3.0",
+        "django": "6.0.6",
+        "graphql-core": "3.2.11",
+    },
 }
 # Query capture intentionally excludes the harness's outer BEGIN/ROLLBACK. The
 # GraphEx mutation owns SAVEPOINT, INSERT, deferred-FK PRAGMA and RELEASE.
@@ -52,11 +77,23 @@ PROVENANCE_FIELDS = {
 
 
 def _validate_runs(lib: str, runs: list[dict], authors: int) -> None:
-    assert len(runs) >= 3 and len(runs) % 2 == 1, "publication needs an odd run count >= 3"
-    stable = ("versions", "python", "django", "machine", "dataset", "provenance", "surface")
+    assert len(runs) >= 3 and len(runs) % 2 == 1, (
+        "publication needs an odd run count >= 3"
+    )
+    stable = (
+        "versions",
+        "python",
+        "django",
+        "machine",
+        "dataset",
+        "provenance",
+        "surface",
+    )
     for run in runs:
         assert run["lib"] == lib
-        assert run["versions"] == EXPECTED_VERSIONS[lib], f"version contract drift: {lib}"
+        assert run["versions"] == EXPECTED_VERSIONS[lib], (
+            f"version contract drift: {lib}"
+        )
         assert run["surface"] == EXPECTED_SURFACE, f"surface contract drift: {lib}"
         assert run["dataset"] == {
             "authors": authors,
@@ -66,7 +103,9 @@ def _validate_runs(lib: str, runs: list[dict], authors: int) -> None:
         assert set(run["ops"]) == set(OPERATIONS), f"operation contract drift: {lib}"
         for operation, expected in EXPECTED_SQL[lib].items():
             stats = run["ops"][operation]
-            assert stats["sql_queries"] == expected, f"SQL contract drift: {lib}.{operation}"
+            assert stats["sql_queries"] == expected, (
+                f"SQL contract drift: {lib}.{operation}"
+            )
             assert stats["iterations"] == 100
     for key in stable:
         assert all(run[key] == runs[0][key] for run in runs), f"unstable {key}: {lib}"
@@ -78,17 +117,22 @@ def validate_canonical_results(
     constraints_path: Path = BASE_DIR / "constraints.txt",
     repo_root: Path = BASE_DIR.parent,
 ) -> None:
-    """Validate tracked medians without resolving the local measurement commit.
+    """Validate the eight named medians without reading local diagnostics.
 
     Args:
-        results_dir: Directory containing the eight canonical JSON artifacts.
+        results_dir: Directory containing the eight canonical JSON artifacts;
+            unrelated diagnostic JSON is ignored.
         constraints_path: Dependency freeze used by the recorded measurements.
         repo_root: Full-history Git checkout used for delivery ancestry checks.
 
     Raises:
         AssertionError: A result, provenance field, freeze, or ancestry check failed.
     """
-    paths = {path.name: path for path in results_dir.glob("*.json")}
+    paths = {
+        name: results_dir / name
+        for name in CANONICAL_RESULTS
+        if (results_dir / name).is_file()
+    }
     assert set(paths) == set(CANONICAL_RESULTS), (
         "canonical results must contain exactly eight expected artifacts"
     )
@@ -147,7 +191,12 @@ def _aggregate_runs(lib: str, runs: list[dict], *, authors: int) -> dict:
         for metric in METRICS:
             values = [run["ops"][operation][metric] for run in runs]
             result["ops"][operation][metric] = round(statistics.median(values), 4)
-    result["aggregation"] = {"runs": len(runs), "ops": "median across runs of each timing statistic", "schema_import_ms": {"reported": "median", "samples": sorted(imports)}, "schema_rebuild_samples_ms": {"reported": "middle import run's raw series"}}
+    result["aggregation"] = {
+        "runs": len(runs),
+        "ops": "median across runs of each timing statistic",
+        "schema_import_ms": {"reported": "median", "samples": sorted(imports)},
+        "schema_rebuild_samples_ms": {"reported": "middle import run's raw series"},
+    }
     return result
 
 
@@ -160,7 +209,9 @@ def _publish(datasets: dict[str, dict[str, list[dict]]], results_dir: Path) -> N
             outputs[f"{prefix}{lib}.json"] = _aggregate_runs(
                 lib, datasets[prefix][lib], authors=authors
             )
-    provenance = {json.dumps(value["provenance"], sort_keys=True) for value in outputs.values()}
+    provenance = {
+        json.dumps(value["provenance"], sort_keys=True) for value in outputs.values()
+    }
     assert len(provenance) == 1, "runs do not share one source/constraints provenance"
 
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -180,7 +231,11 @@ def _prepare_database(authors: int) -> None:
     (BASE_DIR / "db.sqlite3").unlink(missing_ok=True)
     shutil.rmtree(BASE_DIR / "benchapp" / "migrations", ignore_errors=True)
     python = str(BASE_DIR / ".venv-graphex" / "bin" / "python")
-    env = {**os.environ, "BENCH_LIB": "graphex", "DJANGO_SETTINGS_MODULE": "config.settings"}
+    env = {
+        **os.environ,
+        "BENCH_LIB": "graphex",
+        "DJANGO_SETTINGS_MODULE": "config.settings",
+    }
     _run([python, "-m", "django", "makemigrations", "benchapp"], env=env)
     _run([python, "-m", "django", "migrate", "--run-syncdb"], env=env)
     _run([python, "-m", "django", "seed_bench", "--authors", str(authors)], env=env)
@@ -194,7 +249,11 @@ def _rotated_libraries(run_index: int) -> tuple[str, ...]:
 def _warm_environments() -> None:
     for lib in LIBRARIES:
         python = str(BASE_DIR / f".venv-{lib}" / "bin" / "python")
-        env = {**os.environ, "BENCH_LIB": lib, "DJANGO_SETTINGS_MODULE": "config.settings"}
+        env = {
+            **os.environ,
+            "BENCH_LIB": lib,
+            "DJANGO_SETTINGS_MODULE": "config.settings",
+        }
         code = (
             "import django, importlib; django.setup(); "
             f"importlib.import_module('libs.{lib}.bench_schema')"
@@ -239,10 +298,15 @@ def main() -> None:
         validate_canonical_results()
         return
     if set(args.authors) != {1000, 2000} or args.runs < 3 or args.runs % 2 == 0:
-        parser.error("canonical publication requires authors 1000 2000 and an odd runs >= 3")
+        parser.error(
+            "canonical publication requires authors 1000 2000 and an odd runs >= 3"
+        )
     scratch = BASE_DIR / "scratch" / "publish"
     shutil.rmtree(scratch, ignore_errors=True)
-    datasets = {("" if authors == 1000 else "2x_"): _measure(authors, args.runs, scratch) for authors in args.authors}
+    datasets = {
+        ("" if authors == 1000 else "2x_"): _measure(authors, args.runs, scratch)
+        for authors in args.authors
+    }
     _publish(datasets, BASE_DIR / "results")
 
 

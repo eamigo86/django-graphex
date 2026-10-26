@@ -6,10 +6,42 @@ input types, and directives in the django-graphex package.
 
 from __future__ import annotations
 
+from threading import RLock
 from typing import TYPE_CHECKING, Any
+
+from django.core.exceptions import ImproperlyConfigured
 
 if TYPE_CHECKING:
     from django.db.models import Model
+
+
+def _supersedes(cls: Any, existing: Any) -> bool:
+    """Tell whether "cls" may silently take over the slot of "existing".
+
+    True when "existing" is a library-generated placeholder (the auto output
+    type a mutation or DjangoModelType registered before the user's own type
+    was declared), or when both are the same declaration executed again
+    (same module, qualified name AND public GraphQL name: reload, re-import,
+    notebook re-run). Variants made by one factory function share module and
+    qualified name but carry different public names; they are distinct types.
+
+    Args:
+        cls: the incoming output type.
+        existing: the output type currently registered for the same model.
+
+    Returns:
+        True if "cls" replaces "existing" without error.
+    """
+    if (existing.__module__, existing.__qualname__) == (
+        "django_graphex.base_types",
+        "GenericType",
+    ):
+        return True
+    return (cls.__module__, cls.__qualname__, cls._meta.name) == (
+        existing.__module__,
+        existing.__qualname__,
+        existing._meta.name,
+    )
 
 
 class Registry:
@@ -34,8 +66,12 @@ class Registry:
         self._types: dict[tuple[type[Model], str | None], Any] = {}
         #: model -> canonical DjangoListObjectType.
         self._list_types: dict[type[Model], Any] = {}
+        #: List creation calls back into registration, so its lock is reentrant.
+        self._list_lock = RLock()
         #: enum name -> enum type (its own namespace; never clashes with types).
         self._enums: dict[str, Any] = {}
+        #: Native choices validation and registration share this reentrant lock.
+        self._enum_lock = RLock()
         self._registry_directives: dict[str, Any] = {}
         #: GraphQL type name -> DjangoUnionType subclass. Parallel to ``_types``
         #: (which is (model, for_input)-keyed); a union has no single model so it
@@ -126,7 +162,8 @@ class Registry:
             key: registry key under which to store the enum.
             enum: enum type to register.
         """
-        self._enums[key] = enum
+        with self._enum_lock:
+            self._enums[key] = enum
 
     def get_type_for_enum(self, key: str) -> Any | None:
         """Return the enum type registered for the given key.
@@ -137,7 +174,8 @@ class Registry:
         Returns:
             The registered enum type, or None if absent.
         """
-        return self._enums.get(key)
+        with self._enum_lock:
+            return self._enums.get(key)
 
     def register_directive(self, name: str, directive: Any) -> None:
         """Register a directive with the given name.
@@ -169,6 +207,8 @@ class Registry:
         Raises:
             TypeError: if "cls" is not a DjangoObjectType/DjangoInputObjectType.
             ValueError: if the type's registry does not match this instance.
+            ImproperlyConfigured: if a distinct public output type is already
+                registered for this model in this registry.
         """
         from .types import (
             DjangoInputObjectType,
@@ -194,7 +234,43 @@ class Registry:
             raise ValueError("Registry for a Model must match.")
 
         if not getattr(cls._meta, "skip_registry", False):
-            self._types[(cls._meta.model, for_input)] = cls
+            key = (cls._meta.model, for_input)
+            if for_input is None and issubclass(cls, DjangoObjectType):
+                existing = self._types.get(key)
+                if (
+                    existing is not None
+                    and existing is not cls
+                    and not _supersedes(cls, existing)
+                ):
+                    raise ImproperlyConfigured(
+                        "Model {model} already has public output type {existing} "
+                        "in this Registry; cannot register distinct type "
+                        "{candidate}. Set skip_registry = True on the extra "
+                        "type (it stays usable as an explicit field type) or "
+                        "use a separate Registry for a distinct public "
+                        "schema.".format(
+                            model=cls._meta.model.__name__,
+                            existing=existing.__name__,
+                            candidate=cls.__name__,
+                        )
+                    )
+            if for_input is None and issubclass(cls, DjangoObjectType):
+                self._drop_stale_entry(self._types.get(key), cls)
+            self._types[key] = cls
+
+    @staticmethod
+    def _drop_stale_entry(old: Any, new: Any) -> None:
+        """Forget the compile entry of a type that "new" has just replaced.
+
+        Args:
+            old: the previously registered output type, if any.
+            new: the output type taking over its slot.
+        """
+        if old is None or old is new:
+            return
+        from .core.base import _gdx_output_registry
+
+        _gdx_output_registry[:] = [e for e in _gdx_output_registry if e.cls is not old]
 
     def get_type_for_model(
         self, model: type[Model], for_input: str | None = None
@@ -209,6 +285,14 @@ class Registry:
             The registered GraphQL type, or None if absent.
         """
         return self._types.get((model, for_input))
+
+    def output_types(self) -> list[Any]:
+        """Return every registered model output type.
+
+        Returns:
+            The output (non-input) types, one per registered model.
+        """
+        return [cls for (_, for_input), cls in self._types.items() if for_input is None]
 
     # -- polymorphic (union / interface) types ----------------------------- #
     def register_polymorphic(self, cls: Any) -> None:
@@ -343,7 +427,8 @@ class Registry:
             model: Django model class the list type describes.
             cls: the DjangoListObjectType to register.
         """
-        self._list_types[model] = cls
+        with self._list_lock:
+            self._list_types[model] = cls
 
     def get_list_type_for_model(self, model: type[Model]) -> Any | None:
         """Return the registered "DjangoListObjectType" for a model.
@@ -354,10 +439,12 @@ class Registry:
         Returns:
             The registered list type, or None if absent.
         """
-        return self._list_types.get(model)
+        with self._list_lock:
+            return self._list_types.get(model)
 
 
 registry = None
+_GLOBAL_REGISTRY_LOCK = RLock()
 
 
 def get_global_registry() -> Registry:
@@ -367,6 +454,9 @@ def get_global_registry() -> Registry:
         The shared global registry instance.
     """
     global registry
-    if not registry:
-        registry = Registry()
+    if registry:
+        return registry
+    with _GLOBAL_REGISTRY_LOCK:
+        if not registry:
+            registry = Registry()
     return registry

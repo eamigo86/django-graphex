@@ -11,10 +11,12 @@ Protocol (graphql-transport-ws, primary subprotocol only; the legacy
 "graphql-ws" shim is DEFERRED):
 
   * Handshake — "connection_init" -> "connection_ack". The "connection_init"
-    IS the auth boundary: the authenticated socket carries the user in
-    "self.scope['user']" (no detached per-operation token). The server waits at
-    most "init_timeout" seconds ("connectionInitWaitTimeout") for the first
-    "connection_init"; on timeout it closes with 4408. A SECOND
+    IS the auth boundary: by default, the authenticated socket carries the user
+    in "self.scope['user']" and ignores the initialization payload. An optional
+    "on_connect" callback can verify that payload and replace the scope user
+    before acknowledgement. The server waits at most "init_timeout" seconds
+    ("connectionInitWaitTimeout") for authentication to complete; on timeout it
+    closes with 4408. A SECOND
     "connection_init" closes with 4429 (Too many initialisation requests). A
     "subscribe" BEFORE the ack closes with 4401 (Unauthorized).
   * Operations — each "subscribe{id, payload:{query, variables, operationName}}"
@@ -68,28 +70,37 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
+from asgiref.sync import sync_to_async
 from graphql import (
     ExecutionResult,
+    GraphQLError,
     OperationType,
     create_source_event_stream,
-    parse,
 )
 from graphql.utilities import get_operation_ast
 
-from ...security import format_graphql_error, introspection_disabled
+from ...security import (
+    as_graphql_error,
+    format_client_error,
+    introspection_disabled,
+    mark_client_errors,
+)
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
+    _is_too_deep,
+    _parse_subscription_document,
     _start_source_event_stream,
     _validate_subscription_document,
     operation_selection_error,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Callable, Mapping
+    from collections.abc import Awaitable, Callable
 
     from graphql import DocumentNode, GraphQLSchema
 
@@ -104,22 +115,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-def _as_error(exc: BaseException) -> Any:
-    """Wrap an exception as a "GraphQLError" for a "next{errors}" frame.
-
-    Args:
-        exc: The exception raised while delivering the subscription.
-
-    Returns:
-        A "GraphQLError" carrying the exception message.
-    """
-    from graphql import GraphQLError
-
-    return GraphQLError(str(exc))
-
-
 # graphql-transport-ws close codes.
 _CODE_BAD_REQUEST = 4400
+_CODE_FORBIDDEN = 4403
+_CODE_SUBPROTOCOL_NOT_ACCEPTABLE = 4406
 _CODE_UNAUTHORIZED = 4401
 _CODE_CONNECTION_INIT_TIMEOUT = 4408
 _CODE_SUBSCRIBER_ALREADY_EXISTS = 4409
@@ -260,6 +259,7 @@ def subscription_ws_consumer(
     schema: "GraphQLSchema | None" = None,
     schema_provider: "Callable[[Any], GraphQLSchema] | None" = None,
     init_timeout: float | None = None,
+    on_connect: "Callable[[Mapping[str, Any], Mapping[str, Any]], Awaitable[Any]] | None" = None,
 ) -> type:
     """Build the graphql-transport-ws consumer class bound to "schema".
 
@@ -284,6 +284,10 @@ def subscription_ws_consumer(
             closing with 4408. "None" reads
             "graphql_api_settings.SUBSCRIPTION_CONNECTION_INIT_TIMEOUT"
             (default 3.0). A test may pass a tiny value to avoid waiting.
+        on_connect: Optional async credential callback invoked with the Channels
+            scope and initialization payload. Its authenticated user replaces
+            the scope user for this socket. Without it, initialization retains
+            its existing behavior, including ignored payloads.
 
     Returns:
         A Channels consumer class (an "AsyncJsonWebsocketConsumer" subclass).
@@ -307,16 +311,25 @@ def subscription_ws_consumer(
         """graphql-transport-ws consumer multiplexing N subscriptions per socket."""
 
         async def connect(self) -> None:
-            """Accept the socket on the graphql-transport-ws subprotocol.
+            """Negotiate graphql-transport-ws or reject before accepting.
 
-            The accept advertises the negotiated subprotocol. A
-            "connectionInitWaitTimeout" watchdog is armed: if no
-            "connection_init" arrives in time the socket is closed with 4408.
+            An absent offer is denied before registration or watchdog setup.
+            For accepted sockets, the connectionInitWaitTimeout watchdog
+            closes with 4408 when no connection_init arrives in time.
             """
             self._acked = False
             self._operations: dict[str, asyncio.Task] = {}
             self._sources: dict[str, "ChannelLayerSource"] = {}
             self._closing = False
+            self._init_task: asyncio.Task[None] | None = None
+            if _SUBPROTOCOL not in self.scope.get("subprotocols", ()):
+                logger.warning(
+                    "WebSocket connection rejected: client must offer the "
+                    "'graphql-transport-ws' subprotocol."
+                )
+                await self.close(code=_CODE_SUBPROTOCOL_NOT_ACCEPTABLE)
+                return
+
             # Register so callers/tests can observe the live per-id registry.
             _LIVE_CONSUMERS[id(self.scope)] = self
 
@@ -366,6 +379,16 @@ def subscription_ws_consumer(
                 await super().receive(
                     text_data=text_data, bytes_data=bytes_data, **kwargs
                 )
+            except (ValueError, TypeError, RecursionError):
+                # Undecodable JSON, a non-hashable id, a frame nested past the
+                # decoder's stack: every one is client input that any client
+                # can send, so it is not an ERROR with a traceback.
+                logger.debug(
+                    "Malformed graphql-transport-ws frame; closing with %s.",
+                    _CODE_BAD_REQUEST,
+                    exc_info=True,
+                )
+                await self._close(_CODE_BAD_REQUEST)
             except Exception:  # noqa: BLE001 - a bad frame must not kill the socket
                 logger.exception(
                     "Malformed graphql-transport-ws frame; closing with %s.",
@@ -386,7 +409,7 @@ def subscription_ws_consumer(
 
             msg_type = content.get("type")
             if msg_type == "connection_init":
-                await self._on_connection_init()
+                await self._on_connection_init(content)
             elif msg_type == "ping":
                 await self._on_ping(content)
             elif msg_type == "pong":
@@ -400,14 +423,72 @@ def subscription_ws_consumer(
                 # Unknown / unsupported message type.
                 await self._close(_CODE_BAD_REQUEST)
 
-        async def _on_connection_init(self) -> None:
-            """Answer the first "connection_init" with "connection_ack".
+        async def _on_connection_init(
+            self, content: dict[str, Any] | None = None
+        ) -> None:
+            """Authenticate, when configured, before the first acknowledgement.
 
             A SECOND "connection_init" is a protocol violation -> 4429.
+
+            Args:
+                content: The decoded initialization frame. The default path
+                    ignores its payload as it always has.
             """
-            if self._acked:
+            if self._acked or (on_connect is not None and self._init_task is not None):
                 await self._close(_CODE_TOO_MANY_INIT_REQUESTS)
                 return
+            if on_connect is not None:
+                payload = (content or {}).get("payload")
+                if payload is None:
+                    payload = {}
+                if not isinstance(payload, Mapping):
+                    await self._close(_CODE_BAD_REQUEST)
+                    return
+                self._init_task = asyncio.create_task(
+                    self._authenticate_connection(payload)
+                )
+                self._init_task.add_done_callback(self._on_init_done)
+                return
+            self._acked = True
+            timer = getattr(self, "_init_timer", None)
+            if timer is not None and not timer.done():
+                timer.cancel()
+            await self.send_json({"type": "connection_ack"})
+
+        def _on_init_done(self, task: asyncio.Task[None]) -> None:
+            """Retrieve terminal task errors without revealing credentials.
+
+            Args:
+                task: The completed authentication task.
+            """
+            if not task.cancelled():
+                task.exception()
+
+        async def _authenticate_connection(self, payload: Mapping[str, Any]) -> None:
+            """Apply the callback's authoritative user before acknowledging.
+
+            Args:
+                payload: The normalized initialization payload.
+
+            Raises:
+                asyncio.CancelledError: When the socket closes or times out.
+            """
+            callback = on_connect
+            if callback is None:
+                return
+            try:
+                user = await callback(self.scope, payload)
+                authorized = bool(getattr(user, "is_authenticated", False))
+            except Exception:  # noqa: BLE001 - credential failures are opaque
+                authorized = False
+                user = None
+            if self._closing:
+                return
+            if not authorized:
+                logger.warning("WebSocket connection authentication failed.")
+                await self._close(_CODE_FORBIDDEN)
+                return
+            self.scope["user"] = user
             self._acked = True
             timer = getattr(self, "_init_timer", None)
             if timer is not None and not timer.done():
@@ -428,8 +509,9 @@ def subscription_ws_consumer(
             (one already running) is 4409. A subscribe past
             "MAX_SUBSCRIPTIONS_PER_CONNECTION" gets an "error" frame and the
             socket keeps its running operations. Otherwise an "asyncio.Task"
-            runs the engine for this id; "add_done_callback" removes it from the
-            registry the instant the task ends (normal/error/cancel).
+            runs the engine for this id. Normal completion releases the id
+            before its terminal frame; the done callback removes abnormal or
+            cancelled tasks without disturbing a newer task using that id.
             """
             if not self._acked:
                 await self._close(_CODE_UNAUTHORIZED)
@@ -487,9 +569,8 @@ def subscription_ws_consumer(
 
             task = asyncio.ensure_future(self._run_operation_framed(op_id, payload))
             self._operations[op_id] = task
-            # strawberry.channels hardening: drop the id the instant its task ends
-            # (normal completion, error, OR abnormal cancel) so the registry never
-            # leaks a dead operation.
+            # Drop abnormal or cancelled tasks without disturbing a replacement
+            # that reuses the id after an earlier server complete.
             task.add_done_callback(lambda _t, _id=op_id: self._operation_done(_id, _t))
 
         def _operation_done(self, op_id: str, task: asyncio.Task) -> None:
@@ -504,7 +585,8 @@ def subscription_ws_consumer(
                 op_id: The operation id whose task ended.
                 task: The finished operation task.
             """
-            self._operations.pop(op_id, None)
+            if self._operations.get(op_id) is task:
+                self._operations.pop(op_id, None)
             if task.cancelled():
                 return
             exc = task.exception()
@@ -515,21 +597,50 @@ def subscription_ws_consumer(
                     exc_info=exc,
                 )
 
-        def _resolve_schema(self) -> "GraphQLSchema":
+        async def _resolve_schema(self) -> "GraphQLSchema":
             """Return the schema for THIS connection (provider wins, cached once).
 
             When a "schema_provider" was supplied it is resolved ONCE per socket
             using "scope['user']" and cached on the instance, so every
             multiplexed operation on this connection shares the SAME pruned schema
-            (matching the HTTP pruned schema for that user). Otherwise the baked
-            "schema" is returned unchanged.
+            (matching the HTTP pruned schema for that user). The synchronous
+            provider runs in a thread-sensitive worker so permission reads
+            cannot block the event loop. Otherwise the baked "schema" is
+            returned unchanged.
+
+            Returns:
+                The connection's schema, cached after successful resolution.
+
+            Raises:
+                Exception: Propagates any exception from the custom provider;
+                    the operation wrapper frames it without caching a schema.
             """
             cached = getattr(self, "_conn_schema", None)
             if cached is not None:
                 return cached
             if schema_provider is not None:
                 user = self.scope.get("user") if self.scope else None
-                resolved = schema_provider(user)
+
+                def _resolve_provider() -> "GraphQLSchema":
+                    """Resolve and cache one provider result on the sync worker.
+
+                    Returns:
+                        The existing or newly resolved connection schema.
+
+                    Raises:
+                        Exception: Propagates the provider's failure unchanged.
+                    """
+                    # Several operations may start on one socket together.
+                    # Recheck in the thread-sensitive worker so the provider
+                    # still runs once, even while another operation awaits it.
+                    cached = getattr(self, "_conn_schema", None)
+                    if cached is not None:
+                        return cached
+                    resolved = schema_provider(user)
+                    self._conn_schema = resolved
+                    return resolved
+
+                return await sync_to_async(_resolve_provider, thread_sensitive=True)()
             else:
                 resolved = schema
             self._conn_schema = resolved
@@ -560,11 +671,10 @@ def subscription_ws_consumer(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - framed, never escapes
-                logger.exception(
-                    "Subscription operation %r failed before it could stream.",
-                    op_id,
+                # Masked and logged once by the shared formatter (DEBUG: raw).
+                await self._send_error(
+                    op_id, [format_client_error(exc, None, "WebSocket")]
                 )
-                await self._send_error(op_id, [{"message": str(exc)}])
 
         async def _run_operation(self, op_id: str, payload: dict[str, Any]) -> None:
             """Run one subscription operation: subscribe -> next* -> complete.
@@ -584,9 +694,14 @@ def subscription_ws_consumer(
                 return
 
             try:
-                document = parse(query)
-            except Exception as exc:  # parse error → error frame (no source)
-                await self._send_error(op_id, [{"message": f"Syntax error: {exc}"}])
+                document = _parse_subscription_document(query)
+            except GraphQLError as exc:  # parse error → error frame (no source)
+                if _is_too_deep(exc):
+                    await self._send_error(
+                        op_id, [format_client_error(exc, None, "WebSocket")]
+                    )
+                else:
+                    await self._send_error(op_id, [{"message": f"Syntax error: {exc}"}])
                 return
 
             operation_ast = get_operation_ast(document, payload.get("operationName"))
@@ -613,7 +728,7 @@ def subscription_ws_consumer(
             context = TransportContext(self.scope)
 
             # Per-connection schema (provider wins, resolved once via scope user).
-            conn_schema = self._resolve_schema()
+            conn_schema = await self._resolve_schema()
 
             # Subscription-less (fully-pruned) schema short-circuit: a per-user
             # pruned schema whose Subscription root is None would make graphql-core
@@ -651,7 +766,11 @@ def subscription_ws_consumer(
             )
             if validation_errors:
                 await self._send_error(
-                    op_id, [format_graphql_error(e) for e in validation_errors]
+                    op_id,
+                    [
+                        format_client_error(e, None, "WebSocket")
+                        for e in mark_client_errors(validation_errors)
+                    ],
                 )
                 return
 
@@ -674,14 +793,16 @@ def subscription_ws_consumer(
                 # still be framed for this operation. Otherwise an escaping
                 # exception could kill this task and strand other subscriptions
                 # multiplexed on the same socket.
-                await self._send_error(op_id, [format_graphql_error(exc)])
+                await self._send_error(
+                    op_id, [format_client_error(exc, None, "WebSocket")]
+                )
                 return
 
             if isinstance(source_or_result, ExecutionResult):
                 errors = source_or_result.errors or []
                 await self._send_error(
                     op_id,
-                    [format_graphql_error(e) for e in errors]
+                    [format_client_error(e, None, "WebSocket") for e in errors]
                     or [{"message": "Subscription could not be started."}],
                 )
                 return
@@ -696,6 +817,7 @@ def subscription_ws_consumer(
                 operation_name=payload.get("operationName"),
             )
             delivery = drive_subscription(source, spec, context)
+            cancelled = False
             try:
                 try:
                     async for result in delivery:
@@ -711,23 +833,37 @@ def subscription_ws_consumer(
                     # it as ``next{errors}`` — matching the SSE transport and
                     # the spec's "errors after execution started" shape — and
                     # fall through to the terminal ``complete``.
-                    logger.exception(
-                        "Subscription delivery failed for operation %r.", op_id
-                    )
+                    # The shared formatter masks and logs it once ("_send_next").
                     await self._send_next(
-                        op_id, ExecutionResult(data=None, errors=[_as_error(exc)])
+                        op_id,
+                        ExecutionResult(data=None, errors=[as_graphql_error(exc)]),
                     )
-                # The source ended (out-of-band close) → the terminal complete.
-                # A client-initiated complete cancels this task before this point,
-                # so it never reaches the server ``complete`` (per the spec).
-                await self.send_json({"id": op_id, "type": "complete"})
             except asyncio.CancelledError:
                 # Client complete / disconnect cancelled this operation: tear the
                 # source down (group_discard ITS groups), do NOT emit complete.
+                cancelled = True
                 raise
             finally:
-                self._sources.pop(op_id, None)
-                await delivery.aclose()
+                close_error: Exception | None = None
+                try:
+                    await delivery.aclose()
+                except Exception as exc:  # noqa: BLE001 - preserve framed failure
+                    # Keep the historical complete-then-error frame sequence
+                    # when backend cleanup fails after normal stream completion.
+                    # After a client cancel, the close failure instead overrides
+                    # cancellation so the wrapper emits its existing error frame.
+                    if cancelled:
+                        raise
+                    close_error = exc
+                finally:
+                    self._sources.pop(op_id, None)
+            # No other operation can own this id yet: the slot remains occupied
+            # until this point. Free it before exposing completion to the client;
+            # the task's later done callback checks identity before removing it.
+            self._operations.pop(op_id, None)
+            await self.send_json({"id": op_id, "type": "complete"})
+            if close_error is not None:
+                raise close_error
 
         async def _on_complete(self, content: dict[str, Any]) -> None:
             """Client "complete{id}": cancel ONLY that id (discard ITS groups).
@@ -754,8 +890,9 @@ def subscription_ws_consumer(
                 # The task's finally ran source.aclose() (group_discard); a
                 # cancel/teardown error here must not break the socket.
                 pass
-            self._operations.pop(op_id, None)
-            self._sources.pop(op_id, None)
+            if self._operations.get(op_id) is task:
+                self._operations.pop(op_id, None)
+                self._sources.pop(op_id, None)
 
         async def disconnect(self, code: int) -> None:
             """Disconnect: cancel ALL operation tasks + "group_discard" all.
@@ -769,6 +906,9 @@ def subscription_ws_consumer(
             timer = getattr(self, "_init_timer", None)
             if timer is not None and not timer.done():
                 timer.cancel()
+            init_task = getattr(self, "_init_task", None)
+            if init_task is not None and not init_task.done():
+                init_task.cancel()
             for op_id in list(self._operations):
                 await self._cancel_operation(op_id)
             # Defensive sweep: any source whose task was already gone but whose
@@ -788,7 +928,9 @@ def subscription_ws_consumer(
             if result.data is not None:
                 payload["data"] = result.data
             if result.errors:
-                payload["errors"] = [format_graphql_error(e) for e in result.errors]
+                payload["errors"] = [
+                    format_client_error(e, None, "WebSocket") for e in result.errors
+                ]
             await self.send_json({"id": op_id, "type": "next", "payload": payload})
 
         async def _send_error(self, op_id: str, errors: list[Any]) -> None:
@@ -818,6 +960,17 @@ def subscription_ws_consumer(
             if self._closing:
                 return
             self._closing = True
+            current = asyncio.current_task()
+            timer = getattr(self, "_init_timer", None)
+            if timer is not None and timer is not current and not timer.done():
+                timer.cancel()
+            init_task = getattr(self, "_init_task", None)
+            if (
+                init_task is not None
+                and init_task is not current
+                and not init_task.done()
+            ):
+                init_task.cancel()
             # Active teardown BEFORE delegating to the server: cancel every
             # operation task + group_discard its groups (mirrors disconnect).
             for op_id in list(self._operations):

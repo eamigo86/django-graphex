@@ -28,7 +28,7 @@ class SettingsTest(TestCase):
         # Each setting must resolve, and to its documented default value.
         expected_defaults = {
             "DEFAULT_PAGINATION_CLASS": LimitOffsetGraphqlPagination,
-            "DEFAULT_PAGE_SIZE": None,
+            "DEFAULT_PAGE_SIZE": 100,
             "MAX_PAGE_SIZE": None,
             "CACHE_ACTIVE": False,
             "CACHE_TIMEOUT": 300,

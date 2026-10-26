@@ -5,15 +5,20 @@
 - Private queries (require auth): "me" and "myNotes" (scoped to the user).
 - Mutations: Note create/update/delete via DjangoModelType + permissions, plus
   purpose-built account registration through Django's "create_user()".
+- Open vs gated writes: demo-friendly creates stay in "RootMutation"; the
+  update/delete operations of the model mutations live in "PrivateMutation".
 - Nested writes: "postWithCommentsCreate", gated by the child's own permission
   ("CommentModelType") the way 2.2.0 requires.
 - Subscriptions: public "postSubscription" and private "noteSubscription".
 """
 
+import logging
 from typing import Any
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Model, QuerySet
 from django.utils import timezone
 from graphql import GraphQLError, GraphQLInt, GraphQLResolveInfo, GraphQLString
@@ -75,6 +80,11 @@ from .models import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+# Generic refusal for a registration that cannot proceed for a reason the caller
+# must not learn (a taken username).
+REGISTRATION_FAILED = "Registration failed. Try different details."
 
 
 # --------------------------------------------------------------------------- #
@@ -140,7 +150,8 @@ class TagType(DjangoObjectType):
 
     Registering this type makes "Post.tags" (a many-to-many) resolve as a
     nested list with the uniform results/totalCount shape, plus filtering and
-    pagination.
+    pagination. Its automatic reverse posts list applies PostType.get_queryset
+    before exposing members or their count.
     """
 
     class Meta:
@@ -238,34 +249,29 @@ class PostType(DjangoObjectType):
     # Try it: anonymous request → only PUBLISHED posts returned.
     #         authenticated request (log in via /admin) → all posts visible.
     #
-    # READ THE BOUNDARY BEFORE YOU COPY THIS — it is a FIELD-level scope, not a
-    # model-level one, and it is documented as such in
-    # docs/usage/types.md#relation-scope-hatch ("Remaining boundary: auto-expanded
-    # relation fields"). An AUTO-EXPANDED relation does not call it, in either
-    # direction, and the seed data below makes that visible rather than hiding it:
+    # The destination hook also scopes automatic FK and reverse-FK output reads.
+    # This is not a global row policy: the Playground declares a direct author
+    # FK-ID filter, not an author-field traversal. Automatic reverse-FK filter
+    # traversals and M2M filters also use the destination hook. This example
+    # declares no M2M or forward OneToOne filter path; custom resolvers retain
+    # separate contracts. See docs/usage/filtering.md.
     #
     #   { posts { results { title status } } }                  scoped   (published only)
     #   { categories { name posts { title status } } }          scoped   (declared hatch,
     #                                                                     see CategoryType)
-    #   { authors { results { posts { results { status } } } } } NOT scoped — drafts
-    #                                                            come back through the
-    #                                                            auto-expanded relation
+    #   { authors { results { posts { results { status } } } } } scoped   (published only)
     #
-    # The third one is the documented behaviour, not a bug: rebuilding the prefetch
-    # queryset inside the resolver would break window pagination and the .only()
-    # plan. If you need the rows hidden through the relation too, declare the field
-    # — CategoryType.posts above is that same query with the hatch mounted.
+    # CategoryType.posts remains declared to demonstrate a plain-list wire shape.
     @classmethod
     def get_queryset(cls, queryset: QuerySet, info: GraphQLResolveInfo) -> QuerySet:
         """Scope every top-level Post query by the requester's auth state.
 
-        This hook runs on all four top-level field types (single, list,
-        paginated, list-object) before the query optimizer, so anonymous
-        callers see only published posts while authenticated callers see all.
-
-        It is a FIELD-level scope: an auto-expanded relation does not call it.
-        See the comment above and the relation-scope hatch in
-        "docs/usage/types.md".
+        This hook runs on all four top-level field types and on automatic
+        FK/reverse-FK output reads, so anonymous callers see only published
+        posts while authenticated callers see all. Forward-FK and reverse-FK
+        and M2M filters have destination-hook rules, while direct source FK-ID
+        filters and custom resolvers retain separate contracts; see
+        docs/usage/filtering.md.
 
         Args:
             queryset: The base Post queryset to scope.
@@ -294,20 +300,14 @@ class CategoryType(DjangoObjectType):
     """
 
     # ---- Relation-scope hatch, to-MANY arm ---------------------------------- #
-    # An AUTO-EXPANDED reverse relation reads out of the parent's prefetch cache
-    # and therefore never calls the child type's `get_queryset`. Left alone,
-    # `categories { posts { results { status } } }` hands an ANONYMOUS caller the
-    # DRAFT posts that `PostType.get_queryset` exists to hide — the leak
-    # docs/usage/types.md calls out under "Remaining boundary".
-    #
-    # Declaring the relation as a DjangoFilterListField replaces the auto-expanded
-    # container with a field that carries a resolver of its own, and that resolver
-    # runs the hook. Two costs, both deliberate:
+    # Automatic reverse-FK reads now apply PostType.get_queryset too. Declaring
+    # this relation as a DjangoFilterListField retains a separate wire shape
+    # and makes the filter-axis contract explicit. Two costs remain:
     #
     #   1. The WIRE SHAPE changes from the container (`posts { results { … } }`)
     #      to a plain list (`posts { … }`). Compare it against
-    #      `authors { results { posts { results { … } } } }`, which is still the
-    #      auto-expanded container and still shows drafts to anonymous callers.
+    #      `authors { results { posts { results { … } } } }`, which is the
+    #      auto-expanded container and also hides drafts from anonymous callers.
     #   2. `posts__…` leaves the filter axis. The entry below is REFUSED and
     #      STOPS THE SCHEMA BUILDING — it is not dropped in silence:
     #
@@ -378,11 +378,9 @@ class AuthorType(DjangoObjectType):
     # Explicit nested list (instead of the auto-generated one) so we can attach a
     # per-field optimize hook below. Reuses PostListType's pagination + filtering.
     #
-    # NOTE this is still the AUTO-EXPANDED shape, only mounted by hand: it reads
-    # from the prefetch cache, so PostType.get_queryset does NOT run here and an
-    # anonymous caller sees drafts through it. That is the documented boundary —
-    # CategoryType.posts is the same relation with the hatch mounted. See
-    # docs/usage/types.md#relation-scope-hatch.
+    # NOTE this retains the auto-expanded container shape while attaching an
+    # optimize hook. PostType.get_queryset still scopes its reverse-FK rows;
+    # CategoryType.posts demonstrates the separate plain-list shape.
     posts = DjangoNestedListObjectField(PostListType, accessor="posts")
 
     # ---- Relation-scope hatch, to-ONE arm ----------------------------------- #
@@ -872,6 +870,8 @@ class PostSubscription(Subscription):
     """Public subscription broadcasting post changes on the "posts" stream.
 
     Any client may subscribe; each notification carries the full post payload.
+    Subscriptions never run "PostType.get_queryset", so the same visibility
+    rule is restated by "subscription_scope" below.
     """
 
     class Meta:
@@ -883,6 +883,28 @@ class PostSubscription(Subscription):
         model = Post
         stream = "posts"
         payload_mode = "full"
+
+    @classmethod
+    def subscription_scope(cls, info: GraphQLResolveInfo, **kwargs: Any) -> dict | None:
+        """Mirror "PostType.get_queryset": anonymous subscribers get published posts.
+
+        Evaluated at subscribe time and enforced per event at delivery, on both
+        the WebSocket and the SSE transport. "None" means no scoping, which is
+        correct only for the authenticated branch (they see every post); the
+        anonymous branch always returns a mapping, so it fails closed.
+
+        Args:
+            info: The GraphQL resolve info for the subscribe request.
+            **kwargs: The subscription arguments (unused here).
+
+        Returns:
+            scope: "None" for an authenticated subscriber, otherwise a filter
+                mapping restricting notifications to published posts.
+        """
+        user = getattr(info.context, "user", None)
+        if user is not None and user.is_authenticated:
+            return None
+        return {"status": Post.Status.PUBLISHED.value}
 
 
 class CommentSubscription(Subscription):
@@ -1231,6 +1253,14 @@ class RegisterUser(Mutation):
     Registration is deliberately hand-written: "create_user()" hashes the
     password and Django supplies safe "False" defaults for both privilege
     flags. The only accepted inputs are a username and password.
+
+    Two checks a generated write would not give you. The password goes through
+    Django's "AUTH_PASSWORD_VALIDATORS" (configured in "config/settings.py")
+    BEFORE the account exists, and a taken username answers with the same
+    generic refusal as any other failure instead of the raw database error.
+    A public sign-up still reveals a taken name to someone who tries a strong
+    password (the call succeeds for a free one); real deployments add rate
+    limiting or e-mail verification on top.
     """
 
     class Arguments:
@@ -1244,6 +1274,7 @@ class RegisterUser(Mutation):
 
     ok = BooleanField()
     user = Field(UserType)
+    error = CharField()
 
     @classmethod
     def mutate(
@@ -1252,7 +1283,7 @@ class RegisterUser(Mutation):
         info: GraphQLResolveInfo,
         **kwargs: Any,
     ) -> "RegisterUser":
-        """Hash the supplied password and return the safe user projection.
+        """Validate the username and password, hash it and return the safe user projection.
 
         Args:
             root: The parent resolver value, unused for this root mutation.
@@ -1260,13 +1291,37 @@ class RegisterUser(Mutation):
             **kwargs: The validated username and password arguments.
 
         Returns:
-            registration: A successful payload containing the created user.
+            registration: A successful payload containing the created user, or
+                "ok=False" with the username or password-policy messages, or with a
+                generic message when the username is already taken.
         """
-        user = get_user_model().objects.create_user(
-            username=kwargs["username"],
-            password=kwargs["password"],
-        )
-        return cls(ok=True, user=user)
+        model = get_user_model()
+        try:
+            # The same normalisation and field rules the admin applies: the
+            # unicode-username validator (no spaces or NUL bytes), max_length
+            # and "blank". Uniqueness is left to the INSERT below.
+            username = model._meta.get_field("username").clean(
+                model.normalize_username(kwargs["username"]), None
+            )
+        except ValidationError as exc:
+            return cls(ok=False, user=None, error=" ".join(exc.messages))
+        try:
+            # The candidate instance lets UserAttributeSimilarityValidator
+            # compare the password with the requested username.
+            validate_password(kwargs["password"], user=model(username=username))
+        except ValidationError as exc:
+            return cls(ok=False, user=None, error=" ".join(exc.messages))
+        try:
+            # A savepoint keeps the failed INSERT from poisoning an outer
+            # transaction (ATOMIC_REQUESTS, tests).
+            with transaction.atomic():
+                user = model.objects.create_user(
+                    username=username, password=kwargs["password"]
+                )
+        except IntegrityError:
+            # Never echo the database text or say the name exists.
+            return cls(ok=False, user=None, error=REGISTRATION_FAILED)
+        return cls(ok=True, user=user, error=None)
 
 
 # --------------------------------------------------------------------------- #
@@ -1428,8 +1483,9 @@ class UploadDocument(Mutation):
 
         Returns:
             payload: A payload with "ok=True", the saved document name and the
-                stored record, or "ok=False" and the error message when
-                decoding or saving fails.
+                stored record, or "ok=False" and an error: the library's own
+                validation message for a bad payload, or a generic message
+                (the detail is logged) for an unexpected failure.
         """
         name = kwargs["name"]
         file = kwargs["file"]
@@ -1441,13 +1497,25 @@ class UploadDocument(Mutation):
             # The global MAX_UPLOAD_SIZE from settings also applies when
             # max_size is not passed — both are checked.
             uploaded = upload_input.to_uploaded_file()  # uses MAX_UPLOAD_SIZE
+            # The same allow-list "documentCreate" applies to a multipart part.
+            Document._meta.get_field("attached_file").run_validators(uploaded)
             doc = Document(name=name)
             doc.attached_file.save(uploaded.name, uploaded, save=True)
             # Pass every payload field explicitly (incl. error=None): native does
             # not auto-default unset payload fields.
             return cls(ok=True, name=doc.name, document=doc, error=None)
-        except Exception as exc:  # noqa: BLE001
-            return cls(ok=False, name=name, document=None, error=str(exc))
+        except ValidationError as exc:
+            return cls(ok=False, name=name, document=None, error=exc.messages[0])
+        except GraphQLError as exc:
+            # The library's own validation (bad base64, over the size cap) is
+            # written for the caller and safe to show.
+            return cls(ok=False, name=name, document=None, error=exc.message)
+        except Exception:  # noqa: BLE001
+            # Anything else (storage, configuration) is an operator problem and
+            # may carry paths or settings: log it, tell an anonymous caller only
+            # that the upload failed.
+            logger.exception("uploadDocument failed")
+            return cls(ok=False, name=name, document=None, error="Upload failed.")
 
 
 # --------------------------------------------------------------------------- #
@@ -1484,16 +1552,18 @@ compile_all_outputs()
 
 
 class RootMutation(ObjectType):
-    """Root mutation aggregating every mutation field in this schema.
+    """Root mutation fields anyone can run, deliberately open for the demo.
 
     Combines auto-generated CRUD for neutral domain models with purpose-built
     account registration, category creation, document upload and nested writes.
+    The README lists exactly which of these accept an anonymous caller:
+    "postCreate", "postWithCommentsCreate" (without comments), "createCategory",
+    "documentCreate", "uploadDocument" and "registerUser". Their modifying or
+    destructive siblings live in "PrivateMutation" below.
     """
 
     note_create, note_delete, note_update = NoteModelType.MutationFields()
     post_create = PostMutation.CreateField()
-    post_update = PostMutation.UpdateField()
-    post_delete = PostMutation.DeleteField()
     # Gated by CommentModelType.permission_classes — the same gate the nested
     # postWithCommentsCreate below now runs for each inline comment.
     comment_create, comment_delete, comment_update = CommentModelType.MutationFields()
@@ -1505,12 +1575,26 @@ class RootMutation(ObjectType):
     register_user = RegisterUser.Field()
     # Nested-write demo: single operation creates the Post + its Comment(s).
     post_with_comments_create = PostWithCommentsMutation.CreateField()
-    # Multipart file upload (2.2.0). Both operations run the merge — see the
-    # curl invocation on DocumentMutation.
+    # Multipart file upload (2.2.0): create is open so the curl demo needs no
+    # session; the update half is private, see PrivateMutation.
     document_create = DocumentMutation.CreateField()
-    document_update = DocumentMutation.UpdateField()
     # Base64 file upload demo (v1.3.0), writing the same column.
     upload_document = UploadDocument.Field()
+
+
+class PrivateMutation(ObjectType):
+    """Root mutation fields that require an authenticated user.
+
+    Enforced by AuthenticatedFieldsMiddleware, the same gate as "PrivateQuery".
+    "DjangoModelMutation" honors no "permission_classes", so the supported way
+    to protect one of its operations is to mount the field under a private
+    root. The creates stay open in "RootMutation"; the operations that modify
+    or destroy existing rows do not.
+    """
+
+    post_update = PostMutation.UpdateField()
+    post_delete = PostMutation.DeleteField()
+    document_update = DocumentMutation.UpdateField()
 
 
 # --------------------------------------------------------------------------- #
@@ -1548,6 +1632,7 @@ schema = DjangoGraphQLSchema(
     query=PublicQuery,
     private_query=PrivateQuery,
     mutation=RootMutation,
+    private_mutation=PrivateMutation,
     subscription=PublicSubscriptions,
     private_subscription=PrivateSubscriptions,
     directives=all_directives,

@@ -11,15 +11,17 @@ field; scalar leaves do not count. Two sources combine, most-restrictive wins:
   returning that type).
 
 The rule resolves field types from the schema, so it follows inline and named
-fragment spreads (cycles are guarded) -- a fragment cannot be used to bypass it.
+fragment spreads (cyclic documents are rejected up front) -- a fragment cannot be used to bypass it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from graphql import GraphQLError, OperationType, get_named_type
 from graphql.language import (
+    DocumentNode,
     FieldNode,
     FragmentSpreadNode,
     InlineFragmentNode,
@@ -28,13 +30,63 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from ._fragment_cycles import find_fragment_cycle
 from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
     from graphql import GraphQLNamedType, OperationDefinitionNode, SelectionSetNode
     from graphql.validation import ValidationContext
 
-__all__ = ("DepthLimitValidationRule",)
+#: Hard ceiling on nested object levels, applied even when MAX_QUERY_DEPTH is
+#: None or larger. Python's stack cannot execute deeper documents: graphql-core
+#: completes each level through several nested frames, and with real (cyclic)
+#: data a request under pytest's deeper stack fails with an internal error from
+#: about 130 levels (127 ran cleanly, 130 failed); its parser gives up on
+#: inline documents at about 232. Fragments hide depth from the parser, so the
+#: rule enforces this value for them too. 100 leaves a safety margin below the
+#: measured execution failure point.
+_MAX_STRUCTURAL_DEPTH = 100
+
+__all__ = ("DepthLimitValidationRule", "StackDepthError", "run_validation")
+
+
+class StackDepthError(GraphQLError):
+    """Mark a depth error caused by the caller's stack, not by the document.
+
+    Whether validation runs out of stack depends on how deep the calling
+    thread already is, so this verdict must never be memoized per document.
+    """
+
+
+def run_validation(
+    validate_fn: Callable[..., Any], *args: Any, **kwargs: Any
+) -> list[GraphQLError]:
+    """Run graphql-core validation, answering stack exhaustion as a client error.
+
+    graphql-core's own rules (for example "NoFragmentCycles") recurse once per
+    fragment link, so a long but acyclic fragment chain can exhaust the Python
+    stack inside the library, before or beside this module's iterative rules.
+    Such a document is the client's fault, not a server fault, so it becomes a
+    depth error instead of an HTTP 500. Only validation is guarded: errors raised
+    while resolving fields are never routed through here.
+
+    Args:
+        validate_fn: The validate callable (graphql-core's "validate").
+        *args: Positional arguments forwarded to it.
+        **kwargs: Keyword arguments forwarded to it.
+
+    Returns:
+        The validation errors, or one depth error when the stack ran out.
+    """
+    try:
+        return list(validate_fn(*args, **kwargs))
+    except RecursionError:
+        return [
+            StackDepthError(
+                "Query is nested too deeply to be validated.",
+                extensions={"code": "QUERY_TOO_DEEP"},
+            )
+        ]
 
 
 class _Constraint(NamedTuple):
@@ -87,12 +139,21 @@ class DepthLimitValidationRule(ValidationRule):
             context: The graphql-core validation context.
         """
         super().__init__(context)
-        self._errored = False
         #: (fragment, parent type, remaining budget) triples already proven
         #: violation-free, so a re-spread can be skipped instead of re-walked.
         self._clean_spreads: set[tuple[str, str, int | None]] = set()
         #: Counts cycle-guard short-circuits so truncated walks are not cached.
         self._cycle_cuts = 0
+        self._cyclic_fragments = False
+
+    def enter_document(self, node: DocumentNode, *_args: Any) -> None:
+        """Check the fragment graph before any operation's depth expansion.
+
+        Args:
+            node: The document definition root.
+            *_args: Additional visitor arguments supplied by graphql-core.
+        """
+        self._cyclic_fragments = find_fragment_cycle(node) is not None
 
     def enter_operation_definition(
         self, node: OperationDefinitionNode, *_args: Any
@@ -103,6 +164,8 @@ class DepthLimitValidationRule(ValidationRule):
             node: The operation definition AST node.
             *_args: Additional visitor arguments supplied by graphql-core.
         """
+        if self._cyclic_fragments:
+            return
         schema = self.context.schema
         root_type = {
             OperationType.QUERY: schema.query_type,
@@ -112,7 +175,6 @@ class DepthLimitValidationRule(ValidationRule):
         if root_type is None:
             return
 
-        self._errored = False
         constraints: list[_Constraint] = []
         # Read via the module so `override_settings` (which rebuilds the cached
         # settings object) is honored.
@@ -126,8 +188,10 @@ class DepthLimitValidationRule(ValidationRule):
             # tuple, so a hardcoded "query" would refuse a subscription for an
             # operation it never wrote.
             constraints.append(_Constraint(int(global_max), 0, node.operation.value))
+        # Last, so a stricter configured limit is the one reported.
+        constraints.append(_Constraint(_MAX_STRUCTURAL_DEPTH, 0, node.operation.value))
 
-        self._walk(node.selection_set, root_type, 0, constraints, frozenset())
+        self._walk(node.selection_set, root_type, 0, constraints)
 
     def _walk(
         self,
@@ -135,118 +199,142 @@ class DepthLimitValidationRule(ValidationRule):
         parent_type: GraphQLNamedType,
         depth: int,
         constraints: list[_Constraint],
-        seen_fragments: frozenset[str],
     ) -> None:
-        """Recurse a selection set, counting object nesting against budgets.
+        """Walk a selection tree, counting object nesting against budgets.
+
+        The walk keeps an explicit stack of selection iterators instead of
+        recursing, so neither a long fragment chain nor deep inline nesting can
+        exhaust the Python stack. Fragment cycles are rejected up front; the
+        path guard is a defense for callers that reach this walker directly.
 
         Args:
             selection_set: The selection set to walk.
             parent_type: The (named) type the selections are resolved against.
-            depth: The current object-nesting depth from the operation root.
+            depth: The object-nesting depth of the selection set from the root.
             constraints: The active depth budgets.
-            seen_fragments: Fragment names already entered (cycle guard).
         """
-        if self._errored:
-            return
-
-        fields = getattr(parent_type, "fields", None)
-
-        for selection in selection_set.selections:
-            # Honor @skip / @include directives.  Validation rules run before
-            # variable binding, so variable_values is always empty here — the
-            # conservative policy applies (unresolvable variable conditions are
-            # never skipped).
-            if is_selection_skipped(selection, {}):
-                continue
-
-            if isinstance(selection, FieldNode):
-                if selection.selection_set is None or selection.name.value.startswith(
-                    "__"
-                ):
-                    continue  # scalar leaf or introspection meta-field
-                child_depth = depth + 1
-                for constraint in constraints:
-                    if child_depth - constraint.origin > constraint.limit:
-                        self._report(constraint, selection)
-                        return
-                if not fields or selection.name.value not in fields:
+        schema = self.context.schema
+        #: (selections, parent type, depth, constraints, memo key or None, cycle
+        #: cuts when the spread was entered)
+        stack: list[tuple[Any, GraphQLNamedType, int, list[_Constraint], Any, int]] = [
+            (iter(selection_set.selections), parent_type, depth, constraints, None, 0)
+        ]
+        #: Fragment names on the current path (the cycle guard).
+        active: set[str] = set()
+        while stack:
+            selections, parent_type, depth, constraints, key, cuts_before = stack[-1]
+            fields = getattr(parent_type, "fields", None)
+            for selection in selections:
+                # Honor @skip / @include directives.  Validation rules run
+                # before variable binding, so variable_values is always empty
+                # here — the conservative policy applies (unresolvable
+                # variable conditions are never skipped).
+                if is_selection_skipped(selection, {}):
                     continue
-                field_type = get_named_type(fields[selection.name.value].type)
-                if field_type is None:
-                    continue
-                child_constraints = constraints
-                max_depth = _type_max_depth(field_type)
-                if max_depth is not None:
-                    child_constraints = [
-                        *constraints,
-                        _Constraint(max_depth, child_depth, field_type.name),
-                    ]
-                self._walk(
-                    selection.selection_set,
-                    field_type,
-                    child_depth,
-                    child_constraints,
-                    seen_fragments,
-                )
 
-            elif isinstance(selection, InlineFragmentNode):
-                # A type condition narrows the type but adds no nesting level.
-                frag_type = parent_type
-                if selection.type_condition is not None:
-                    frag_type = (
-                        self.context.schema.get_type(
-                            selection.type_condition.name.value
+                if isinstance(selection, FieldNode):
+                    if (
+                        selection.selection_set is None
+                        or selection.name.value.startswith("__")
+                    ):
+                        continue  # scalar leaf or introspection meta-field
+                    child_depth = depth + 1
+                    for constraint in constraints:
+                        if child_depth - constraint.origin > constraint.limit:
+                            self._report(constraint, selection)
+                            return
+                    if not fields or selection.name.value not in fields:
+                        continue
+                    field_type = get_named_type(fields[selection.name.value].type)
+                    if field_type is None:
+                        continue
+                    child_constraints = constraints
+                    max_depth = _type_max_depth(field_type)
+                    if max_depth is not None:
+                        child_constraints = [
+                            *constraints,
+                            _Constraint(max_depth, child_depth, field_type.name),
+                        ]
+                    stack.append(
+                        (
+                            iter(selection.selection_set.selections),
+                            field_type,
+                            child_depth,
+                            child_constraints,
+                            None,
+                            0,
                         )
+                    )
+                    break
+
+                if isinstance(selection, InlineFragmentNode):
+                    # A type condition narrows the type but adds no nesting level.
+                    frag_type = parent_type
+                    if selection.type_condition is not None:
+                        frag_type = (
+                            schema.get_type(selection.type_condition.name.value)
+                            or parent_type
+                        )
+                    stack.append(
+                        (
+                            iter(selection.selection_set.selections),
+                            frag_type,
+                            depth,
+                            constraints,
+                            None,
+                            0,
+                        )
+                    )
+                    break
+
+                if isinstance(selection, FragmentSpreadNode):
+                    name = selection.name.value
+                    if name in active:
+                        self._cycle_cuts += 1
+                        continue  # cyclic spread; the schema rejects it separately
+                    fragment = self.context.get_fragment(name)
+                    if fragment is None:
+                        continue
+                    frag_type = (
+                        schema.get_type(fragment.type_condition.name.value)
                         or parent_type
                     )
-                self._walk(
-                    selection.selection_set,
-                    frag_type,
-                    depth,
-                    constraints,
-                    seen_fragments,
-                )
-
-            elif isinstance(selection, FragmentSpreadNode):
-                name = selection.name.value
-                if name in seen_fragments:
-                    self._cycle_cuts += 1
-                    continue  # cyclic spread; the schema rejects it separately
-                fragment = self.context.get_fragment(name)
-                if fragment is None:
-                    continue
-                frag_type = (
-                    self.context.schema.get_type(fragment.type_condition.name.value)
-                    or parent_type
-                )
-                # Only the tightest inherited budget decides whether this
-                # subtree can violate anything: every constraint is checked
-                # against the same depth, and constraints created inside the
-                # subtree depend on its shape alone.  So the walk's verdict is
-                # a function of (fragment, parent type, tightest budget) --
-                # memoize it, or a fragment reachable by K paths is walked K
-                # times (exponential for a fan-out document).
-                budget = min(
-                    (c.limit - (depth - c.origin) for c in constraints), default=None
-                )
-                key = (name, frag_type.name, budget)
-                if key in self._clean_spreads:
-                    continue
-                cuts_before = self._cycle_cuts
-                self._walk(
-                    fragment.selection_set,
-                    frag_type,
-                    depth,
-                    constraints,
-                    seen_fragments | {name},
-                )
-                if not self._errored and cuts_before == self._cycle_cuts:
-                    # A walk truncated by the cycle guard is path-dependent,
-                    # so only untruncated clean walks may be cached.
-                    self._clean_spreads.add(key)
-
-            if self._errored:
-                return
+                    # Only the tightest inherited budget decides whether this
+                    # subtree can violate anything: every constraint is checked
+                    # against the same depth, and constraints created inside
+                    # the subtree depend on its shape alone.  So the walk's
+                    # verdict is a function of (fragment, parent type, tightest
+                    # budget) -- memoize it, or a fragment reachable by K paths
+                    # is walked K times (exponential for a fan-out document).
+                    budget = min(
+                        (c.limit - (depth - c.origin) for c in constraints),
+                        default=None,
+                    )
+                    spread_key = (name, frag_type.name, budget)
+                    if spread_key in self._clean_spreads:
+                        continue
+                    active.add(name)
+                    stack.append(
+                        (
+                            iter(fragment.selection_set.selections),
+                            frag_type,
+                            depth,
+                            constraints,
+                            spread_key,
+                            self._cycle_cuts,
+                        )
+                    )
+                    break
+            else:
+                # Exhausted without a violation (a violation returns above), so
+                # a finished spread frame is proven clean.
+                stack.pop()
+                if key is not None:
+                    active.discard(key[0])
+                    if cuts_before == self._cycle_cuts:
+                        # A walk truncated by the cycle guard is path-dependent,
+                        # so only untruncated clean walks may be cached.
+                        self._clean_spreads.add(key)
 
     def _report(self, constraint: _Constraint, node: FieldNode) -> None:
         """Record a single depth-limit error for the operation.
@@ -255,7 +343,6 @@ class DepthLimitValidationRule(ValidationRule):
             constraint: The budget that was exceeded.
             node: The field node at which the limit was exceeded.
         """
-        self._errored = True
         self.report_error(
             GraphQLError(
                 "Query exceeds the maximum nesting depth of {limit} for "

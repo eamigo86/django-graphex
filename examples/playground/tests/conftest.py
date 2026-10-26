@@ -14,13 +14,29 @@ Run them from this directory:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from blog.models import Author
     from django.contrib.auth.models import AbstractBaseUser
+
+
+@pytest.fixture(autouse=True)
+def _media_in_tmp(settings: Any, tmp_path: Path) -> None:
+    """Point "MEDIA_ROOT" at a temporary directory for every test.
+
+    An upload through the real settings would leave files in the checkout's own
+    "media/documents/"; the README promises a run leaves nothing behind.
+
+    Args:
+        settings: The pytest-django settings fixture, reverted after the test.
+        tmp_path: The per-test temporary directory to store uploads in.
+    """
+    settings.MEDIA_ROOT = tmp_path
 
 
 @pytest.fixture

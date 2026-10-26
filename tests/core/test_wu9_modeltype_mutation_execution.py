@@ -36,6 +36,20 @@ if TYPE_CHECKING:
 
 
 def _build_post_modeltype_schema() -> tuple[DjangoGraphQLSchema, type[DjangoModelType]]:
+    """Build the generated CRUD schema in a test-scoped default registry.
+
+    Returns:
+        The schema and its DjangoModelType while global slots are restored.
+    """
+    from tests._schema_isolation import isolated_default_pair
+
+    with isolated_default_pair():
+        return _build_post_modeltype_schema_in_isolation()
+
+
+def _build_post_modeltype_schema_in_isolation() -> tuple[
+    DjangoGraphQLSchema, type[DjangoModelType]
+]:
     """Build a native DjangoGraphQLSchema with a DjangoModelType Post mutation.
 
     Returns:

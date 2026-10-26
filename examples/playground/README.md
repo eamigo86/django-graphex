@@ -1,6 +1,6 @@
 # django-graphex — Playground
 
-> **Targets the django-graphex 4.0.0 checkout with graphql-core 3.3 (no graphene).**
+> **Targets the django-graphex 4.1.0 checkout with graphql-core 3.3 (no graphene).**
 > Query-optimization, typed-GFK unions, `get_queryset` scoping + safe ordering,
 > native subscriptions (SSE + WS), and the 2.2 permission story: nested writes
 > authorized by the child, a schema pruned to the caller, safe account
@@ -48,7 +48,7 @@ control that proves only the one column moved:
 |-------|--------|
 | `{ authors { results(page: 1) { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
 | `{ authors { results(page: 1, ordering: "bio") { id } } }` | `Invalid ordering field: 'bio'.` |
-| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | Rejected: `bio` is not an input field of `AuthorFilterInput`. |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Expected value of type 'AuthorFilterInput' not to include unknown field 'bio'. Did you mean 'id'? Found: { bio: { icontains: "x" } }.` |
 | `{ authors { results(page: 1, ordering: "name") { id name } } }` | The rows, ordered by name. |
 
 The input-field wording can vary with graphql-core. With
@@ -88,31 +88,36 @@ one documented exception (an operator-configured `ordering=` default) and the
 boundaries it cannot close live in
 [the Types guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/types.md#projection-security-boundary).
 
-One boundary the playground does **not** close, stated here rather than left to
-be discovered: `CommentSubscription` is a hand-written `Subscription` bound to
+One boundary the library itself leaves open, and how the playground closes it:
+`CommentSubscription` is a hand-written `Subscription` bound to
 `Meta.model = Comment`, and it builds its event type and its filter input from
-the **model**, not from `CommentType`'s projection. `internalNote` is therefore
-selectable and filterable through `commentSubscription` even though every query
-surface refuses it. Project the column on the subscription too, or do not put
-data in it that the query surface hides.
+the **model**, not from `CommentType`'s projection. A subscription that declares
+no projection of its own would therefore publish `internalNote` (selectable and
+filterable) even though every query surface refuses it. The playground repeats
+`exclude_fields = ("internal_note",)` in `CommentSubscription.Meta`, so
+`internalNote` is absent from `CommentSubscriptionEvent` and
+`CommentSubscriptionFilterInput`; `test_projection_boundary.py` pins both the
+closure and the underlying library gap. Do the same on every model-bound
+subscription you write.
 
 ### The relation-scope hatch
 
-`PostType.get_queryset` hides `DRAFT` posts from anonymous callers — but it is
-a **field-level** scope. An **auto-expanded** relation reads the parent's
-prefetch cache and never calls it, in either direction. The playground mounts
-the documented escape hatch for both arms and leaves the unmounted shape
-standing beside it, so you can see the boundary instead of taking its word:
+`PostType.get_queryset` hides `DRAFT` posts from anonymous callers. It runs on
+every top-level field **and** on automatic FK and reverse-FK output reads, so an
+anonymous caller never sees a draft through a relation either. The playground
+still mounts the documented escape hatch for both arms, because the declaration
+changes the wire shape and makes the filter-axis contract explicit:
 
 | Query (run it logged out) | Drafts? | Why |
 |---|---|---|
 | `{ posts { results { title status } } }` | hidden | Top-level field: the hook runs |
-| `{ categories { name posts { title status } } }` | hidden | **to-MANY hatch**: `CategoryType.posts = DjangoFilterListField(PostType)` carries a resolver, and the resolver runs the hook |
-| `{ authors { results { posts { results { status } } } } }` | **visible** | Auto-expanded container: reads the prefetch cache, hook never called |
+| `{ categories { name posts { title status } } }` | hidden | **to-MANY hatch**: `CategoryType.posts = DjangoFilterListField(PostType)` carries a resolver, and the resolver runs the hook. The wire shape is a plain list |
+| `{ authors { results { posts { results { status } } } } }` | hidden | Auto-expanded container: the automatic reverse-FK read applies `PostType.get_queryset` to its rows and to `totalCount` |
 | `{ authors { results { name user { username } } } }` | `user: null` | **to-ONE hatch**: `AuthorType.user = Field(UserType)` + `resolve_user`. A bare `resolve_user` with no declaration does *nothing* |
 
-Row 3 is the documented behaviour, not a bug: rebuilding the prefetch queryset
-inside the resolver would cost window pagination and the `.only()` plan.
+Rows 2 and 3 differ only in wire shape (plain list versus `results` /
+`totalCount` container); `tests/test_relation_scope_hatch.py` pins that both hide
+drafts. The hatch is no longer needed merely to hide drafts.
 
 **Declaring either arm costs the relation its other two axes**, because a
 relation served by your own resolver is a *mask* — what the client reads is
@@ -131,6 +136,14 @@ control — no resolver, so it keeps both axes and
 
 `tests/test_relation_scope_hatch.py` pins all of it.
 
+Generated mutation ID links have a **different** boundary from these read
+paths: `commentCreate` linking `Comment.post` by ID now checks the destination
+`PostType.get_queryset` before writing the comment. Anonymous callers already
+fail the playground's comment write permission; authenticated callers see the
+full Post queryset. This does not make row scope global for auto-expanded reads
+or relation-filter joins. See
+[mutation ID-link migration](../../docs/usage/mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+
 ### Safe ordering (anti-oracle hardening)
 
 The ordering allowlist is active on all paginated fields. Beyond the projection
@@ -138,8 +151,8 @@ above, it rejects relation-spanning and non-existent terms:
 
 | Query | Error |
 |-------|-------|
-| `posts { results(ordering: "author__user__password") { title } }` | `Relation-spanning ordering is not permitted` |
-| `posts { results(ordering: "nonexistent") { title } }` | `Invalid ordering field` |
+| `posts { results(ordering: "author__user__password") { title } }` | `Invalid ordering field: 'author__user__password'. Relation-spanning ordering is not permitted.` |
+| `posts { results(ordering: "nonexistent") { title } }` | `Invalid ordering field: 'nonexistent'.` |
 
 Try these in GraphiQL to see the guard in action.
 
@@ -150,12 +163,14 @@ Try these in GraphiQL to see the guard in action.
 ```bash
 cd examples/playground
 
-make install     # uv sync — installs the local library + daphne
+make install     # uv sync --group test — local library + daphne + test tools
 make migrate     # create + apply migrations (SQLite)
 make seed        # demo data: 15 authors × 12 posts × 3 comments, 12 notes,
                  #            2 accounts + 2 invoices + 4 attachments (GFK union).
-                 #            Each author's posts list spans multiple pages at
-                 #            page size 10, so nested window pagination is real.
+                 #            Each author has 12 posts (4 published), so logged in
+                 #            their posts list spans two pages at page size 10 and
+                 #            nested window pagination is real; logged out you see
+                 #            only the 4 published ones (one page).
                  #            Scale with: python manage.py seed --authors N --posts M
 make run         # ASGI server at http://127.0.0.1:8000/graphql/
 ```
@@ -172,10 +187,29 @@ The seed creates superuser **`demo` / `demo12345`**.
 ### Authenticating (for private fields)
 
 Private fields (`me`, `myNotes`, `noteSubscription`), the note and comment
-writes, and `postWithCommentsCreate` **when it carries a `comments` list**
-require an authenticated user. The remaining writes (`postCreate`,
-`createCategory`, `uploadDocument`) are deliberately open, so you can compare a
-gated write against an ungated one. Auth here is **Django session-based**:
+writes, `postUpdate`, `postDelete`, `documentUpdate`, and
+`postWithCommentsCreate` **when it carries a `comments` list** require an
+authenticated user. Exactly these writes are deliberately open to anonymous
+callers, so you can compare a gated write against an ungated one:
+
+| Open mutation | Why it is open |
+|---|---|
+| `postCreate` | Drives the public `postSubscription` demo without a session |
+| `postWithCommentsCreate` (no `comments`) | Behaves like `postCreate`; with comments the child's `IsOwnerOrReadOnly` gate applies |
+| `createCategory` | Hand-written mutation demo (duplicate names return `ok: false`) |
+| `documentCreate` | The multipart `curl` demo needs no session |
+| `uploadDocument` | The base64 upload demo |
+| `registerUser` | Account registration is public by nature |
+
+The destructive or modifying siblings, `postUpdate`, `postDelete` and
+`documentUpdate`, are mounted under `PrivateMutation`
+(`private_mutation=` on `DjangoGraphQLSchema`), so `AuthenticatedFieldsMiddleware`
+answers an anonymous call with `Authentication required.`. `DjangoModelMutation`
+honors no `permission_classes`, so a private root is the supported way to gate
+one of its operations; use a `DjangoModelType` (as `NoteModelType` does) when you
+need per-action or per-object rules. Any logged-in user may update or delete any
+post here; add an ownership check for real data. Auth here is **Django
+session-based**:
 
 1. Open <http://127.0.0.1:8000/admin> and log in as `demo` / `demo12345`.
 2. Return to GraphiQL — it shares the session cookie.
@@ -197,9 +231,9 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `DjangoInterfaceType` | doc | Covered in `docs/usage/types.md`; not in the playground (no shared abstract base fits Account/Invoice cleanly) |
 | `TextChoices` → GraphQL enum | ✅ | `Post.status` / `PostType` |
 | `only_fields` / `exclude_fields` as a **security boundary** | ✅ | `schema.py` — `UserType` allowlists only four safe profile fields; `AuthorType` hides `bio`; `CommentType` + `CommentModelType` hide `internal_note` on **reads and writes alike** (including the nested child input). Each excluded field is unreadable, unorderable **and** unfilterable — see [The projection boundary](#the-projection-boundary) |
-| Relation-scope hatch, to-**MANY** arm | ✅ | `schema.py` — `CategoryType.posts = DjangoFilterListField(PostType)` runs `PostType.get_queryset`; the auto-expanded `AuthorType.posts` container beside it does **not** — see [The relation-scope hatch](#the-relation-scope-hatch) |
+| Relation-scope hatch, to-**MANY** arm | ✅ | `schema.py` — `CategoryType.posts = DjangoFilterListField(PostType)` (plain-list wire shape) runs `PostType.get_queryset`; the auto-expanded `AuthorType.posts` container beside it applies the same hook — see [The relation-scope hatch](#the-relation-scope-hatch) |
 | Relation-scope hatch, to-**ONE** arm | ✅ | `schema.py` — `AuthorType.user = Field(UserType)` + `resolve_user`; a bare `resolve_user` with no declaration would be silently ignored |
-| `get_queryset` (per-request row scoping) | ✅ | `schema.py` — `PostType.get_queryset` hides drafts from anonymous callers. It is a **field-level** scope: read the hatch rows above before relying on it to hide relation-reachable rows |
+| `get_queryset` (per-request row scoping) | ✅ | `schema.py` — `PostType.get_queryset` hides drafts from anonymous callers. It also scopes automatic FK / reverse-FK reads; filters, custom resolvers and ID links keep their own contracts — see [The relation-scope hatch](#the-relation-scope-hatch) |
 | `max_depth` per-type depth limit | ✅ | `schema.py` — `PostType.Meta.max_depth = 4` |
 | `complexity` per-type cost weight | ✅ | `schema.py` — `PostType.Meta.complexity = 2` |
 | **Fields** | | |
@@ -210,7 +244,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Pagination** | | |
 | `LimitOffsetGraphqlPagination` | ✅ | `PostListType`, `NoteModelType`, `posts_flat` |
 | `PageGraphqlPagination` | ✅ | `AuthorListType` |
-| `CursorGraphqlPagination` | ✅ | `CommentListType` — also exposes `pageInfo` |
+| `CursorGraphqlPagination` | ✅ | `CommentListType` — also exposes `pageInfo`; omitting `first` inherits this Playground's `DEFAULT_PAGE_SIZE = 10`, with a `MAX_PAGE_SIZE = 100` cap |
 | **Filtering** | | |
 | `filter_fields` on object types | ✅ | All `DjangoObjectType` subclasses |
 | Filtering on list fields | ✅ | `posts(filter: { status: { exact: PUBLISHED }, title: { icontains: "…" } })` |
@@ -223,7 +257,8 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | Multi-level nesting | ✅ | `authors → posts → comments` (all paginated independently) |
 | `GenericRelation` reverse list | wired | `Post.attachments` — prefetched + `.only()`-narrowed reverse side of the GFK. Wired on the model + schema; the seed leaves it empty so the `attachments` GFK-union demo stays runnable (a `Post` target is not an `AttachmentTargetUnion` member). Query `posts { results { attachments { results { caption } } } }` runs cleanly and returns rows once you attach an `Attachment` to a `Post` |
 | **Mutations** | | |
-| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation` → `postCreate/Update/Delete` |
+| `DjangoModelMutation` (full CRUD) | ✅ | `PostMutation` → `postCreate` (open) and `postUpdate/Delete` (mounted under `PrivateMutation`, login required) |
+| `private_mutation` (auth-gated mutation root) | ✅ | `schema.py` — `PrivateMutation`: `postUpdate`, `postDelete`, `documentUpdate`; pinned by `tests/test_write_access.py` |
 | `DjangoModelType.MutationFields()` | ✅ | `NoteModelType` → `noteCreate/Update/Delete`; `CommentModelType` → `commentCreate/Update/Delete` |
 | `Meta.model_operations` | ✅ | `CommentModelType` (writes only, reads served by `CommentType`), `PostWithCommentsMutation` (`create` only) |
 | `DjangoInputObjectType` on hand-written mutation | ✅ | `CategoryInput` / `createCategory` |
@@ -256,10 +291,10 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `SubscriptionClientView` | ✅ | `/graphql/client/` |
 | **Query depth / cost limiting** | | |
 | `DepthLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.max_depth = 4` activates per-type enforcement |
-| `CostLimitValidationRule` | ✅ | Wired in `GraphQLView`; `PostType.Meta.complexity = 2`; enable budget via `MAX_QUERY_COST` |
-| `analyze_cost` / `CostReport` | ✅ | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
+| `CostLimitValidationRule` | wired, **off by default** | Wired in `GraphQLView` but enforces nothing until `MAX_QUERY_COST` is set (commented in `config/settings.py`); `PostType.Meta.complexity = 2` weights `Post` fields |
+| `analyze_cost` / `CostReport` | wired, **off by default** | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
 | `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py` (the `DJANGO_GRAPHEX` block) — the playground rejects any query nested more than 6 levels |
-| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note | Commented in `config/settings.py` — uncomment to block expensive queries and expose cost |
+| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note (off by default) | Commented in `config/settings.py` with a measured `10_000_000` budget — uncomment to block expensive queries and expose cost; see [Query depth and cost limits](#query-depth-and-cost-limits) |
 | **Queryset optimization** | | |
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
 | `OPTIMIZE_ONLY_FIELDS` | ✅ | Enabled by default; `.only()` column narrowing (root span + inside each `Prefetch` child) |
@@ -283,17 +318,22 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | **Subscriptions** | | |
 | Public `Subscription` | ✅ | `PostSubscription` (stream `posts`), `CommentSubscription` (stream `comments`, per-subscriber `filter`) |
 | Private subscription via `DjangoModelType` | ✅ | `NoteModelType.SubscriptionField()` — gated by `AuthenticatedFieldsMiddleware` |
-| `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes |
+| `subscription_scope` (server-forced row scope) | ✅ | `NoteModelType.subscription_scope` — only own notes; `PostSubscription.subscription_scope` — anonymous subscribers receive published posts only, mirroring `PostType.get_queryset` |
 | `subscription_index_fields` | ✅ | `NoteModelType.Meta.subscription_index_fields = ("owner",)` |
 | `payload_mode` | ✅ | `PostSubscription`, `CommentSubscription`, `NoteModelType.Meta.payload_mode = "full"` |
 | Native WS consumer (`subscription_ws_consumer`) | ✅ | `consumers.py` — `AppWSConsumer` |
+| SSE heartbeat (`SSE_HEARTBEAT_ENABLED`) | not demonstrated | Commented, off by default in `config/settings.py`; needs no Redis, so you can uncomment it. Not exercised by the suite |
+| SSE connection lease (`SSE_CONNECTION_LIMIT_ENABLED`, per-account cap) | not demonstrated | Commented in `config/settings.py`; it needs a shared Redis URL, which a local playground does not run. See the [subscription guide](../../docs/usage/subscriptions.md#sse-connection-controls) for lease expiry and failover limits |
+| WS `on_connect` credential hook | not demonstrated | `AppWSConsumer` uses the default session auth; the hook needs a project-specific token verifier. See [Optional connection authentication](../../docs/usage/subscriptions.md#optional-connection-authentication) |
+| `BigInt` scalar (4.1) | ✅ | `models.py` — `Post.view_count` (`BigIntegerField`); the seed gives the first post `2**53 + 1` and leaves it a **draft**, so log in first (anonymous callers never see drafts) and run `{ postsFlat(ordering: "-viewCount", limit: 1) { id viewCount } }`: it answers the string `"9007199254740993"`, and `viewCount: "…"` is the matching input |
+| `Decimal` scalar (4.1) | ✅ | `Account.balance` / `Invoice.amount` (`DecimalField`) serialize as strings: `{ attachments { results { target { ... on AccountType { balance } } } } }` answers `balance: "1200.50"`, not a float |
 
 ---
 
 ## How to run
 
 ```text
-make install        uv sync (local library + daphne)
+make install        uv sync --group test (local library + daphne + test tools)
 make migrate        makemigrations + migrate
 make seed           load demo data
 make run            daphne ASGI server (HTTP + WebSocket)
@@ -351,9 +391,25 @@ view (`config/urls.py`):
   other. `Comment.internal_note` is pinned on the write inputs too, standalone
   and nested.
 - **Relation-scope hatch** (`test_relation_scope_hatch.py`) — both arms scope
-  their relation for an anonymous caller, the auto-expanded shape beside them
-  still does not, and the ordering and filter axes the declaration costs are
-  pinned closed with a non-masked relation as the control.
+  their relation for an anonymous caller, the auto-expanded reverse-FK and
+  reverse-M2M shapes beside them hide drafts too, and the ordering and filter
+  axes the declaration costs are pinned closed with a non-masked relation as the
+  control.
+- **Open and gated writes** (`test_write_access.py`) — the writes the README
+  lists as open accept an anonymous caller; `postUpdate`, `postDelete` and
+  `documentUpdate` are refused until login and change nothing.
+- **Registration** (`test_registration.py`) — weak and username-similar
+  passwords are refused, a duplicate username gets the generic message, and a
+  valid password still registers.
+- **Cost budget** (`test_cost_budget.py`) — every plain query this README shows
+  runs under the suggested `MAX_QUERY_COST`, reports its cost, and an unbounded
+  nested list is refused.
+- **Scalars, media, upload errors** (`test_scalars_media_uploads.py`) — `BigInt`
+  strings in and out, uploaded files served while `DEBUG` is on, and an
+  unexpected upload failure answered generically while the detail is logged.
+- **Public subscription scope** (`test_subscription_transports_e2e.py`) — an
+  anonymous `postSubscription` never receives a draft over WebSocket or SSE,
+  while a logged-in subscriber does.
 - **Multipart uploads** (`test_multipart_upload.py`) — `documentCreate` saves a
   part under either spelling, ignores an unmatched part while still answering
   `ok: true`, and is refused HTTP 403 without `X-Requested-With`. Uploads are
@@ -370,32 +426,63 @@ view (`config/urls.py`):
   tells you to press Run on. (A full headless-browser round-trip is
   intentionally deferred — no Playwright/Selenium dependency is added.)
 
-Run them with **make** (uses `uv`, installs the `test` dependency group):
+Run them with **make** (uses `uv`; `make install` already installs the `test`
+dependency group, and `make test` requests it again so it also works on an
+environment created with a plain `uv sync`):
 
 ```bash
 cd examples/playground
+make install
 make test
+```
+
+Without `make`, the same thing with `uv`:
+
+```bash
+cd examples/playground
+uv sync --group test
+uv run --group test pytest -q --no-migrations
 ```
 
 Or directly, with any environment that already has `pytest`, `pytest-django`,
 `pytest-asyncio`, `channels`, and `daphne` available (e.g. the repo's own dev
 venv) — `--no-migrations` builds the test DB straight from the models, since
-the playground ships no migration files:
+the playground ships no migration files. The playground has no coverage
+plugin configured, so there is no `--no-cov` flag to pass:
 
 ```bash
 cd examples/playground
-DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations --no-cov
+DJANGO_SETTINGS_MODULE=config.settings python -m pytest tests/ -q --no-migrations
 ```
 
 The shipped `ALLOWED_HOSTS` contains only `127.0.0.1`, `localhost`, and
-`testserver`. This keeps `AllowedHostsOriginValidator` effective for the
+`testserver` (the host Django's test client and Channels' test communicator
+use, so the suite can connect; remove it from a copy that does not run these
+tests). This keeps `AllowedHostsOriginValidator` effective for the
 session-authenticated WebSocket endpoint. If you expose the playground through
 a tunnel or proxy, add that hostname explicitly — do not replace the list with
 `["*"]`.
 
+### These settings are not production-ready
+
+`config/settings.py` is a development fixture, and `manage.py check --deploy`
+says so with seven warnings: `DEBUG = True`, a short hard-coded `SECRET_KEY`, no
+`SECURE_HSTS_SECONDS`, no `SECURE_SSL_REDIRECT`, insecure session and CSRF
+cookies, and no `XFrameOptionsMiddleware`. Copy the patterns (the
+`DJANGO_GRAPHEX` block, the schema wiring), not the file, and set those values
+deliberately. Uploaded files are served by Django only while `DEBUG` is on
+(`MEDIA_URL` in `config/urls.py`); in production a web server or object store
+serves them.
+
 ---
 
 ## Example GraphQL operations
+
+> **Ids in the examples assume a fresh database** (`make reset`, which drops the
+> database, migrates and seeds). `make seed` on a database that already has rows
+> deletes and recreates them, and SQLite keeps counting, so the new ids no longer
+> start at 1. Look the id up first (`{ postsFlat(limit: 1) { id title } }`) and
+> substitute it where an example says `id: 1` or `author: 1`.
 
 ### 0. Safe account registration and authenticated reads
 
@@ -408,14 +495,28 @@ groups, or permissions:
 mutation {
   registerUser(username: "reader", password: "correct-horse-battery-staple") {
     ok
+    error
     user { id username firstName lastName }
   }
 }
 ```
 
+The password goes through Django's `AUTH_PASSWORD_VALIDATORS` (set in
+`config/settings.py`) before the account exists, so `password: "x"` answers
+`ok: false` with the validator messages ("This password is too short…") and
+creates nothing. The username goes through the `User` model's own field rules
+first (no spaces or NUL bytes, at most 150 characters, not blank, NFKC-normalised
+like the admin), and a refusal is `ok: false` with Django's message. A **taken username** answers `ok: false` with the generic
+`Registration failed. Try different details.`, never the raw database error. That
+removes the table name and the verbatim "already exists" text, but a public
+sign-up still lets someone who tries a strong password tell a free name from a
+taken one, so add rate limiting or e-mail verification before exposing it.
+
 There is deliberately no generated `userCreate`, `userUpdate`, or
-`userDelete`. Read the current user through `/graphql/secure/`, after logging in
-with a Django session:
+`userDelete`. Read the current user after logging in with a Django session.
+Any logged-in user can run `me` on `/graphql/`; `/graphql/secure/` serves it
+only to a caller whose pruned schema includes it (the seeded `demo` superuser
+always does, an ordinary user does not):
 
 ```graphql
 {
@@ -427,6 +528,13 @@ with a Django session:
 cannot select `password`, `isStaff`, `isSuperuser`, groups, permissions, or
 login metadata. The public route remains available because it also hosts the
 registration demo; application user reads belong on the authenticated route.
+
+**An account made by `registerUser` cannot log in anywhere in this project.**
+It is not staff, the Django admin login accepts staff only, and the playground
+ships no other login view, so the registration demo ends at `ok: true`. To
+read `me` as a session user, log in at `/admin` as the seeded `demo` /
+`demo12345` (or as a staff user you create with `manage.py createsuperuser`, or
+as `editor` from [section 6](#6-a-schema-pruned-to-the-caller-22)).
 
 ### 1. Nested lists with all three paginators
 
@@ -444,7 +552,7 @@ registration demo; application user reads belong on the authenticated route.
       comments {
         totalCount
         results(first: 2) { text }
-        pageInfo { hasNextPage endCursor }
+        pageInfo(first: 2) { hasNextPage endCursor }
       }
     }
   }
@@ -463,10 +571,14 @@ registration demo; application user reads belong on the authenticated route.
   comments {
     totalCount
     results(first: 3) { text }
-    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+    pageInfo(first: 3) { hasNextPage hasPreviousPage startCursor endCursor }
   }
 }
 ```
+
+For a cursor continuation, pass the returned `endCursor` as `cursor` to both
+`results` and `pageInfo`, keeping their `first` values equal. A different
+`pageInfo` size can point past rows that `results` did not return.
 
 ### 2. Query optimization (N+1 avoidance)
 
@@ -622,9 +734,9 @@ Attempt the same **without being logged in** — the permission gate returns:
 }
 ```
 
-A failing validation returns `ok: false` and the `errors` list. Validation is
-**Pydantic**, derived from the column — so it is `max_length`, type and
-nullability that fail, not Django's form-level `blank`. A title over
+A failing validation returns `ok: false` and the `errors` list. Generated
+writes check the column's type, nullability and `max_length` (Pydantic) **and**
+run its Django validators, including `blank=False`. A title over
 `Note.title`'s `max_length=200`:
 
 ```graphql
@@ -636,9 +748,16 @@ mutation { noteCreate(newNote: { title: "xxx… 250 chars …xxx" }) { ok errors
   "errors": [{ "field": "title", "messages": ["String should have at most 200 characters"] }] } } }
 ```
 
-`title: ""` is **not** one of these: `blank=True/False` is a form concern
-Django never enforces on `save()`, so a blank title is accepted and returns
-`ok: true`. Use an inline `validate_<field>` hook if you want it refused — see
+An empty `title: ""` is refused too, with Django's own message
+(`"This field cannot be blank."`), because `Note.title` is `blank=False`:
+
+```json
+{ "data": { "noteCreate": { "ok": false,
+  "errors": [{ "field": "title", "messages": ["This field cannot be blank."] }] } } }
+```
+
+Model-level `Model.clean()` is not run; for rules that live outside the column
+use an inline `validate_<field>` hook — see
 [Custom validation](https://eamigo86.github.io/django-graphex/usage/backends/#custom-validation-inline-validate_field).
 
 ### 5. Nested write — create a Post with inline Comments
@@ -744,8 +863,8 @@ grants no model permission. Log in as `editor` / `editor12345`, open
 
 | Document at `/graphql/secure/` | Result |
 |---|---|
-| `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'RootMutation'. Did you mean 'postCreate'?` |
-| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'RootMutation'. Did you mean 'documentCreate', 'postCreate', or 'documentUpdate'?` |
+| `mutation { noteCreate(newNote: { title: "x" }) { ok } }` | `Cannot query field 'noteCreate' on type 'Mutation'. Did you mean 'postCreate'?` |
+| `mutation { commentCreate(newComment: { … }) { ok } }` | `Cannot query field 'commentCreate' on type 'Mutation'. Did you mean 'documentCreate', 'postCreate', or 'documentUpdate'?` |
 | `postWithCommentsCreate(newPost: { …, comments: [...] })` | Rejected: `comments` is not an input field of `PostCreateNestedCommentsType`; the mutation survives, the **nested input field** does not. |
 | `postWithCommentsCreate(newPost: { … })`, no `comments` | `ok: true` — the parent write is theirs to make |
 | `{ serverTime posts { totalCount } }` | resolves normally — untagged and readable fields are untouched |
@@ -811,6 +930,19 @@ The same column also accepts a **base64** upload inside the JSON body
 (`uploadDocument`, v1.3.0), which is the path GraphiQL can drive. One column,
 two ways in — compare them side by side in `blog/schema.py`.
 
+**Uploads are open to anonymous callers, so the column is an allow-list.**
+`Document.attached_file` accepts only `.txt`, `.pdf`, `.png`, `.jpg`, `.jpeg`
+and `.gif` (`FileExtensionValidator`, applied by both paths); anything else —
+an `.html` or `.svg` page, say — answers `ok: false` and stores nothing. While
+`DEBUG` is on, `config/urls.py` serves `MEDIA_URL` through a small view that
+adds `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: sandbox`, so even an allowed file is a download and
+never a page on the same origin as `/admin`. **In production, never serve user
+uploads from your application's origin:** put them on a separate domain or CDN
+(object storage) with the same headers, and add antivirus and size limits as the
+data requires. The tests write into a temporary `MEDIA_ROOT`, so a run leaves no
+files behind.
+
 ---
 
 ## Query depth and cost limits
@@ -821,22 +953,48 @@ Both rules are wired into `GraphQLView`.
 with `"MAX_QUERY_DEPTH": 6`, so any query nested more than 6 levels deep is
 rejected immediately with a `QUERY_TOO_DEEP` error.
 
-**`MAX_QUERY_COST`** is commented out (no budget enforced). Uncomment both lines
-in `config/settings.py` to try cost analysis:
+**`MAX_QUERY_COST`** is **off by default** (the playground comments it out, so no
+budget is enforced). Pick the number by measuring: the cost model charges a list
+with no explicit page size at `MAX_PAGE_SIZE` (100) and multiplies per nested
+list. Measured with `analyze_cost` on the seeded schema:
+
+| Query | Cost |
+|---|---|
+| `{ posts { results(limit: 1) { id } } }` | 201 |
+| `{ post(id: 1) { id title author { name } comments { results(first: 5) { text } } } }` | 104 |
+| README example 1 (three paginators, nested tags and comments) | 2,162,003 |
+| README example 2(b) (`authors → posts` with filter and `category`) | 4,010,101 |
+| `{ authors { results { posts { results { comments { results { text } } } } } } }` | 10,102,010,101 |
+
+So the commonly suggested `200` blocks every list query, and the richest README
+example needs about 4 million. This playground suggests **10 million**, which
+lets every README example run while refusing three unbounded nested lists.
+Uncomment both lines in `config/settings.py` to try it; `MAX_QUERY_DEPTH` is
+already active at 6:
 
 ```python
 DJANGO_GRAPHEX = {
     ...
     # MAX_QUERY_DEPTH is already active at 6 — change or remove to adjust.
-    "MAX_QUERY_COST": 200,         # reject queries with estimated cost > 200
+    "MAX_QUERY_COST": 10_000_000,  # reject queries with estimated cost > 10M
     "EXPOSE_QUERY_COST": True,     # add extensions.cost to every response
 }
 ```
+
+Then watch `extensions.cost` (`requestedCost` / `maxCost`) on any response and
+tune the budget to what your own clients send. A rejected query answers
+`Query cost … exceeds the maximum of 10000000.` with code `QUERY_TOO_COMPLEX`.
+`tests/test_cost_budget.py` runs every query this README shows under these
+settings.
 
 `PostType` already sets `max_depth = 4` and `complexity = 2` so per-type
 enforcement is active for free. A query that nests more than 4 levels under a
 `post` field is rejected with `QUERY_TOO_DEEP`, and the global `MAX_QUERY_DEPTH`
 of 6 applies on top (most-restrictive rule wins).
+If you enable `MAX_QUERY_COST`, a selected operation's variable page size is
+checked after GraphQL coercion and before its resolvers run. The Playground's
+existing `MAX_PAGE_SIZE = 100` also caps list sizes; this setting is not newly
+required for variable-cost enforcement.
 
 ---
 
@@ -895,7 +1053,22 @@ The easiest way to try them is the built-in browser client at
 3. Trigger a change (create a `Post` via `postCreate`) — the event arrives
    instantly.
 
-Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws`):
+Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws -o http://127.0.0.1:8000`):
+
+Keep the `-o` (Origin) option too: the route sits behind
+`AllowedHostsOriginValidator`, which refuses a handshake that sends no `Origin`
+header with HTTP 403, and `wscat` sends none unless told to. The value must be
+one of the `ALLOWED_HOSTS` (`127.0.0.1`, `localhost`); a browser always sends it.
+
+Keep the `-s graphql-transport-ws` option: the server rejects a WebSocket
+handshake without that offered subprotocol before it can read
+`connection_init`. It logs the required offer, while a browser may report only
+a generic connection failure (the pre-accept rejection is normally HTTP 403).
+This Playground deliberately uses the default session-based consumer: it does
+not configure the optional `on_connect` credential hook. Its empty
+`connection_init` payload remains valid. Applications that opt in to that hook
+must provide their own token verifier and send the corresponding initialization
+payload; a denied callback closes the accepted socket with `4403`.
 
 ```json
 → {"type": "connection_init"}
@@ -908,9 +1081,12 @@ Trigger a change from GraphiQL:
 
 ```graphql
 mutation {
-  postCreate(newPost: { title: "Live update", author: 1 }) { ok post { id } }
+  postCreate(newPost: { title: "Live update", author: 1, status: PUBLISHED }) { ok post { id } }
 }
 ```
+
+The explicit published status matters for an anonymous subscription: a post
+created without it is a draft, and this stream intentionally hides drafts.
 
 The socket delivers a standard GraphQL result frame:
 
@@ -923,6 +1099,19 @@ Unsubscribe with `{"type": "complete", "id": "1"}` (or just close the socket).
 For SSE, POST the same document to `/graphql/stream` and read the
 `event: next` frames (see the [Subscriptions guide](https://github.com/eamigo86/django-graphex/blob/main/docs/usage/subscriptions.md)
 for the full wire protocol of both transports).
+
+### Public subscription, scoped like the query
+
+Subscriptions do **not** run `PostType.get_queryset`, so the visibility rule a
+query enjoys is not inherited by a stream. Without a scope, an anonymous
+`postSubscription` would receive every `DRAFT` post as it is saved, over both
+transports. `PostSubscription.subscription_scope` restates the rule: anonymous
+subscribers are forced to `{"status": "published"}`, enforced per event at
+delivery, while logged-in subscribers get `None` (no scoping) and see every
+post. Try it with two clients, one logged out and one logged in via `/admin`,
+then create a draft with `postCreate` (drafts are the default status):
+only the logged-in one receives it. `tests/test_subscription_transports_e2e.py`
+pins both transports.
 
 ### Filtered subscription (per-post comments)
 
@@ -1012,11 +1201,23 @@ endpoint is protected another way.
 concurrent operations. A `subscribe` past the cap is answered with the
 transport's own `error` frame naming the limit; **the socket and every
 subscription already running on it survive**, and a slot frees itself the moment
-its operation ends (client `complete`, stream end, or disconnect). The SSE
-transport is unaffected — one request carries exactly one subscription. Set it
-to `None` for the old unbounded behaviour.
+its operation ends (client `complete`, stream end, or disconnect). This is
+**per WebSocket**, not per account; set it to `None` for the old unbounded
+WebSocket behaviour.
 
-Both are pinned by `tests/test_shipped_defaults.py` and
+**Optional SSE controls (both off by default).**
+`SSE_HEARTBEAT_ENABLED=True` sends an idle comment every
+`SSE_HEARTBEAT_INTERVAL=15` seconds without restarting the source. The separate
+`SSE_CONNECTION_LIMIT_ENABLED=True` cap uses a shared Redis URL to admit at most
+`SSE_MAX_CONNECTIONS_PER_USER=5` concurrent streams for an authenticated
+account across workers. A sixth request gets HTTP 429 before subscribing;
+unavailable admission gets HTTP 503. Anonymous SSE and WebSocket behavior do
+not change. Uncomment the example settings in `config/settings.py` only when a
+shared Redis backend is available; see the
+[subscription guide](../../docs/usage/subscriptions.md#sse-connection-controls)
+for lease expiry, cleanup, and failover limitations.
+
+These defaults are pinned by `tests/test_shipped_defaults.py` and
 `tests/test_subscription_transports_e2e.py`, so this section cannot drift from
 the defaults without the suite saying so.
 

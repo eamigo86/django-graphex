@@ -1,0 +1,376 @@
+"""Output field selector configuration must fail closed before registration."""
+
+from __future__ import annotations
+
+import pytest
+from django.contrib.auth.models import User
+from django.core.exceptions import ImproperlyConfigured
+from django.db import models
+from django.test.utils import isolate_apps
+from graphql import GraphQLString, graphql_sync, print_schema
+
+from django_graphex.core import CharField, ObjectType
+from django_graphex.core.descriptors import field
+from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoObjectType
+
+from ._schema_isolation import isolated_pair
+from .models import Author, CustomPKProduct, Track2GfkComment
+
+
+@pytest.mark.parametrize("option", ("only_fields", "exclude_fields"))
+@pytest.mark.parametrize("selector", ("entries", "entry_lookup"))
+@isolate_apps("tests")
+def test_reverse_accessor_and_query_name_selectors_remain_valid(
+    option: str, selector: str
+) -> None:
+    """Accept both reverse names already supported by output compilation.
+
+    Args:
+        option: Model projection option to configure.
+        selector: Python accessor or Django reverse query name.
+    """
+
+    class Owner(models.Model):
+        """Own entries through a differently named reverse accessor."""
+
+        name = models.CharField(max_length=20)
+
+        class Meta:
+            """Keep this dynamic model local to the test app."""
+
+            app_label = "tests"
+
+    class Entry(models.Model):
+        """Provide distinct reverse accessor and query names."""
+
+        owner = models.ForeignKey(
+            Owner,
+            on_delete=models.CASCADE,
+            related_name="entries",
+            related_query_name="entry_lookup",
+        )
+
+        class Meta:
+            """Keep this dynamic model local to the test app."""
+
+            app_label = "tests"
+
+    reg = Registry()
+
+    class EntryType(DjangoObjectType):
+        """Register the relation target for nested output compilation."""
+
+        class Meta:
+            """Select only the target identity."""
+
+            model = Entry
+            registry = reg
+            only_fields = ("id",)
+
+    class Projection:
+        """Configure the source type without changing unrelated options."""
+
+        model = Owner
+        registry = reg
+
+    setattr(
+        Projection,
+        option,
+        ("id", selector) if option == "only_fields" else (selector,),
+    )
+
+    class OwnerType(DjangoObjectType):
+        """Compile the source type with the selected relation."""
+
+        class Meta(Projection):
+            """Inherit the dynamic selector configuration."""
+
+    fields = OwnerType._meta.graphql_output_type.fields
+    assert ("entries" in fields) == (option == "only_fields")
+    assert "id" in fields
+
+
+@pytest.mark.parametrize("option", ("only_fields", "exclude_fields"))
+def test_unknown_output_selector_fails_before_registration(option: str) -> None:
+    """Reject typo selectors without replacing the registered public model type.
+
+    Args:
+        option: Projection option containing the invalid field name.
+    """
+    reg = Registry()
+
+    class Incumbent(DjangoObjectType):
+        """A valid public type for the sensitive user model."""
+
+        class Meta:
+            """Publish a narrow view of the user model."""
+
+            model = User
+            registry = reg
+            only_fields = ("id", "username")
+
+    native_before = reg.output_registry().get_compiled(User)
+
+    class InvalidConfig:
+        """Configure an invalid selector without changing other options."""
+
+        model = User
+        registry = reg
+
+    setattr(InvalidConfig, option, ("passwrod",))
+
+    with pytest.raises(ImproperlyConfigured, match="passwrod"):
+
+        class InvalidUserType(DjangoObjectType):
+            """A typo must not replace the valid public type."""
+
+            class Meta(InvalidConfig):
+                """Inherit the invalid selector configuration."""
+
+    assert reg.get_type_for_model(User) is Incumbent
+    assert reg.output_registry().get_compiled(User) is native_before
+    assert "password" not in Incumbent._meta.graphql_output_type.fields
+    assert "password" not in native_before.fields
+
+
+@pytest.mark.parametrize("option", ("only_fields", "exclude_fields"))
+def test_bare_string_output_selector_is_rejected(option: str) -> None:
+    """A scalar string is not a container of complete field names.
+
+    Args:
+        option: Projection option containing the bare string.
+    """
+    reg = Registry()
+
+    class InvalidConfig:
+        """Configure a bare string selector for the dynamic option."""
+
+        model = User
+        registry = reg
+
+    setattr(InvalidConfig, option, "password")
+
+    with pytest.raises(ImproperlyConfigured, match=option):
+
+        class StringSelectorType(DjangoObjectType):
+            """A bare string must never be read as field-name substrings."""
+
+            class Meta(InvalidConfig):
+                """Inherit the invalid selector configuration."""
+
+    assert reg.get_type_for_model(User) is None
+
+
+def test_valid_model_and_declared_selectors_remain_supported() -> None:
+    """Keep model relations and declared custom fields valid selector names.
+
+    Declared fields compile independently even when listed as exclusions.
+    """
+    reg = Registry()
+
+    class AuthorType(DjangoObjectType):
+        """Use a reverse relation and a declared custom field in projection."""
+
+        display = CharField()
+        explicit = field(GraphQLString, name="wireAlias")
+
+        class Meta:
+            """Publish a selected model field and declared fields."""
+
+            model = Author
+            registry = reg
+            only_fields = (
+                "id",
+                "author_profile",
+                "coauthored_posts",
+                "display",
+                "explicit",
+                "wireAlias",
+            )
+            exclude_fields = ("bio", "display")
+
+    assert reg.get_type_for_model(Author) is AuthorType
+    assert "display" in AuthorType._meta.fields
+    assert "explicit" in AuthorType._meta.fields
+    assert "display" in AuthorType._meta.graphql_output_type.fields
+    assert "explicit" in AuthorType._meta.graphql_output_type.fields
+    assert "wireAlias" not in AuthorType._meta.graphql_output_type.fields
+
+
+def test_noninterface_declared_wire_name_keeps_existing_contract() -> None:
+    """Keep a non-interface declared field under its Python wire name.
+
+    An explicit field name does not expand the approved interface migration.
+    """
+    reg = Registry()
+
+    class AuthorType(DjangoObjectType):
+        """Expose one declared field without implementing an interface."""
+
+        explicit = field(GraphQLString, name="wireAlias")
+
+        class Meta:
+            """Bind the local model and output registry."""
+
+            model = Author
+            registry = reg
+            only_fields = ("name", "explicit")
+
+        def resolve_explicit(root: Author, info: object) -> str:
+            """Resolve using the Python field name.
+
+            Args:
+                root: Author value returned by the root resolver.
+                info: GraphQL resolution context.
+
+            Returns:
+                The source name with a stable prefix.
+            """
+            return f"python:{root.name}"
+
+    class Query(ObjectType):
+        """Expose an unsaved author without database access."""
+
+        author = field(AuthorType, resolver=lambda *_: Author(name="Ada"))
+
+    schema = DjangoGraphQLSchema(query=Query, registries=isolated_pair(reg))
+    result = graphql_sync(schema.graphql_schema, "{author{explicit}}")
+
+    assert result.errors is None
+    assert result.data == {"author": {"explicit": "python:Ada"}}
+    assert "explicit: String" in print_schema(schema.graphql_schema)
+    assert "wireAlias: String" not in print_schema(schema.graphql_schema)
+
+
+def test_generic_foreign_key_and_set_selectors_remain_supported() -> None:
+    """Keep private model names and legacy set containers valid.
+
+    A GenericForeignKey is private model metadata but selectable in output.
+    """
+    reg = Registry()
+
+    class GfkType(DjangoObjectType):
+        """Expose a selected GFK owner model."""
+
+        class Meta:
+            """Keep a private GFK selector accepted."""
+
+            model = Track2GfkComment
+            registry = reg
+            only_fields = {"id", "body", "target"}
+
+    assert reg.get_type_for_model(Track2GfkComment) is GfkType
+
+
+def test_declared_custom_only_output_remains_valid() -> None:
+    """Allow a custom-only output declaration without a selected model field.
+
+    Model projection filters auto-derived fields, not declared descriptors.
+    """
+    reg = Registry()
+
+    class CustomOnlyType(DjangoObjectType):
+        """Expose only a declared read-only label."""
+
+        label = CharField()
+
+        class Meta:
+            """Select the declared field without a model column."""
+
+            model = Author
+            registry = reg
+            only_fields = ("label",)
+
+    assert "label" in CustomOnlyType._meta.graphql_output_type.fields
+    assert "bio" not in CustomOnlyType._meta.graphql_output_type.fields
+
+
+def test_corrected_exclusion_hides_sensitive_user_field() -> None:
+    """A valid complete selector must keep the password out of native SDL.
+
+    This is the safe replacement for a misspelled or bare-string exclusion.
+    """
+    reg = Registry()
+
+    class SafeUserType(DjangoObjectType):
+        """Expose the user model without its password column."""
+
+        class Meta:
+            """Exclude a complete model field name."""
+
+            model = User
+            registry = reg
+            exclude_fields = ("password",)
+
+    assert "password" not in SafeUserType._meta.graphql_output_type.fields
+
+
+def test_one_shot_selector_is_reused_for_projection() -> None:
+    """Reuse valid one-shot names for the actual output projection.
+
+    Exhausting an iterator during validation must not publish every field.
+    """
+    reg = Registry()
+
+    class IteratorType(DjangoObjectType):
+        """Publish only an iterator-selected model field."""
+
+        class Meta:
+            """Use the existing iterable selector form."""
+
+            model = Author
+            registry = reg
+            only_fields = iter(("id", "name"))
+
+    assert {"id", "name"} <= set(IteratorType._meta.graphql_output_type.fields)
+    assert "bio" not in IteratorType._meta.graphql_output_type.fields
+
+
+def test_custom_slug_key_and_empty_selector_are_valid() -> None:
+    """Keep a nonstandard model primary key and empty exclusion valid.
+
+    A slug key is an ordinary selectable Django model field.
+    """
+    reg = Registry()
+
+    class SlugType(DjangoObjectType):
+        """Publish a model with a nonstandard primary key."""
+
+        class Meta:
+            """Select the slug and keep the exclusion empty."""
+
+            model = CustomPKProduct
+            registry = reg
+            only_fields = ("slug",)
+            exclude_fields = []
+
+    assert "slug" in SlugType._meta.graphql_output_type.fields
+
+
+@pytest.mark.parametrize("selector", (42, ("id", 42)))
+def test_non_name_selectors_fail_in_configuration(selector: object) -> None:
+    """Non-iterables and non-string entries cannot select model fields.
+
+    Args:
+        selector: Invalid projection declaration to reject.
+    """
+    reg = Registry()
+
+    class InvalidConfig:
+        """Configure a malformed output projection."""
+
+        model = Author
+        registry = reg
+        only_fields = selector
+
+    with pytest.raises(ImproperlyConfigured, match="only_fields"):
+
+        class InvalidType(DjangoObjectType):
+            """Invalid model projection should fail class definition."""
+
+            class Meta(InvalidConfig):
+                """Use the malformed inherited projection."""
+
+    assert reg.get_type_for_model(Author) is None

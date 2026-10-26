@@ -439,9 +439,8 @@ class CustomTime(_NativeScalarDescriptor):
         if isinstance(time, datetime.datetime):
             time = time.time()
 
-        assert isinstance(time, datetime.time), (
-            f'Received not compatible time "{repr(time)}"'
-        )
+        if not isinstance(time, datetime.time):
+            raise AssertionError(f'Received not compatible time "{repr(time)}"')
         return time.isoformat()
 
     parse_value = staticmethod(_time_parse_value)
@@ -474,9 +473,8 @@ class CustomDate(_NativeScalarDescriptor):
 
         if isinstance(date, datetime.datetime):
             date = date.date()
-        assert isinstance(date, datetime.date), (
-            f'Received not compatible date "{repr(date)}"'
-        )
+        if not isinstance(date, datetime.date):
+            raise AssertionError(f'Received not compatible date "{repr(date)}"')
         return date.isoformat()
 
     parse_value = staticmethod(_date_parse_value)
@@ -507,9 +505,8 @@ class CustomDateTime(_NativeScalarDescriptor):
         if isinstance(dt, CustomDateFormat):
             return dt.date_str
 
-        assert isinstance(dt, (datetime.datetime, datetime.date)), (
-            f'Received not compatible datetime "{repr(dt)}"'
-        )
+        if not isinstance(dt, (datetime.datetime, datetime.date)):
+            raise AssertionError(f'Received not compatible datetime "{repr(dt)}"')
         return dt.isoformat()
 
     parse_value = staticmethod(_datetime_parse_value)

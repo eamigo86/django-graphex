@@ -17,8 +17,8 @@ Two public entry points:
     Runs the KEPT subscription hooks BEFORE the source is created, so a DENY in
     "authorize" short-circuits BEFORE any "group_add" (design section 3):
     "authorize" -> "validate_filters" -> "scope" -> "filters = client union
-    scope" (scope WINS on conflict) -> compute index + group names (the action
-    arg picks the join set: "('create','update','delete')" for "all_actions"
+    scope" (both must match; a contradiction delivers nothing) -> compute index
+    + group names (the action arg picks the join set: "('create','update','delete')" for "all_actions"
     else "(action,)" — never hardcodes three, the #1420 guard) -> construct
     "ChannelLayerSource" -> "start()" (join groups) -> wire "source.db_verify"
     to the spec's single-row ".exists()" narrowing AFTER setting
@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
-from graphql import execute
+from graphql import GraphQLError, execute
 
 from .delivery import make_delivery_iterator
 from .source import ChannelLayerSource
@@ -120,7 +120,8 @@ class SubscriptionSpec:
         authorize: "authorize(context, **kwargs) -> None" — runs BEFORE the source
             is created; raise to DENY (short-circuits before any "group_add").
         scope: "scope(context, **kwargs) -> Mapping | None" — server-forced
-            filters merged with client filters at SERVER precedence (scope wins).
+            filters; the subscriber receives only events matching both the scope and
+            its own client filters.
         group_name: "group_name(action, *, id=None, index=None) -> str" — builds
             the Channels group name (matches the producer's "_group_name" by
             construction). Reuses the kept "Subscription._group_name".
@@ -257,6 +258,14 @@ def _lookup_names(model: Any, root: str) -> "set[str]":
     return set((field or Field()).get_lookups())
 
 
+class ClientFilterError(GraphQLError, ValueError):
+    """A subscriber filter the server refuses: invalid client input.
+
+    A GraphQLError so the transports keep its message public and unlogged; also
+    a ValueError, the type this validation raised before, for direct callers.
+    """
+
+
 def _assert_orm_accepts(model: Any, client_filters: "Mapping[str, Any]") -> None:
     """Raise when the ORM itself refuses to build a query from "client_filters".
 
@@ -282,14 +291,14 @@ def _assert_orm_accepts(model: Any, client_filters: "Mapping[str, Any]") -> None
         client_filters: The raw filters supplied by the subscriber.
 
     Raises:
-        ValueError: When the ORM cannot build a query from the filters.
+        ClientFilterError: When the ORM cannot build a query from the filters.
     """
     if model is None or not client_filters:
         return
     try:
         model._default_manager.filter(**client_filters)
     except Exception as exc:  # noqa: BLE001 - re-raised as the module's own error
-        raise ValueError(
+        raise ClientFilterError(
             "Subscription filter {} is not a valid database lookup on {}: {}.".format(
                 ", ".join(sorted(client_filters)), model.__name__, exc
             )
@@ -342,19 +351,20 @@ def _validate_client_filters(
         model: The subscribed Django model whose field lookups are consulted.
 
     Raises:
-        ValueError: When a filter key roots on an undeclared field, carries a
+        ClientFilterError: When a filter key roots on an undeclared field, carries a
             segment that is not a registered lookup, carries a lookup outside
             the equality/membership allow list, or the mapping as a whole is not
-            a query the ORM can build. (A plain exception keeps this module free
-            of any graphene/graphql error coupling; the transport layer
-            translates it into an error frame.)
+            a query the ORM can build. Each is invalid client input, so it is a
+            deliberate GraphQLError: the transports send its message as is,
+            without masking or an ERROR log. (No original_error is attached, as
+            that would make the formatter treat it as an internal failure.)
     """
     if not client_filters:
         return
     for key in client_filters:
         root, *rest = key.split("__")
         if root not in declared:
-            raise ValueError(
+            raise ClientFilterError(
                 "Subscription filter key '{}' is not a declared output field. "
                 "Allowed fields: {}.".format(key, ", ".join(sorted(declared)))
             )
@@ -363,14 +373,14 @@ def _validate_client_filters(
         lookups = _lookup_names(model, root)
         for segment in rest:
             if segment not in lookups:
-                raise ValueError(
+                raise ClientFilterError(
                     "Subscription filter key '{}' is not a valid Django lookup "
                     "on the declared output field '{}': '{}' is neither a "
                     "lookup nor a transform. Relation traversal is not allowed "
                     "in client filters.".format(key, root, segment)
                 )
             if segment not in _ALLOWED_LOOKUPS:
-                raise ValueError(
+                raise ClientFilterError(
                     "Subscription filter key '{}' uses '{}', which is not an "
                     "allowed lookup in client filters. Allowed lookups: {} (or "
                     "a bare field name, which means exact). Ordered and pattern "
@@ -450,7 +460,9 @@ async def native_subscribe(
       1. "authorize(context, **kwargs)" — raise to DENY (NO source, NO join).
       2. "_validate_client_filters" — reject filter keys on undeclared fields.
       3. "scope(context, **kwargs)" — server-forced filters.
-      4. "filters = {**client, **scope}" — scope WINS on conflict.
+      4. "filters = {**client, **scope}" — both must match; a client value that
+         contradicts the scope on the same key means nothing is ever delivered
+         (no group is joined).
       5. compute the index (SCOPE-ONLY parity with the kept "_subscribe" hook:
          a value-scoped group is joined only when the SERVER scope supplies every
          index field — never from a client value) and the group names; the
@@ -500,8 +512,17 @@ async def native_subscribe(
     )
     scope = dict(scope) if scope else {}
 
-    # (4) Merge — scope WINS on conflict (server precedence).
+    # (4) Merge — the scope and the client filter must BOTH match (AND). One key
+    # holds one value, so a key both give with different values (same lookup,
+    # equal string forms count as equal) can never be satisfied by any row: the
+    # source then joins no group and delivers nothing. The scope value is kept
+    # in the mapping so the effective filters still show the server constraint.
     merged: dict[str, Any] = {**client_filters, **scope}
+    contradiction = any(
+        key in client_filters
+        and not (client_filters[key] == value or str(client_filters[key]) == str(value))
+        for key, value in scope.items()
+    )
 
     # (5) Index routing: SCOPE-ONLY parity with the kept ``Subscription._subscribe``
     # hook (subscription.py: ``all(field in scope for field in index_fields)``).
@@ -517,14 +538,19 @@ async def native_subscribe(
         # Parity assertion: a scope-routed index value must equal the merged value
         # (scope wins on conflict, so they cannot diverge) — proving SCOPE-ONLY
         # routing matches the kept hook's effective filter exactly.
-        assert all(index[f] == merged[f] for f in index), (
-            "index routing must be SCOPE-ONLY parity with the kept _subscribe hook"
-        )
+        if not all(index[f] == merged[f] for f in index):
+            raise AssertionError(
+                "index routing must be SCOPE-ONLY parity with the kept _subscribe hook"
+            )
 
     group_name = spec.group_name
     if group_name is None:  # pragma: no cover - spec must provide a namer
         raise ValueError("SubscriptionSpec.group_name must be provided")
-    groups = [group_name(act, id=obj_id, index=index) for act in _actions_for(action)]
+    groups = (
+        []
+        if contradiction
+        else [group_name(act, id=obj_id, index=index) for act in _actions_for(action)]
+    )
 
     # (6) Construct + start the source (the ONLY group_add happens here, AFTER
     # all hooks have run — deny never reaches this point).

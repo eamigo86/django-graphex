@@ -115,6 +115,48 @@ class Query(ObjectType):
 `Field` works in both positions, and the parameters that make sense differ by
 position:
 
+For output fields, `source="name"` follows normal Python lookup. A missing
+attribute or mapping key and a property returning `None` remain GraphQL null
+when the field is nullable. When a Python `@property` getter's own
+`AttributeError` escapes normal Python lookup, GraphQL reports a resolution
+error retaining that exception instead of silently treating it as a missing
+attribute. This also applies when the Python getter is wrapped with
+`functools.partial` or `functools.lru_cache`. The same holds for any other
+class attribute that computes a value: `functools.cached_property`, Django's
+`cached_property`, or a custom descriptor with `__get__` that raises
+`AttributeError`. Normal `__getattr__` fallback remains in control: a returned
+fallback value is used, while a final dynamic attribute absence remains
+nullable. A class that defines `__getattr__` cannot tell a missing attribute
+from a failing one, because Python discards the descriptor's error before
+calling `__getattr__`; on such a class a failing descriptor still reads as null. A missing Django reverse one-to-one
+relation also resolves to null, including when read through a property.
+Required fields retain normal GraphQL null propagation; production HTTP
+responses use the existing safe error message and error ID.
+
+```python
+from django_graphex.core import Field, ObjectType
+from graphql import GraphQLString
+
+class Query(ObjectType):
+    """Expose a property through an explicit source."""
+
+    display_name = Field(GraphQLString, source="display_name")
+
+class Root:
+    """Represent an object with a failing display-name property."""
+
+    @property
+    def display_name(self) -> str:
+        """Read the display name from an unavailable service.
+
+        Raises:
+            AttributeError: The profile service failed.
+        """
+        raise AttributeError("profile service failed")
+
+# This escaping getter error becomes a GraphQL field error, not a silent null.
+```
+
 | Parameter | Position | Meaning |
 |-----------|----------|---------|
 | `type` | both | The field's type — a graphql-core type, a `DjangoObjectType` reference (output), or an `InputType` reference (input). |
@@ -125,7 +167,7 @@ position:
 | `source` | output only | Resolve by reading an attribute off the root. |
 | `resolver` | output only | Field-level resolver (wins over the parent resolver). |
 | `args` | output only | Explicit `{name: arg}` mapping for the field's arguments. |
-| `default` | input only | The GraphQL default value; omit to leave the argument with no default. |
+| `default` | input only | The GraphQL default value; omit to leave the argument with no default. A mutable default (a list or dict) is copied for every execution, so a resolver that changes it never affects the next request. |
 
 Setting an output-only parameter (`resolver=`, `source=`, `args=`) on a
 `Field` used inside a `class Arguments` body raises a `TypeError` naming the
@@ -167,6 +209,13 @@ class Query(ObjectType):
 - Automatic ID-based filtering
 - No need to define custom resolve function
 - Built-in error handling for non-existent objects
+
+A well-formed ID with no visible row resolves to `null` without an error. If the
+model primary key cannot convert the supplied ID, the field instead resolves
+to `null` with a GraphQL error whose `extensions.code` is `INVALID_ID`. Integer
+and UUID keys receive an expected-format hint; custom keys receive a generic
+message. A text primary key such as `abc` remains valid when its model accepts
+it. Scope and permission failures keep their own behavior.
 
 **Usage in GraphQL:**
 ```graphql

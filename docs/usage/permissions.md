@@ -115,6 +115,12 @@ losing the nested surface. See
 [Nested writes](mutations.md#how-nested-writes-work) for the full
 contract, including which paths are gated.
 
+Adopting an **existing unowned nullable reverse-FK child by ID** additionally
+requires a registered child host that serves update. Its existing scope and
+permissions must admit the row; a read-only or create-only host cannot
+authorize adoption. New children and already-owned child updates retain their
+previous paths. See the [orphan-adoption migration guide](mutations.md#adopting-an-existing-reverse-fk-or-reverse-onetoone-orphan-by-id).
+
 !!! note "Checks with a closed signature never see it"
     Each extra is only passed to a check that can accept it, so an `authorize`
     override or a permission class that spells its arguments out
@@ -164,6 +170,13 @@ observe actions stay view-only:
 
 Notes:
 
+- **ID links are row-scoped separately from write permissions.** Generated
+  create/update FK and M2M ID links check the destination public type's
+  `get_queryset` when it has an override, but linking does not run the
+  child's add/change permission. See
+  [mutation link scoping](mutations.md#migrating-id-links-hidden-by-a-destination-scope)
+  for the hidden-ID error and migration steps.
+
 - **Relations are gated by the model they point at.** `permission_classes` runs
   on the CRUD/subscribe entry points of *this* type; it does not run again on a
   nested relation resolver. Reading a related model through a relation field
@@ -174,7 +187,10 @@ Notes:
   model's `view_{model_name}`, so a caller who cannot query `Comment` directly
   cannot reach it through `Post` either. Without that flag the schema is never
   pruned and a relation stays reachable — enable it if relation traversal must
-  be permission-checked.
+  be permission-checked. A [flat GenericForeignKey](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution)
+  is different: its field stays in the SDL, while the whole target becomes
+  `null` without the actual model's read permission or when a registered
+  target row hook excludes that row.
 - **Superusers pass automatically** — Django's `ModelBackend` grants every
   permission to an active superuser.
 - **Anonymous users are always denied** (the class is fail-closed).

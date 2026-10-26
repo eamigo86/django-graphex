@@ -51,9 +51,41 @@ For the fields requested in the query, the optimizer:
   `select_related` span** and **inside each `Prefetch` child queryset**
   (see [caveats](#only-column-projection)).
 
+An automatic FK or forward/reverse OneToOne field whose destination type
+overrides `get_queryset` is a deliberate exception to the join plan. The
+optimizer replaces that unscoped join with a batched, request-scoped prefetch
+and resolves the nullable field from its visible result. This also runs for
+ordinary list reads when `OPTIMIZE_QUERYSET=False`; a custom-returned parent
+without a planned prefetch is checked at the field resolver instead. A cached
+unscoped relation is never used as visibility evidence. Automatic declared
+and reverse M2M output lists also use a scoped prefetch when the destination
+type overrides `get_queryset`. Their `totalCount` is taken from visible
+members before nested pagination; M2M window slicing is not introduced.
+The optimized M2M destination queryset is bound to the originating list's
+database alias before its visibility hook runs, matching ordinary traversal.
+Explicit resolver fields keep their separate contract.
+
 It is transparent to the `DjangoListObjectType` wrapper (`results` / `totalCount`
 / `pageInfo`), to **fragments** and to **inline fragments**, and matches both
 `camelCase` and `snake_case` field names.
+
+When GraphQL merges repeated selections of the same root response field, the
+optimizer plans from all of their selection sets. For example, a direct
+`allPosts { results { title } }` selection and a fragment selecting
+`allPosts { results { author { name } } }` share one result; the optimizer still
+joins `author` and keeps its requested columns. A relation selected only in a
+later root field node does not require one extra query per returned post.
+
+Repeated spreads of an acyclic fragment are planned once per distinct optimizer
+context (model, GraphQL type, and relation path), rather than expanding the same
+subtree once for every spread route. For example, two spreads of a fragment
+selecting `author { name }` keep the same `select_related("author")` and column
+projection as before. Reusing that fragment under different relation paths still
+plans each path separately. This changes optimizer planning work, not GraphQL
+execution, response fields, query cost, or the number of SQL queries. Repeated
+fragment plans are reapplied in selection order, so a later spread retains its
+existing precedence over an interleaved selection of the same relation or
+annotation alias.
 
 ## Example
 
@@ -183,6 +215,7 @@ Configure in `settings.py` under `DJANGO_GRAPHEX`:
 | `OPTIMIZE_ONLY_FIELDS` | `True` | Additionally narrow columns with `.only()` across the `select_related` span **and** inside each `Prefetch` child queryset (conservative; see the warning above). |
 | `OPTIMIZE_NESTED_PAGINATION` | `True` | DB-side `ROW_NUMBER()` window slicing for reverse-FK nested paginated lists (`LimitOffset`/`Page`). `False` = in-memory order+slice fallback. See [DB-side nested pagination](#db-side-nested-pagination-window-slicing) (this page) and [Nested Lists](nested-lists.md#performance-n1). |
 | `OPTIMIZER_SAFE_MODE` | `False` | When `True`, any exception in the optimization block degrades to the un-optimized queryset and logs a `WARNING` (instead of a 500). Default fail-loud. See [`OPTIMIZER_SAFE_MODE`](#optimizer_safe_mode-fail-safe-degrade) below. |
+| `OPTIMIZER_WORK_BUDGET` | `2000` | Per-operation-execution cap on the selection contexts each optimizer walker expands. Fragments reached through distinct relation paths describe exponentially many lookups; past the cap the root field is resolved without the optimizer plan (same data, more queries). `None` disables the cap; `0` or a negative value raises `ImproperlyConfigured`. See [Query Optimization](query-optimization.md#optimizer_work_budget-work-cap). |
 | `OPTIMIZE_ANNOTATED_FIELDS` | `True` | Inject `AnnotatedField` DB annotations only when the field is selected. Runtime kill-switch for annotation injection. See [Fields → AnnotatedField](fields.md#annotatedfield). |
 
 ```python
@@ -191,6 +224,7 @@ DJANGO_GRAPHEX = {
     "OPTIMIZE_ONLY_FIELDS": True,
     "OPTIMIZE_NESTED_PAGINATION": True,
     "OPTIMIZER_SAFE_MODE": False,
+    "OPTIMIZER_WORK_BUDGET": 2000,
     "OPTIMIZE_ANNOTATED_FIELDS": True,
 }
 ```
@@ -215,6 +249,30 @@ DJANGO_GRAPHEX = {
     "OPTIMIZER_SAFE_MODE": True,
 }
 ```
+
+## `OPTIMIZER_WORK_BUDGET` (work cap)
+
+Fragments make a short document describe a huge selection tree. When a fragment
+reaches the next one through *different* relations (`author`, `coAuthors`,
+`posts`, `coauthoredPosts`, ...), every path is a different ORM lookup, so the
+lookups the optimizer would emit grow as `4**n` for `n` fragments. Memoizing by
+fragment cannot plan an exponential set in linear time, and emitting it would
+also mean one query per lookup once there is data.
+
+`OPTIMIZER_WORK_BUDGET` (default `2000`) therefore caps, per operation execution and per
+walker, how many selection contexts the optimizer expands. A realistic document
+stays orders of magnitude below it. The budget is shared by all root fields
+(aliases) of one execution; each item of a batch is its own execution. Once any walker spends it, the root field being
+planned is resolved without the optimizer plan, exactly as with
+`OPTIMIZE_QUERYSET = False`, and so are the request's later root fields: the
+data is identical and relations behind a `get_queryset` scope stay scoped, but
+relations load through the normal resolvers (possibly one query per parent). A
+partial plan is never kept, because it could disagree with itself and drop the
+ordering, limit or offset of a nested list. A `DEBUG` record on the
+`django_graphex.utils` logger names the walker that hit the cap. Use
+[`MAX_QUERY_DEPTH` / `MAX_QUERY_COST`](query-limits.md) to reject such
+documents outright; set the budget to `None` only to restore the unbounded
+planning.
 
 ## DB-side nested pagination (window slicing)
 
@@ -381,6 +439,34 @@ that declares `fragment Money on AccountType { balance }` and spreads it under
 `target` narrows the `Account` queryset exactly as `... on AccountType
 { balance }` would, and a selection that *mixes* both forms merges them into a
 single per-member queryset instead of deferring the spread's columns.
+
+You may also group member selections under a valid fragment on the union
+itself. Both inline and named union wrappers retain the same per-member
+batching and nested relation joins as direct member fragments:
+
+```graphql
+query {
+  allComments {
+    results {
+      target {
+        ... on CommentTargetUnion {
+          ... on OrderType { total customer { label } }
+        }
+        ...AllAccountTargets
+      }
+    }
+  }
+}
+
+fragment AllAccountTargets on CommentTargetUnion {
+  ... on AccountType { balance }
+}
+```
+
+The wrapper has no Django model of its own: the optimizer descends into its
+valid member selections, then builds the same per-content-type querysets it
+would build without the wrapper. This does not infer GraphQL type relationships
+from Django multi-table inheritance or make invalid fragments valid.
 
 !!! note "Inline-fragment type-condition guard"
     This routing relies on a correctness guard: the optimizer never descends
@@ -555,6 +641,17 @@ The resolver returns a `QuerySet`, so the optimizer picks it up and adds
 GraphQL selection. If the resolver returned a plain list, the optimizer would
 leave it untouched (no queryset to decorate).
 
+For an automatic forward FK whose destination type overrides
+`get_queryset`, the optimizer uses a **scoped prefetch** in place of that FK's
+`select_related` join. This lets one destination query serve all selected
+parents while excluding hidden targets. Reverse-FK list prefetches and
+window-pagination queries apply the child type's scope before counting or
+slicing. A default, unchanged hook keeps the ordinary join/prefetch plan.
+With `OPTIMIZE_QUERYSET=False`, output still honors these scopes, but each
+uncached related value may require its own database check. This is a
+correctness guarantee, not a promise that disabling optimization preserves
+batching.
+
 !!! note "A manual prefetch of the same relation is replaced"
     A base queryset — from a resolver, from `Meta.queryset`, or from a type's
     `get_queryset` hook — may already carry `prefetch_related("posts")` for a
@@ -582,7 +679,8 @@ for `Meta.output_field_name` (e.g. `post` inside `{ ok post { … } }`), and
 applies `select_related` for every to-one relation (`ForeignKey`,
 `OneToOneField`) that appears in that sub-selection.
 
-This eliminates N+1 queries on mutation responses that nest related objects:
+For destination types with the default no-op row hook, this eliminates N+1
+queries on mutation responses that nest related objects:
 
 ```graphql
 mutation CreatePost($input: NewPostInput!) {
@@ -596,6 +694,10 @@ mutation CreatePost($input: NewPostInput!) {
   }
 }
 ```
+
+If a destination has a row-scope hook, its automatic to-one field still checks
+that hook. A mutation response without a batched scoped prefetch can issue an
+additional membership query for the destination.
 
 No code changes are required; the optimization is applied automatically
 whenever `DjangoModelType.perform_mutate` is called.  If the selection set

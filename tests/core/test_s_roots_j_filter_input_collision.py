@@ -23,6 +23,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 
 @pytest.mark.django_db
 def test_native_filter_input_collision_multi_path_same_model() -> None:

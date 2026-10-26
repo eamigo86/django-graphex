@@ -6,14 +6,18 @@ import operator
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Count, F, JSONField, Prefetch
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.expressions import Window
+from django.db.models.expressions import OrderBy, Window
 from django.db.models.functions import RowNumber
 from graphql import GraphQLID, GraphQLList, GraphQLNonNull
 
 import django_graphex.settings as _settings_module
-from django_graphex.filtering.backend import resolve_filter_backend
+from django_graphex.filtering.backend import (
+    apply_filter_backend,
+    resolve_filter_backend,
+)
 from django_graphex.settings import graphql_api_settings
 
 from ._strconv import to_snake_case
@@ -26,17 +30,22 @@ from .core.descriptors import (
 from .filtering.filter_field import apply_custom_filters
 from .paginations.pagination import (
     BaseDjangoGraphqlPagination,
+    _append_model_pk_ordering,
+    _automatic_null_ordering,
+    _effective_queryset_ordering,
     _split_ordering,
     projected_ordering_attnames,
 )
 from .utils import (
     _apply_field_hook,
     _compute_child_only,
+    _get_by_pk_or_none,
     _get_field_optimize_hook,
     apply_object_type_get_queryset,
     find_field,
     get_extra_filters,
     get_related_fields,
+    has_object_type_queryset_override,
     is_valid_django_model,
     maybe_queryset,
     queryset_factory,
@@ -192,7 +201,10 @@ class DjangoObjectField(NativeMountedField):
             **kwargs: query arguments, including the object "id".
 
         Returns:
-            The matching model instance, or None when it does not exist.
+            The matching model instance, or None for a well-formed missing ID.
+
+        Raises:
+            GraphQLError: If the ID fails the model primary key's conversion.
         """
         id = kwargs.pop("id", None)
 
@@ -200,7 +212,7 @@ class DjangoObjectField(NativeMountedField):
             qs = queryset_factory(
                 manager, root, info, output_type=output_type, **kwargs
             )
-            return qs.get(pk=id)
+            return _get_by_pk_or_none(qs, id)
         except manager.model.DoesNotExist:
             return None
 
@@ -408,20 +420,20 @@ class DjangoFilterListField(NativeMountedField):
                 qs = operator.attrgetter(
                     f"{getattr(field, 'related_name', None) or field.name}.all"
                 )(root)()
-                # The relation accessor bypasses queryset_factory, so the
-                # row-level scope must be applied here too -- otherwise the
-                # hook enforced at the top level leaks through the parent.
-                qs = apply_object_type_get_queryset(qs, output_type, info)
-                qs = filter_backend.apply(qs, filter_value)
-                qs = apply_custom_filters(qs, custom_filters, info, filter_value)
             except AttributeError:
                 qs = None
+            if qs is not None:
+                # Only a missing relation accessor may take the fallback. A
+                # destination hook failure must propagate, not serve unscoped.
+                qs = apply_object_type_get_queryset(qs, output_type, info)
+                qs = apply_filter_backend(filter_backend, qs, filter_value, info)
+                qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
         if qs is None:
             qs = queryset_factory(
                 manager, root, info, output_type=output_type, **kwargs
             )
-            qs = filter_backend.apply(qs, filter_value)
+            qs = apply_filter_backend(filter_backend, qs, filter_value, info)
             qs = apply_custom_filters(qs, custom_filters, info, filter_value)
 
             if root and is_valid_django_model(root._meta.model):
@@ -491,6 +503,9 @@ class DjangoFilterPaginateListField(NativeMountedField):
             fields: filterable field configuration, or None to use the type's.
             *args: extra positional arguments forwarded to the base field.
             **kwargs: extra keyword arguments forwarded to the base field.
+
+        Raises:
+            ImproperlyConfigured: If pagination is not a pagination instance.
         """
         kwargs.setdefault("args", {})
         _build_filter_arg(self, _type, fields)
@@ -502,9 +517,12 @@ class DjangoFilterPaginateListField(NativeMountedField):
             pagination = default_paginator_class() if default_paginator_class else None
 
         if pagination is not None:
-            assert isinstance(pagination, BaseDjangoGraphqlPagination), (
-                'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
-            ).format(pagination)
+            if not isinstance(pagination, BaseDjangoGraphqlPagination):
+                raise ImproperlyConfigured(
+                    (
+                        'You need to pass a valid DjangoGraphqlPagination in DjangoFilterPaginateListField, received "{}".'
+                    ).format(pagination)
+                )
 
             # The ordering allowlist is NOT stamped here. It is a per-SCHEMA
             # fact — which columns the node type publishes is decided by the
@@ -579,7 +597,7 @@ class DjangoFilterPaginateListField(NativeMountedField):
         """
         filter_value = kwargs.get("filter")
         qs = self.get_queryset(manager, root, info, **kwargs)
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
 
         # Apply custom @filter_field methods in declaration order.
         custom_filters = getattr(self, "custom_filters", None) or []
@@ -681,7 +699,7 @@ class DjangoListObjectField(NativeMountedField):
         """
         filter_value = kwargs.get("filter")
         qs = queryset_factory(manager, root, info, output_type=output_type, **kwargs)
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
 
         # Apply custom @filter_field methods in declaration order.
         custom_filters = getattr(self, "custom_filters", None) or []
@@ -768,6 +786,8 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         _type: Any,
         accessor: str | None = None,
         fields: Any = None,
+        *,
+        automatic_relation: bool = False,
         **kwargs: Any,
     ) -> None:
         """Store the "accessor" and build the field, filter only if declared.
@@ -780,9 +800,11 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             _type: the GraphQL list object type to resolve.
             accessor: the parent attribute name for the related set.
             fields: filterable field configuration, or None to use the type's.
+            automatic_relation: Whether the compiler derived this model relation.
             **kwargs: extra keyword arguments forwarded to the base field.
         """
         self.accessor = accessor
+        self.automatic_relation = automatic_relation
         self.filter_backend = resolve_filter_backend()
         self.filter_type = None
 
@@ -834,11 +856,61 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         Returns:
             The queryset after both filter stages.
         """
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
         return apply_custom_filters(qs, self.custom_filters, info, filter_value)
 
+    def _is_reverse_fk(self, parent_model: type[Model]) -> bool:
+        """Check whether this nested accessor is a reverse foreign key.
+
+        Args:
+            parent_model: Model that owns the relation accessor.
+
+        Returns:
+            Whether the accessor is a reverse-FK relation.
+        """
+        return any(
+            relation.get_accessor_name() == self.accessor
+            and relation.one_to_many
+            and not relation.many_to_many
+            for relation in parent_model._meta.related_objects
+        )
+
+    def _scopes_destination(self, parent_model: type[Model]) -> bool:
+        """Identify automatic to-many outputs whose destination hook applies.
+
+        Reverse foreign keys retain their existing scope. Many-to-many fields
+        additionally require the compiler's automatic-relation marker so an
+        explicitly declared relation keeps its resolver-owned behavior.
+
+        Args:
+            parent_model: Model that owns the relation accessor.
+
+        Returns:
+            Whether this field scopes destination members and counts.
+        """
+        if self._is_reverse_fk(parent_model):
+            return True
+        if not self.automatic_relation:
+            return False
+        for relation in parent_model._meta.get_fields():
+            if not getattr(relation, "many_to_many", False):
+                continue
+            if getattr(relation, "auto_created", False):
+                accessor = relation.get_accessor_name()
+            else:
+                accessor = relation.name
+            if accessor == self.accessor:
+                return True
+        return False
+
     def build_prefetch(
-        self, lookup: str, filter_value: Any, info: ResolveInfo
+        self,
+        lookup: str,
+        filter_value: Any,
+        info: ResolveInfo,
+        *,
+        scope_reverse_fk: bool = False,
+        source_alias: str | None = None,
     ) -> Prefetch:
         """Build a "Prefetch" of the related set, filtered by "filter_value".
 
@@ -851,14 +923,26 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             lookup: the relation lookup path to prefetch.
             filter_value: the filter input value applied to the related set.
             info: the GraphQL resolve info.
+            scope_reverse_fk: Apply the destination hook for an eligible relation.
+            source_alias: Database alias of the originating queryset for M2M scope.
 
         Returns:
             A Prefetch object for the filtered related set.
         """
         model = self.type._meta.model
+        item_type = getattr(self.type._meta, "baseType", None)
         qs = model._default_manager.all()
+        if source_alias is not None:
+            qs = qs.using(source_alias)
+        if scope_reverse_fk:
+            qs = apply_object_type_get_queryset(qs, item_type, info)
         qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
-        return Prefetch(lookup, queryset=qs)
+        to_attr = (
+            f"_gqx_scoped_{self.accessor}"
+            if scope_reverse_fk and has_object_type_queryset_override(item_type)
+            else None
+        )
+        return Prefetch(lookup, queryset=qs, to_attr=to_attr)
 
     def build_window_prefetch(
         self,
@@ -933,7 +1017,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # --- Pre-check 5: all ordering terms must be concrete attnames ----------
         child = self.type._meta.model
-        concrete_attnames = {f.attname for f in child._meta.concrete_fields}
+        model_attnames = {f.attname for f in child._meta.concrete_fields}
         # Narrow to what the child TYPE exposes. This path applies the ORDER BY
         # in SQL and hands back rows already sliced (``already_paginated``), so
         # ``paginate_queryset`` — and with it the ordering allowlist — never
@@ -954,17 +1038,20 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # instance the schemas share. A caller that passes no row type gets the
         # empty allowlist and the optimization simply declines, which is the
         # documented fallback above.
-        concrete_attnames &= projected_ordering_attnames(child, child_gql_type)
+        concrete_attnames = model_attnames & projected_ordering_attnames(
+            child, child_gql_type
+        )
+        if not order and child._meta.pk.attname not in concrete_attnames:
+            # Keep the existing plain-prefetch fallback for a hidden key.
+            # That path supplies the internal tie-break after client checks.
+            return None
         # order may be a comma-separated string ("id,-title") or an iterable of
         # strings. Normalize to a list of individual terms, converting any
         # camelCase spelling to its snake_case attname (``authorId`` ->
         # ``author_id``) via the SAME canonical helper the paginators use, so
         # the window optimization does NOT decline for a camelCase term and the
         # window ORDER BY built below emits real column expressions.
-        if not order:
-            order_terms: list[str] = [child._meta.pk.attname]
-        else:
-            order_terms = _split_ordering(order)
+        order_terms: list[str] = _split_ordering(order) if order else []
         for term in order_terms:
             col = term.lstrip("-+").split(LOOKUP_SEP)[0]
             if col not in concrete_attnames:
@@ -1001,6 +1088,10 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # --- Build the window queryset -----------------------------------------
         qs = child._default_manager.all()
+        if self._is_reverse_fk(related_field.model):
+            qs = apply_object_type_get_queryset(
+                qs, getattr(self.type._meta, "baseType", None), info
+            )
         qs = self.apply_filters(qs, self.filter_backend, filter_value, info)
 
         # --- Phase E (AC1): apply optimize_<field> hook on filter-applied base qs
@@ -1015,6 +1106,22 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         if getattr(getattr(qs, "query", None), "distinct", False):
             return None
 
+        if not order:
+            # With no paginator term, the hook's queryset ordering takes
+            # precedence over Meta.ordering. These are server-owned terms,
+            # unlike the client/configured terms checked above.
+            server_terms, _ = _effective_queryset_ordering(qs)
+            if any(not isinstance(term, str) for term in server_terms):
+                return None  # ORM expressions retain the plain-prefetch path.
+            # These trusted terms already have Django's effective directions;
+            # client spelling normalization would reinterpret SQL aliases.
+            order_terms = server_terms
+            for term in order_terms:
+                if term.lstrip("-+") not in model_attnames:
+                    return None
+        # Validate original client terms before adding the server-generated PK.
+        order_terms = _append_model_pk_ordering(child, order_terms)
+
         # Snapshot the queryset the window page is computed from, BEFORE the
         # window expressions: it is exactly the row set the empty-page count
         # must report.  Rebuilding it from the default manager (as this used to)
@@ -1024,8 +1131,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
 
         # Build order expressions for the window ORDER BY.
         order_exprs = [
-            F(t.lstrip("-+")).desc() if t.startswith("-") else F(t.lstrip("-+")).asc()
-            for t in order_terms
+            term
+            if isinstance(term, OrderBy)
+            else (
+                F(term.lstrip("-+")).desc()
+                if term.startswith("-")
+                else F(term.lstrip("-+")).asc()
+            )
+            for term in _automatic_null_ordering(child, order_terms)
         ]
 
         # --- Phase-d §7: apply user concrete-column annotation BEFORE window exprs --
@@ -1071,12 +1184,15 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         # We store a *factory* callable rather than a pre-built expression so
         # the Subquery is freshly constructed per request when needed.  The
         # factory captures the FK-attname and filter-applied queryset; the
-        # caller (_apply_optimizations) supplies OuterRef('pk') at annotation time.
+        # caller (_apply_optimizations) supplies OuterRef(<FK target column>) at annotation time.
         # The base queryset snapshotted above (filters + hook applied, window
         # exprs not yet) is stored on the Prefetch so the annotation counts
         # EXACTLY the rows the window path pages over.
         pf._gqx_cnt_qs = _cnt_base_qs
         pf._gqx_cnt_fk_attname = fk_attname
+        # The child column holds the parent's FK TARGET value (the pk unless the
+        # FK uses to_field), so the count correlates on that parent column.
+        pf._gqx_cnt_parent_attname = fk_field.target_field.attname
         pf._gqx_cnt_attr = _GQX_CNT_ATTR_PREFIX + self.accessor
 
         return pf
@@ -1092,17 +1208,14 @@ class DjangoNestedListObjectField(DjangoListObjectField):
     ) -> DjangoListObjectBase:
         """Resolve the nested list, preferring the parent's prefetch cache.
 
-        "output_type" is accepted for signature compatibility with the parent
-        class but is intentionally unused here: nested-relation fields resolve
-        rows from the parent's prefetch cache or relation accessor, not from a
-        fresh top-level queryset, so the item type's "get_queryset" hook is
-        not applicable.
+        The item output type scopes relation rows before counts or pagination.
+        Optimized scoped rows use a dedicated prefetch attribute so an older
+        unscoped relation cache cannot bypass the scope.
 
         Args:
             manager: the model manager used to build the base queryset.
             filter_backend: the native filter backend applied to the queryset.
-            output_type: unused; present for signature compatibility with
-                "DjangoListObjectField.list_resolver".
+            output_type: Item type whose queryset hook scopes related rows.
             root: the parent instance owning the related set.
             info: the GraphQL resolve info.
             **kwargs: query arguments, including the "filter" value.
@@ -1115,6 +1228,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             return DjangoListObjectBase(
                 count=0, results=[], results_field_name=results_field_name
             )
+
+        if not self._scopes_destination(root._meta.model):
+            output_type = None
 
         # --- C3: check for window-sliced prefetch first -------------------------
         # build_window_prefetch stores results via to_attr="_gqx_win_<accessor>"
@@ -1154,6 +1270,9 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                     # optimize_<field> hook -- otherwise the overshoot page
                     # reports a different (and unscoped) total than page one.
                     manager_qs = getattr(root, self.accessor).all()
+                    manager_qs = apply_object_type_get_queryset(
+                        manager_qs, output_type, info
+                    )
                     filtered_qs = self.apply_filters(
                         manager_qs, filter_backend, filter_value, info
                     )
@@ -1179,10 +1298,21 @@ class DjangoNestedListObjectField(DjangoListObjectField):
                 already_paginated=True,
             )
 
+        scoped_attr = f"_gqx_scoped_{self.accessor}"
+        scoped_results = getattr(root, scoped_attr, None)
+        if scoped_results is not None:
+            return DjangoListObjectBase(
+                count=len(scoped_results),
+                results=scoped_results,
+                results_field_name=results_field_name,
+            )
+
         # If the optimizer prefetched this relation (filtered or full), use the
         # cache as-is and paginate/order it in memory -> no extra query.
         cache = getattr(root, "_prefetched_objects_cache", None) or {}
-        if self.accessor in cache:
+        if self.accessor in cache and not has_object_type_queryset_override(
+            output_type
+        ):
             results = list(cache[self.accessor])
             return DjangoListObjectBase(
                 count=len(results),
@@ -1191,11 +1321,12 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             )
 
         related_manager = getattr(root, self.accessor)
+        scoped_queryset = apply_object_type_get_queryset(
+            related_manager.all(), output_type, info
+        )
 
         if filter_value:
-            qs = self.apply_filters(
-                related_manager.all(), filter_backend, filter_value, info
-            )
+            qs = self.apply_filters(scoped_queryset, filter_backend, filter_value, info)
             # LAZY totalCount: defer the COUNT to first .count access (only when
             # totalCount is selected). count() clones qs, safe post-iteration.
             return DjangoListObjectBase(
@@ -1205,7 +1336,7 @@ class DjangoNestedListObjectField(DjangoListObjectField):
             )
 
         # Unfiltered and not prefetched: materialize the relation.
-        results = list(related_manager.all())
+        results = list(scoped_queryset)
         return DjangoListObjectBase(
             count=len(results),
             results=results,
@@ -1213,37 +1344,28 @@ class DjangoNestedListObjectField(DjangoListObjectField):
         )
 
     def wrap_resolve(self, parent_resolver: Callable) -> Callable:
-        """Bind (manager, filter_backend, output_type=None) to the nested resolver.
+        """Bind the manager, filter backend, and item type to the nested resolver.
 
         Overrides the parent "DjangoListObjectField.wrap_resolve" because
-        nested-relation fields obtain their rows from the parent's prefetch
-        cache or relation accessor -- not from a fresh top-level queryset -- so
-        the item type's "get_queryset" hook must NOT be applied here.
-        "output_type" is bound as None; "list_resolver" accepts it for
-        signature compatibility but ignores it.
+        Nested-relation fields obtain rows from the parent's scoped prefetch
+        or relation accessor. The item type is bound for destination scoping
+        on eligible automatic to-many paths; other relations keep their behavior.
 
-        Wiring "get_queryset" on nested relations would require rebuilding
-        the prefetch queryset inside the resolver, which conflicts with the
-        window-pagination and prefetch optimizations. The documented hatch for
-        per-relation row scoping is to DECLARE the relation on the parent type
-        as a "DjangoFilterListField", which replaces this auto-expanded
-        container and does apply the hook. A bare "resolve_<rel>" method is not
-        the hatch: this method binds "self.resolver or self.list_resolver" and
-        never consults the parent class.
+        A bare "resolve_<rel>" method remains inert because the generated field
+        owns its resolver; explicit declarations retain their own behavior.
 
         Args:
             parent_resolver: the resolver supplied by the parent field.
 
         Returns:
-            A partial that binds the manager, filter backend, and a None
-            output type placeholder.
+            A partial that binds the manager, filter backend, and item type.
         """
         resolver = self.resolver or self.list_resolver
         return partial(
             resolver,
             self.type._meta.model._default_manager,
             self.filter_backend,
-            None,  # output_type: nested path does not apply get_queryset hook
+            getattr(self.type._meta, "baseType", None),
         )
 
 

@@ -23,7 +23,9 @@ from graphql import (
 )
 
 from django_graphex._strconv import to_camel_case, to_snake_case
+from django_graphex.settings import graphql_api_settings
 
+from ..core.scalars import GdxBigInt, GdxDecimal
 from ..utils import to_kebab_case
 from .base import BaseExtraGraphQLDirective
 
@@ -155,25 +157,98 @@ def _apply_str(value: Any, transform: Callable[[str], Any]) -> Any:
     return transform(_as_str(value))
 
 
+_CASE_SEPARATOR_RE = re.compile(r"[ _-]+")
+_CASE_BOUNDARY_RE = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])|(?<=[a-z0-9])(?=[A-Z])")
+_CASE_UNSUPPORTED_RE = re.compile(r"[^A-Za-z0-9 _-]")
+
+
+def _directive_case_words(value: str) -> list[str] | None:
+    """Split approved directive input without changing other character policies.
+
+    Args:
+        value: The string supplied to a case-conversion directive.
+
+    Returns:
+        Lowercase words, or None when the input contains characters outside
+        the approved separators and ASCII word forms.
+    """
+    if _CASE_UNSUPPORTED_RE.search(value):
+        return None
+    return [
+        word.lower()
+        for segment in _CASE_SEPARATOR_RE.split(value)
+        if segment
+        for word in _CASE_BOUNDARY_RE.split(segment)
+    ]
+
+
+def _directive_camel_case(value: str) -> str:
+    """Convert approved word forms to camelCase within the directive only.
+
+    Args:
+        value: The string supplied to the directive.
+
+    Returns:
+        The converted string, retaining legacy handling of other characters.
+    """
+    words = _directive_case_words(value)
+    if words is None:
+        return to_camel_case(value)
+    return words[0] + "".join(word.capitalize() for word in words[1:]) if words else ""
+
+
+def _directive_snake_case(value: str) -> str:
+    """Convert approved word forms to snake_case within the directive only.
+
+    Args:
+        value: The string supplied to the directive.
+
+    Returns:
+        The converted string, retaining legacy handling of other characters.
+    """
+    words = _directive_case_words(value)
+    if words is None:
+        return to_snake_case(value.title().replace(" ", ""))
+    return "_".join(words)
+
+
+def _directive_kebab_case(value: str) -> str:
+    """Convert approved word forms to kebab-case within the directive only.
+
+    Args:
+        value: The string supplied to the directive.
+
+    Returns:
+        The converted string, retaining legacy handling of other characters.
+    """
+    words = _directive_case_words(value)
+    if words is None:
+        return to_kebab_case(value)
+    return "-".join(words)
+
+
 def _serializes_string(info: GraphQLResolveInfo) -> bool:
     """Report whether the field can serialize a formatted string.
 
-    "@number" and "@currency" always produce a formatted string, which the
-    "Int" and "Float" fields they are documented for can never serialize:
-    graphql-core rejects the value and the field nulls with an opaque coercion
-    error. Detecting that lets the directives hand the raw numeric value back
-    instead of destroying the response.
+    For non-null values, "@number" and "@currency" produce formatted strings
+    on fields that can serialize them. "Int" and "Float" fields cannot
+    serialize those strings: graphql-core would reject the value and null the
+    field with an opaque coercion error. The "Decimal" and "BigInt" scalars
+    reject formatted text the same way. Detecting those field types lets the
+    directives return the raw numeric value instead. Null values remain null.
 
     Args:
         info: The GraphQL resolve info for the field.
 
     Returns:
-        False when the field's unwrapped return type is "Int" or "Float", True
-        otherwise (including when the return type is unknown).
+        False when the field's unwrapped return type is "Int", "Float",
+        "Decimal" or "BigInt", True otherwise (including when the return type is unknown).
     """
     return get_named_type(getattr(info, "return_type", None)) not in (
         GraphQLInt,
         GraphQLFloat,
+        GdxDecimal,
+        GdxBigInt,
     )
 
 
@@ -302,9 +377,10 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
     hostile client-supplied specs.
 
     The result is a string, so the directive only applies on fields that can
-    serialize one. On an "Int" or "Float" field the raw value is returned
+    serialize one. On an "Int", "Float", "Decimal" or "BigInt" field the raw value is returned
     unchanged instead: handing those a formatted string nulls the field with an
-    opaque graphql-core coercion error.
+    opaque graphql-core coercion error. A null value remains null after the
+    format spec has been validated.
     """
 
     @staticmethod
@@ -329,7 +405,7 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
         root: Any,
         info: GraphQLResolveInfo,
         **kwargs: Any,
-    ) -> str:
+    ) -> Any:
         """Resolve the number formatting directive.
 
         Args:
@@ -341,8 +417,8 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
             **kwargs: Additional resolver keyword arguments.
 
         Returns:
-            The value formatted with the given Python format spec, or the value
-            unchanged when the field cannot serialize a string.
+            The value formatted with the given Python format spec, None for a
+            null value, or the raw value when the field cannot serialize a string.
 
         Raises:
             GraphQLError: When the format spec's width or precision exceeds
@@ -371,9 +447,10 @@ class NumberGraphQLDirective(BaseExtraGraphQLDirective):
             ) from exc
         # Apply the format spec; blame the SPEC on failure.
         try:
-            return format(float_value, spec)
+            formatted = format(float_value, spec)
         except (ValueError, TypeError) as exc:
             raise GraphQLError(f"Invalid @number format spec {spec!r}: {exc}") from exc
+        return None if value is None else formatted
 
 
 class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
@@ -383,9 +460,9 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
     prefixed by the optional "symbol" argument (defaulting to "$").
 
     The result is a string, so the directive only applies on fields that can
-    serialize one. On an "Int" or "Float" field the raw value is returned
+    serialize one. On an "Int", "Float", "Decimal" or "BigInt" field the raw value is returned
     unchanged instead: handing those a formatted string nulls the field with an
-    opaque graphql-core coercion error.
+    opaque graphql-core coercion error. A null value remains null.
     """
 
     @staticmethod
@@ -409,7 +486,7 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
         root: Any,
         info: GraphQLResolveInfo,
         **kwargs: Any,
-    ) -> str:
+    ) -> Any:
         """Resolve the currency formatting directive.
 
         Args:
@@ -421,8 +498,8 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
             **kwargs: Additional resolver keyword arguments.
 
         Returns:
-            The value formatted as currency prefixed with the symbol, or the
-            value unchanged when the field cannot serialize a string.
+            The value formatted as currency prefixed with the symbol, None for
+            a null value, or the raw value when the field cannot serialize a string.
 
         Raises:
             GraphQLError: When the value cannot be interpreted as a number.
@@ -430,6 +507,8 @@ class CurrencyGraphQLDirective(BaseExtraGraphQLDirective):
         if not _serializes_string(info):
             return value
         symbol = args.get("symbol") or "$"
+        if value is None:
+            return None
         try:
             return symbol + format(float(value or 0), ",.2f")
         except (ValueError, TypeError) as exc:
@@ -560,7 +639,7 @@ class CamelCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The camelCased string.
         """
-        return _apply_str(value, to_camel_case)
+        return _apply_str(value, _directive_camel_case)
 
 
 class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -591,9 +670,7 @@ class SnakeCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The snake_cased string.
         """
-        return _apply_str(
-            value, lambda text: to_snake_case(text.title().replace(" ", ""))
-        )
+        return _apply_str(value, _directive_snake_case)
 
 
 class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -624,7 +701,7 @@ class KebabCaseGraphQLDirective(BaseExtraGraphQLDirective):
         Returns:
             The kebab-cased string.
         """
-        return _apply_str(value, to_kebab_case)
+        return _apply_str(value, _directive_kebab_case)
 
 
 class SwapCaseGraphQLDirective(BaseExtraGraphQLDirective):
@@ -861,12 +938,44 @@ class ReplaceGraphQLDirective(BaseExtraGraphQLDirective):
             The string with occurrences of "old" replaced by "new", or None
             when the field value is None. When "count" is given only the first
             "count" occurrences are replaced.
+
+        Raises:
+            GraphQLError: When the predicted output exceeds the configured
+                per-field Unicode-character limit.
         """
         count = args.get("count")
         count = -1 if count is None else int(count)
         return _apply_str(
-            value, lambda text: text.replace(args.get("old"), args.get("new"), count)
+            value, lambda text: _bounded_replace(text, args["old"], args["new"], count)
         )
+
+
+def _bounded_replace(text: str, old: str, new: str, count: int) -> str:
+    """Predict the exact nonoverlapping replacement length before allocation.
+
+    Args:
+        text: Source string.
+        old: Substring to replace, possibly empty.
+        new: Replacement string.
+        count: Maximum replacements; negative means all.
+
+    Returns:
+        The replaced string when its result fits the configured cap.
+
+    Raises:
+        GraphQLError: If the resulting string would exceed the cap.
+    """
+    maximum = graphql_api_settings.MAX_REPLACE_OUTPUT_LENGTH
+    if maximum is not None:
+        occurrences = len(text) + 1 if old == "" else text.count(old)
+        replacements = min(occurrences, count) if count >= 0 else occurrences
+        predicted = len(text) + replacements * (len(new) - len(old))
+        if predicted > maximum:
+            raise GraphQLError(
+                f"@replace output length {predicted} exceeds "
+                f"MAX_REPLACE_OUTPUT_LENGTH={maximum}."
+            )
+    return text.replace(old, new, count)
 
 
 class TruncateGraphQLDirective(BaseExtraGraphQLDirective):

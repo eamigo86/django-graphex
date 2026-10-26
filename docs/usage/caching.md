@@ -1,7 +1,7 @@
 # Response Caching
 
-`GraphQLView` can cache full HTTP responses to avoid re-executing identical
-queries.  Caching is off by default; enable it with a single setting:
+`GraphQLView` can cache successful HTTP responses to avoid re-executing
+identical queries. Caching is off by default; enable it with a single setting:
 
 ```python
 # settings.py
@@ -13,6 +13,15 @@ DJANGO_GRAPHEX = {
 
 The view uses Django's `"default"` cache backend.  Any backend Django supports
 (local-memory, Redis, Memcached, database, …) works out of the box.
+
+With permission-scoped schemas, both the schema-variant cache and this HTTP
+response cache include the caller's permission signature. Normally only
+schema-labeled grants contribute. A schema containing the native flat GFK
+fallback uses **all** grants for both keys because an unregistered target's
+read permission cannot be known from static schema labels. A target grant or
+revoke takes effect on the next request; a target row-scope hook still runs on
+each fresh execution, so ordinary response-cache lifetime and invalidation
+rules remain relevant. See [flat GFK authorization](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution).
 
 The document-validation cache is separate from this HTTP response cache. Its
 per-schema entries also distinguish validation rules, error and query limits,
@@ -40,7 +49,17 @@ _graphql_v2_{scope}_{version_identity}_{version}_{identity}_{body_hash}
 | `{version_identity}` | selected counter namespace | `global` by default; the identity/bucket namespace in legacy mode |
 | `{version}` | current counter value | Makes older responses unreachable after invalidation |
 | `{identity}` | `cache_key_prefix(request)` | Isolates responses by user identity (see below) |
-| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of `request.body`; for GET requests (where the body is empty) the hash also incorporates the `query`, `variables`, and `operationName` query-string parameters | Distinguishes different queries / variable sets |
+| `{body_hash}` | `fetch_cache_key(request)` — SHA-256 of the tagged, length-framed raw request body and `query`, `variables`, `operationName` GET parameters, plus the `pretty` flag when set | Distinguishes request components without ambiguous concatenation |
+
+The raw body contributes to the key even for an unusual GET request carrying
+one: identical GET parameters with different body bytes produce different
+keys. This describes cache-key construction, not a recommendation to send GET
+bodies. Use ordinary GET query parameters or POST JSON for GraphQL requests.
+
+The default body digest changes with this framing, so previously cached GraphQL
+responses have a cold miss and expire under the configured cache policy. The
+64-character hexadecimal digest and the override hook are unchanged. Missing
+and empty optional GET parameters still have the same value.
 
 ---
 
@@ -221,6 +240,8 @@ class MyView(GraphQLView):
     @staticmethod
     def fetch_cache_key(request):
         import hashlib, json
+        if request.method == "GET":
+            return GraphQLView.fetch_cache_key(request)
         data = json.loads(request.body or b"{}")
         canonical = json.dumps(
             {"query": data.get("query", ""), "variables": data.get("variables")},
@@ -228,6 +249,11 @@ class MyView(GraphQLView):
         ).encode()
         return hashlib.sha256(canonical).hexdigest()
 ```
+
+An override that also customises GET requests must account for any raw body
+and distinguish the query, variables, and operation-name boundaries itself;
+joining their text without framing can make different requests share a cached
+response.
 
 ### Identity prefix (`cache_key_prefix`)
 
@@ -264,6 +290,35 @@ share a response body.
 
 ---
 
+## Successful responses only
+
+The HTTP response cache stores and reuses only **HTTP 200 GraphQL data
+responses without an `errors` field**. An execution error can still produce
+HTTP 200 when another field succeeds; that partial result is returned to the
+current caller but is not cached. Validation failures and other non-200
+responses are not cached either. Repeating a failed request executes it again,
+so a transient resolver failure can recover:
+
+```json
+{"data":{"ready":"ok","fragile":null},"errors":[{"message":"temporarily unavailable"}]}
+```
+
+Once the same query returns `{"data":{"ready":"ok","fragile":"recovered"}}`
+with HTTP 200, later identical eligible requests can hit the cache. Responses
+already stored under the existing key by older versions are checked on read:
+error bodies, failure statuses, and malformed GraphQL envelopes are ignored.
+A later success replaces only that response entry; the cache is not cleared,
+and unrelated application keys are untouched. Existing successful entries,
+identity partitioning, key hooks, cookie bypass, TTL and mutation invalidation
+remain unchanged. The separate document-validation cache may still reuse its
+validation verdicts; this policy concerns only HTTP response bodies.
+
+Applications that relied on repeated errors being replayed from the cache
+should expect fresh execution instead. The HTTP error status and payload for
+each actual execution are unchanged.
+
+---
+
 ## Requests that bypass the cache
 
 Not all requests are eligible for caching even when `CACHE_ACTIVE=True`.  The
@@ -281,8 +336,10 @@ following are always passed through to the underlying view uncached:
 
 ## CSRF cookies and cached responses
 
-The base `GraphQLView.dispatch` is decorated with `@ensure_csrf_cookie`, which
-sets `Set-Cookie: csrftoken=<secret>` on every response.
+`BaseGraphQLView.dispatch` is decorated with `@ensure_csrf_cookie`. An
+eligible cookie-free query on a server response-cache miss reaches this
+dispatch and can receive a new `Set-Cookie: csrftoken` header. A cache hit
+returns earlier and does not issue a new CSRF cookie.
 
 To prevent one client's CSRF secret from being replayed to other clients in
 the same identity namespace, the cache stores **only the response body, HTTP
@@ -290,6 +347,32 @@ status code, and content type** — not the whole `HttpResponse` object.  On a
 cache hit a fresh `HttpResponse` is constructed from those stored values;
 `ensure_csrf_cookie` is not re-applied (the GraphQL endpoint is `csrf_exempt`
 so this has no security impact on the endpoint itself).
+
+### Browser cookie round trip
+
+On a browser's **first request without cookies**, an eligible public query
+that is a **cache miss** executes the decorated base view. In that path,
+`ensure_csrf_cookie` issues `csrftoken` in the response.
+If the browser returns that cookie on the **second request**, the default
+`should_cache_query` bypasses the response cache. This is the approved
+**any cookie** privacy
+boundary, not a CSRF failure; keep CSRF protection enabled.
+
+A cache hit instead returns a fresh response **before** the decorated base
+dispatch; it **does not** add a new CSRF `Set-Cookie` header. Without another
+source of cookies, that **cookie-free** client can **remain eligible** on its
+next request. If an application opts into caching cookie-bearing queries with
+a custom hook, its key must **fully partition** every cookie-dependent identity
+and response input; the default deliberately does not.
+
+Server response-cache eligibility is distinct from browser HTTP caching.
+`Set-Cookie` alone does not prohibit HTTP caching ([RFC 9111, Section
+7.3](https://www.rfc-editor.org/rfc/rfc9111.html#section-7.3)). When a
+response has `Vary: Cookie`, a conforming HTTP cache compares the request's
+`Cookie` field with the original request before reuse ([Section
+4.1](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.1)). This guide
+does not claim that a particular browser reuses these responses; assess the
+deployment's HTTP cache headers separately.
 
 ---
 

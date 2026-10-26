@@ -199,6 +199,29 @@ def render_native_sdl() -> str:
     return str(_build_native_seed_schema())
 
 
+def normalize_approved_page_size_delta(sdl: str) -> str:
+    """Undo only the approved default-100 SDL delta for historical parity guards.
+
+    The pre-T12d golden expects five limit arguments with a null default and
+    matching descriptions. Pin both counts before normalization so these tests
+    still reject dropped fields, changed argument defaults, or unrelated SDL
+    changes.
+
+    Args:
+        sdl: Current seed schema definition language text.
+
+    Returns:
+        The SDL with only the approved library-default change reversed.
+    """
+    description = "Default 'default_limit': 100"
+    argument = "limit: Int = 100"
+    assert sdl.count(description) == 5
+    assert sdl.count(argument) == 5
+    return sdl.replace(description, "Default 'default_limit': None").replace(
+        argument, "limit: Int = null"
+    )
+
+
 # ---------------------------------------------------------------------------
 # SDL fragment extraction helpers
 # ---------------------------------------------------------------------------

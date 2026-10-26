@@ -300,16 +300,18 @@ Convert string to kebab-case.
 
 #### Example
 
-Each directive expects a specific input shape: `@camel_case` converts a
-**snake_case** string, while `@snake_case` and `@kebab_case` convert a
-**space-separated Title Case** string.
+All three directives recognize space-, underscore- and hyphen-separated
+words, camelCase, PascalCase and acronym blocks. `HTTPServer` becomes
+`httpServer`, `http_server` or `http-server`, respectively. They transform
+field values only; schema names and shared string-conversion helpers are
+unchanged. Other punctuation and characters keep their previous handling.
 
 ```graphql
 query {
   field {
-    displayName @camel_case  # "user_profile" → "userProfile"
-    apiName @snake_case      # "Api Name" → "api_name"
-    urlSlug @kebab_case      # "Blog Post Title" → "blog-post-title"
+    displayName @camel_case  # "order_total" → "orderTotal"
+    apiName @snake_case      # "orderTotal" → "order_total"
+    urlSlug @kebab_case      # "order_total" → "order-total"
   }
 }
 ```
@@ -361,6 +363,16 @@ Replace occurrences of a substring.
 | `new` | `String!` | Yes | Replacement string |
 | `count` | `Int` | No | Max number of replacements (-1 for all) |
 
+The resulting string is limited by `MAX_REPLACE_OUTPUT_LENGTH`, which defaults
+to **1,000,000 Unicode characters** (not UTF-8 bytes). The directive predicts
+the exact result length before calling Python's replacement operation and
+returns a GraphQL field error when it would exceed the cap; a result exactly
+at the cap is accepted. This is a **per-result** guard, not a total query
+quota. Empty `old` inserts between characters and at both ends, subject to
+`count`; an already oversized value is rejected even if `count: 0` or no
+substring matches. Set the setting to `None` only if an independent output
+limit makes uncapped legacy behavior safe for your API.
+
 #### TruncateGraphQLDirective
 
 Shorten a string to `length` characters, appending `end` (default `"…"`).
@@ -410,6 +422,10 @@ query {
 Format numbers using Python format strings. Format specs whose width or
 precision exceeds 100 are rejected with a field error (prevents memory
 exhaustion from client-supplied oversized specs).
+For a null resolver value, the directive returns GraphQL `null` after the
+width/precision cap and applicable format validation. On a non-null field,
+normal GraphQL error propagation applies. `Int` and `Float` fields continue
+to return their raw values rather than formatting them.
 
 ```python
 @number(as: ".2f")
@@ -436,6 +452,9 @@ query {
 ### CurrencyGraphQLDirective
 
 Format numbers as currency.
+A null resolver value remains GraphQL `null`; non-null fields follow normal
+GraphQL nullability propagation. Falsy but coercible values still format as
+zero with the selected symbol.
 
 ```python
 @currency(symbol: "$")
@@ -515,6 +534,14 @@ Return the absolute value of a number.
     fields: when the field's GraphQL type is `String`, the result is returned as
     a string. A `null` value passes through unchanged (returns `null`).
 
+    They also compute directly on `Decimal` and `BigInt` without converting to
+    binary floating point. `@round` uses half-to-even rounding for `Decimal`.
+    The field's scalar still controls the wire value: `Decimal` and `BigInt`
+    serialize as exact JSON strings, while `Float` remains a JSON number.
+    Null values remain `null` on all three scalar types. `@number` and
+    `@currency` leave `Decimal` and `BigInt` values raw rather than changing
+    their scalar output into formatted text.
+
 #### Example
 
 ```graphql
@@ -527,6 +554,43 @@ query {
   }
 }
 ```
+
+#### Exact Decimal and BigInt example
+
+For an `item` with `amt = Decimal("-2.665")`, `big = -9007199254740993`
+(beyond JavaScript's exact integer range), and `flt = 4.27`, the same
+mathematical directives retain the declared output scalars:
+
+```graphql
+query {
+  item {
+    roundedHalf: amt @round(precision: 2)
+    floored: amt @floor
+    ceiled: amt @ceil
+    absolute: amt @abs
+    roundedBig: big @round(precision: -1)
+    absoluteBig: big @abs
+    floatRounded: flt @round(precision: 1)
+  }
+}
+```
+
+```json
+{
+  "item": {
+    "roundedHalf": "-2.66",
+    "floored": "-3",
+    "ceiled": "-2",
+    "absolute": "2.665",
+    "roundedBig": "-9007199254740990",
+    "absoluteBig": "9007199254740993",
+    "floatRounded": 4.3
+  }
+}
+```
+
+If the source fields are `null`, these selections return `null` rather than
+numeric zero or the text `"None"`.
 
 ---
 
@@ -545,6 +609,34 @@ Format dates and times using various formats.
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `format` | `String` | No | Date format string (default: "default") |
+
+A nullable field that resolves to `null` remains `null` after `@date`, even
+with an explicit format. A null result on a non-null field follows normal
+GraphQL error and bubbling rules; the directive does not change SDL
+nullability. For accepted text values, omitted time components now default to
+zero: `"2026-01-10"` with `format: "iso"` yields
+`"2026-01-10T00:00:00"`, and `"2026-01-10 14:30"` yields
+`"2026-01-10T14:30:00"`. A time-only string still fills the date from the
+current day. Explicit time and offset components remain input values; for
+absolute formats (`default`, `iso`, `js`/`javascript`, and custom tokens), an
+aware Python datetime or text with an explicit numeric offset or `Z` is
+displayed in Django's active timezone without changing the instant. For
+example, `"2026-01-01T03:30:00+02:00"` displays as
+`"2025-12-31T20:30:00"` with `format: "iso"` in `America/New_York`.
+Clock-adjacent `+00:00` and `+0000` are explicit offsets too: a value of
+`"2026-01-10T00:30:00+00:00"` displays as `"2026-01-09T19:30:00"`,
+matching the equivalent `Z` value.
+The `iso` output still omits offsets and microseconds. Genuinely
+timezone-less text instead keeps its written wall clock and attaches Django's
+active timezone, regardless of `USE_TZ`. For example, with `TIME_ZONE="UTC"`
+and `Europe/Madrid` active in July, `"2026-07-10 14:30"` formats as
+`"14:30 +0200"` with `format: "HH:mm ZZ"`. This also changes the comparison
+used by `"time ago"` and `"time ago 2d"`. Explicit-offset/Z text keeps its
+previous relative behavior; named UTC/GMT and unknown timezone names retain
+their existing handling and warnings. Python date/naive-datetime values,
+other input kinds, and other directives are unchanged. Missing date components
+still come from the parser's current-date default, even across an active-zone
+midnight rollover.
 
 #### Format Options
 

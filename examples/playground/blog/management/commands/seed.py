@@ -35,6 +35,9 @@ from blog.models import (
 
 User = get_user_model()
 
+# 2**53 + 1: the first integer a JSON double (and a GraphQL Int) cannot hold.
+BIG_VIEW_COUNT = 2**53 + 1
+
 # Defaults sized so each author's nested ``posts`` list spans MORE THAN ONE page
 # at the playground's default page size of 10 (so window pagination + multi-page
 # nested filtering are actually exercised by the example queries).
@@ -169,6 +172,9 @@ class Command(BaseCommand):
                         status=statuses[(a + p) % 3],
                         author=author,
                         category=categories[(a + p) % len(categories)],
+                        # Only the very first post gets a count past 2**53, to show
+                        # the BigInt string; the rest stay small.
+                        view_count=BIG_VIEW_COUNT if (a, p) == (0, 0) else p * 100,
                     )
                     for p in range(n_posts)
                 ]
@@ -218,13 +224,19 @@ class Command(BaseCommand):
         for i, target in enumerate(targets):
             Attachment.objects.create(caption=f"Attachment {i}", target=target)
 
+        paging = (
+            "Logged in, each author's `posts` list spans multiple pages at "
+            "page size 10 (try `results(offset: 10, ...)` on a nested list); "
+            "logged out you see only the published posts."
+            if n_posts > 10
+            else "With 10 or fewer posts per author a nested `posts` list fits "
+            "one page; pass --posts 12 or more to see window pagination."
+        )
         self.stdout.write(
             self.style.SUCCESS(
                 f"Seeded: {n_authors} authors, {total_posts} posts "
                 f"({n_posts}/author), {total_comments} comments, {n_notes} notes, "
                 "2 accounts, 2 invoices, 4 attachments. "
-                "Login: demo / demo12345 (superuser). "
-                "Each author's `posts` list spans multiple pages at page size 10 — "
-                "try `results(offset: 10, ...)` on a nested list."
+                f"Login: demo / demo12345 (superuser). {paging}"
             )
         )

@@ -1,6 +1,6 @@
 [project]
 name = "django-graphex"
-version = "4.0.0"
+version = "4.1.0"
 description = "GraphQL for Django, powered by graphql-core and Pydantic: define types/mutations/subscriptions from your models, with nested filtering (and/or/not), pagination, permissions and directives."
 readme = "README.md"
 requires-python = ">=3.12,<4.0"
@@ -110,6 +110,15 @@ include = [
     "/README.md",
     "/LICENSE",
     "/pyproject.toml",
+    # Root files that test modules read by path (release notes, the report
+    # contract, tox, lock and docs-site config); without them those tests fail
+    # when run from the published tarball.
+    "/CHANGELOG.md",
+    "/audit-remediation-django-graphex-4.0.0.en.md",
+    "/audit-remediation-django-graphex-4.0.0.es.md",
+    "/tox.ini",
+    "/uv.lock",
+    "/zensical.yml",
 ]
 
 [tool.ruff]
@@ -170,7 +179,6 @@ output = "coverage.xml"
 [tool.bandit]
 exclude_dirs = ["tests", "migrations"]
 skips = [
-    "B101",  # Skip assert_used test - asserts are OK in library code for validation
     "B311",  # Skip random - not used for security purposes
     "B324",  # Skip MD5 - used for cache keys, not cryptographic security
 ]

@@ -21,15 +21,23 @@ Design contracts:
 
 from __future__ import annotations
 
+import copy
 import datetime
 import decimal
+import math
+import typing
 import uuid
 import warnings
 from dataclasses import dataclass
-from typing import Any
+from types import GenericAlias, UnionType
+from typing import Any, Callable, Literal, get_args, get_origin
 
+from django.core.exceptions import ImproperlyConfigured
 from graphql import (
     GraphQLBoolean,
+    GraphQLDefaultInput,
+    GraphQLEnumType,
+    GraphQLEnumValue,
     GraphQLError,
     GraphQLFloat,
     GraphQLID,
@@ -42,8 +50,12 @@ from graphql import (
     GraphQLString,
     Undefined,
 )
+from graphql.language.ast import StringValueNode
 from pydantic import BaseModel, ValidationError
 from pydantic.alias_generators import to_camel
+
+from django_graphex.converter import get_choices
+from django_graphex.core.fresh_defaults import is_mutable_default
 
 # ---------------------------------------------------------------------------
 # GdxInputSpec — extensions["gdx"] payload for input types
@@ -63,6 +75,443 @@ class GdxInputSpec:
     name: str | None = None
     description: str | None = None
     nested_fields: tuple[NestedInputField, ...] = ()
+
+
+class _OmittedBooleanMap(dict):
+    """Field-local carrier for an omitted fixed Boolean-map default."""
+
+    def __init__(self, original: Any) -> None:
+        super().__init__()
+        self.original = original
+
+
+class _FactoryOutType:
+    """Apply field-specific input checks and omitted-field factories.
+
+    A pruned input type receives a new adapter with only surviving fields.
+
+    Args:
+        factories: Zero-argument factories keyed by resolver-facing field name.
+        typed_maps: Surviving typed-map fields with their schema paths and
+            list-wrapper depths.
+        set_int_fields: Surviving exact integer-set fields to materialize.
+        set_str_fields: Surviving exact string-set fields to materialize.
+        set_bool_fields: Surviving exact boolean-set fields to materialize.
+        set_float_fields: Surviving exact float-set fields to materialize.
+        set_float_defaults: Fixed float-set defaults kept by object identity.
+        set_uuid_fields: Surviving exact UUID-set fields to materialize.
+        set_decimal_fields: Surviving exact Decimal-set fields to materialize.
+        set_decimal_defaults: Fixed Decimal-set defaults kept by object identity.
+        boolean_maps: Surviving exact Boolean maps with public field paths.
+        mutable_defaults: Surviving mutable fixed defaults, keyed by field name,
+            with the declared value and the default input that memoizes its
+            coercion (or None). An omitted field is handed a fresh copy.
+    """
+
+    def __init__(
+        self,
+        factories: dict[str, Callable[[], Any]],
+        typed_maps: dict[str, tuple[str, int, type]] | None = None,
+        set_int_fields: set[str] | None = None,
+        set_str_fields: set[str] | None = None,
+        set_bool_fields: set[str] | None = None,
+        set_float_fields: set[str] | None = None,
+        set_float_defaults: dict[str, Any] | None = None,
+        set_uuid_fields: set[str] | None = None,
+        set_decimal_fields: set[str] | None = None,
+        set_decimal_defaults: dict[str, Any] | None = None,
+        boolean_maps: dict[str, tuple[str, _OmittedBooleanMap | None]] | None = None,
+        mutable_defaults: dict[str, tuple[Any, Any]] | None = None,
+    ) -> None:
+        self.factories = factories
+        self.typed_maps = typed_maps if typed_maps is not None else {}
+        self.set_int_fields = set_int_fields if set_int_fields is not None else set()
+        self.set_str_fields = set_str_fields if set_str_fields is not None else set()
+        self.set_bool_fields = set_bool_fields if set_bool_fields is not None else set()
+        self.set_float_fields = (
+            set_float_fields if set_float_fields is not None else set()
+        )
+        self.set_float_defaults = (
+            set_float_defaults if set_float_defaults is not None else {}
+        )
+        self.set_uuid_fields = set_uuid_fields if set_uuid_fields is not None else set()
+        self.set_decimal_fields = (
+            set_decimal_fields if set_decimal_fields is not None else set()
+        )
+        self.set_decimal_defaults = (
+            set_decimal_defaults if set_decimal_defaults is not None else {}
+        )
+        self.boolean_maps = boolean_maps if boolean_maps is not None else {}
+        self.mutable_defaults = mutable_defaults if mutable_defaults is not None else {}
+
+    def __call__(self, values: dict[str, Any]) -> dict[str, Any]:
+        """Apply omitted factories and approved field-local coercion.
+
+        Args:
+            values: The GraphQL-coerced mapping using field out-names.
+
+        Returns:
+            The same mapping with fresh defaults for omitted fields.
+
+        Raises:
+            GraphQLError: When a factory fails, a typed map is invalid, or a
+                supplied float or Decimal set contains a nonfinite value.
+        """
+        for field_name in self.set_float_fields:
+            value = values.get(field_name, Undefined)
+            # Native Float variable coercion rejects nonfinite values, but its
+            # literal coercer can yield infinity from an overflowing exponent.
+            # Fixed legacy defaults retain their original object identity here;
+            # omitted factories have not yet been inserted.
+            if (
+                isinstance(value, list)
+                and value is not self.set_float_defaults.get(field_name, Undefined)
+                and any(
+                    type(item) is float and not math.isfinite(item) for item in value
+                )
+            ):
+                raise GraphQLError(
+                    f"Input field {field_name!r} cannot contain a nonfinite Float."
+                )
+        for field_name in self.set_decimal_fields:
+            value = values.get(field_name, Undefined)
+            # Native Decimal accepts nonfinite input. Reject only supplied
+            # values here, before omitted factories run; an omitted fixed
+            # legacy default retains its original object identity.
+            if (
+                isinstance(value, list)
+                and value is not self.set_decimal_defaults.get(field_name, Undefined)
+                and any(
+                    type(item) is decimal.Decimal and not item.is_finite()
+                    for item in value
+                )
+            ):
+                raise GraphQLError(
+                    f"Input field {field_name!r} cannot contain a nonfinite Decimal."
+                )
+        for field_name, (schema_path, marker) in self.boolean_maps.items():
+            value = values.get(field_name, Undefined)
+            if marker is not None and value is marker:
+                values[field_name] = marker.original
+            elif value is not Undefined and value is not None:
+                _validate_boolean_map(value, schema_path)
+        for field_name, factory in self.factories.items():
+            if field_name not in values:
+                try:
+                    values[field_name] = factory()
+                except Exception:
+                    raise GraphQLError(
+                        f"Could not resolve default for input field {field_name!r}."
+                    ) from None
+        for field_name, (
+            schema_path,
+            list_depth,
+            value_type,
+        ) in self.typed_maps.items():
+            value = values.get(field_name, Undefined)
+            if value is Undefined or value is None:
+                continue
+            _validate_wrapped_typed_map(value, schema_path, list_depth, value_type)
+        for field_name in self.set_int_fields:
+            value = values.get(field_name, Undefined)
+            # GraphQLInt has already validated supplied items. Leave malformed
+            # legacy defaults/factories unchanged rather than adding a new
+            # default-validation policy at this callback boundary.
+            if isinstance(value, list) and all(
+                type(item) is int and -(2**31) <= item < 2**31 for item in value
+            ):
+                values[field_name] = set(value)
+        for field_name in self.set_str_fields:
+            value = values.get(field_name, Undefined)
+            # GraphQLString has validated supplied items. Preserve its accepted
+            # str subclasses and leave malformed legacy defaults unchanged.
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                values[field_name] = set(value)
+        for field_name in self.set_bool_fields:
+            value = values.get(field_name, Undefined)
+            # Native GraphQLBoolean has validated supplied items. Preserve
+            # the existing policy for malformed legacy defaults/factories.
+            if isinstance(value, list) and all(type(item) is bool for item in value):
+                values[field_name] = set(value)
+        for field_name in self.set_float_fields:
+            value = values.get(field_name, Undefined)
+            # GraphQLFloat has normalized supplied numeric items to finite
+            # floats. Leave malformed legacy defaults and factories unchanged.
+            if isinstance(value, list) and all(
+                type(item) is float and math.isfinite(item) for item in value
+            ):
+                values[field_name] = set(value)
+        for field_name in self.set_uuid_fields:
+            value = values.get(field_name, Undefined)
+            # The existing UUID scalar has already normalized supplied items.
+            # Leave malformed legacy defaults and factories unchanged.
+            if isinstance(value, list) and all(
+                type(item) is uuid.UUID for item in value
+            ):
+                values[field_name] = set(value)
+        for field_name in self.set_decimal_fields:
+            value = values.get(field_name, Undefined)
+            # Preserve native precision and leave malformed legacy defaults
+            # and factory outputs unchanged rather than tightening their policy.
+            if isinstance(value, list) and all(
+                type(item) is decimal.Decimal and item.is_finite() for item in value
+            ):
+                values[field_name] = set(value)
+        for field_name, (default, gql_field) in self.mutable_defaults.items():
+            value = values.get(field_name, Undefined)
+            # graphql-core hands every execution the same coerced default, so
+            # an omitted field is the only case where the value is that object.
+            # 3.3.0 caches on the external default; 3.3.1 caches on the field.
+            # Supplied values are already new per request and are left alone.
+            if value is not Undefined and (
+                value is default
+                or value is getattr(gql_field, "_memoized_coerced_value", Undefined)
+                or (
+                    gql_field.default is not None
+                    and value is gql_field.default._memoized_coerced_value
+                )
+            ):
+                values[field_name] = copy.deepcopy(value)
+        return values
+
+
+def _validate_wrapped_typed_map(
+    value: Any, schema_path: str, list_depth: int, value_type: type
+) -> None:
+    """Validate a typed-map leaf after each GraphQL list wrapper.
+
+    Args:
+        value: GraphQL-coerced field or list element.
+        schema_path: Static public field path plus list indices.
+        list_depth: Remaining list wrappers before the map leaf.
+        value_type: Approved map value kind.
+
+    Raises:
+        GraphQLError: If a typed-map leaf violates its declared contract.
+    """
+    if value is None:
+        return
+    if list_depth:
+        for index, item in enumerate(value):
+            _validate_wrapped_typed_map(
+                item, f"{schema_path}[{index}]", list_depth - 1, value_type
+            )
+        return
+    _validate_typed_map(value, schema_path, value_type)
+
+
+def _validate_typed_map(value: Any, schema_path: str, value_type: type) -> None:
+    """Reject values outside an approved strict typed-map input contract.
+
+    Args:
+        value: GraphQL-coerced input value.
+        schema_path: Static field path for safe error reporting.
+        value_type: Approved value kind.
+
+    Raises:
+        GraphQLError: If the value is not an object with the declared values.
+    """
+    if value_type is int:
+        invalid = not isinstance(value, dict) or any(
+            not isinstance(key, str) or type(item) is not int
+            for key, item in value.items()
+        )
+        kind = "integer"
+    else:
+        invalid = not isinstance(value, dict) or any(
+            not isinstance(key, str) or not isinstance(item, str)
+            for key, item in value.items()
+        )
+        kind = "string"
+    if invalid:
+        raise GraphQLError(
+            f"Input field '{schema_path}' requires an object with string keys "
+            f"and {kind} values."
+        )
+
+
+def _is_exact_boolean_map(annotation: Any) -> bool:
+    """Recognize only direct approved Boolean-map annotations.
+
+    Args:
+        annotation: Field annotation, optionally nullable.
+
+    Returns:
+        Whether its direct map form has exact string keys and Boolean values.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if (
+        type(inner) is not GenericAlias
+        and type(inner) is not type(typing.Dict[str, bool])  # noqa: UP006
+    ):
+        return False
+    if get_origin(inner) is not dict:
+        return False
+    args = get_args(inner)
+    return len(args) == 2 and args[0] is str and args[1] is bool
+
+
+def _validate_boolean_map(value: Any, schema_path: str) -> None:
+    """Reject a supplied value outside the direct Boolean-map contract.
+
+    Args:
+        value: Native JSON-coerced supplied value.
+        schema_path: Public input field path for a safe error.
+
+    Raises:
+        GraphQLError: If keys are not strings or values are not exact Booleans.
+    """
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or type(item) is not bool
+        for key, item in value.items()
+    ):
+        raise GraphQLError(
+            f"Input field '{schema_path}' requires an object with string keys "
+            "and Boolean values."
+        )
+
+
+def _typed_map_value_type(py_type: Any) -> type | None:
+    """Recognize only approved typed-dictionary spellings and value kinds.
+
+    Args:
+        py_type: Unwrapped field annotation.
+
+    Returns:
+        The declared value kind, or none for an unsupported annotation.
+    """
+    if get_origin(py_type) is not dict:
+        return None
+    args = get_args(py_type)
+    if args == (str, int) and py_type in (dict[str, int], typing.Dict[str, int]):  # noqa: UP006
+        return int
+    if args == (str, str) and py_type in (dict[str, str], typing.Dict[str, str]):  # noqa: UP006
+        return str
+    return None
+
+
+def _printable_json_list_default(
+    value: Any, element_type: Any, element_optional: bool
+) -> bool:
+    """Recognize fixed lists whose JSON elements can be printed unchanged.
+
+    Args:
+        value: Fixed input default.
+        element_type: Unwrapped list element annotation.
+        element_optional: Whether an element accepts null.
+
+    Returns:
+        Whether the list is eligible for external default metadata.
+    """
+    if type(value) is not list:
+        return False
+    json_scalar = _native_scalar_map()[dict]
+    typed_map_value_type = _typed_map_value_type(element_type)
+    for item in value:
+        if item is None:
+            if not element_optional:
+                return False
+            continue
+        if json_scalar.value_to_literal(item) is None:
+            return False
+        if typed_map_value_type is not None:
+            try:
+                _validate_typed_map(item, "", typed_map_value_type)
+            except GraphQLError:
+                return False
+    return True
+
+
+def _printable_nested_json_list_default(
+    value: Any, leaf_type: Any, nullable_elements: tuple[bool, ...]
+) -> bool:
+    """Recognize concrete nested JSON lists with valid leaf metadata.
+
+    Args:
+        value: Fixed default to inspect without changing it.
+        leaf_type: Supported JSON leaf annotation.
+        nullable_elements: Element nullability at each list level.
+
+    Returns:
+        Whether the complete nested default has printable JSON literals.
+    """
+    if type(value) is not list:
+        return False
+    json_scalar = _native_scalar_map()[dict]
+    map_value_type = _typed_map_value_type(leaf_type)
+    for item in value:
+        if item is None:
+            if not nullable_elements[0]:
+                return False
+        elif len(nullable_elements) > 1:
+            if not _printable_nested_json_list_default(
+                item, leaf_type, nullable_elements[1:]
+            ):
+                return False
+        else:
+            if json_scalar.value_to_literal(item) is None:
+                return False
+            if map_value_type is not None:
+                try:
+                    _validate_typed_map(item, "", map_value_type)
+                except GraphQLError:
+                    return False
+    return True
+
+
+def _has_wrapped_typed_map(annotation: Any) -> bool:
+    """Recognize the approved map inside existing optional/list wrappers.
+
+    Args:
+        annotation: Field annotation to inspect.
+
+    Returns:
+        Whether the supported leaf occurs after the existing wrapper handling.
+    """
+    nested = _supported_nested_list(annotation)
+    if nested is not None:
+        return _typed_map_value_type(nested[0]) is not None
+    inner, _ = _unwrap_optional(annotation)
+    element, is_list = _unwrap_list(inner)
+    if is_list:
+        element, _ = _unwrap_optional(element)
+        return _typed_map_value_type(element) is not None
+    return _typed_map_value_type(inner) is not None
+
+
+def _supported_nested_list(annotation: Any) -> tuple[Any, tuple[bool, ...]] | None:
+    """Find nested list wrappers ending in an already-supported input leaf.
+
+    Args:
+        annotation: Field annotation with any outer optional wrapper.
+
+    Returns:
+        The leaf and element-nullability flags, or none for legacy fallback.
+    """
+    current, _ = _unwrap_optional(annotation)
+    nullable_elements: list[bool] = []
+    while True:
+        child, is_list = _unwrap_list(current)
+        if not is_list:
+            break
+        current, nullable = _unwrap_optional(child)
+        nullable_elements.append(nullable)
+    if len(nullable_elements) < 2:
+        return None
+    from django_graphex.core.fields import FileScalar
+
+    supported = (
+        _typed_map_value_type(current) is not None
+        or current in _BUILTIN_MAP
+        or current in _native_scalar_map()
+        or (isinstance(current, type) and issubclass(current, (BaseModel, FileScalar)))
+        or (
+            get_origin(current) is Literal
+            and bool(get_args(current))
+            and all(type(member) is str for member in get_args(current))
+        )
+    )
+    return (current, tuple(nullable_elements)) if supported else None
 
 
 @dataclass(frozen=True)
@@ -176,10 +625,12 @@ def _native_scalar_map() -> dict[type, GraphQLScalarType]:
         # GDX_SCALAR_MAP is keyed by name; we need type→scalar mapping.
         # The scalars module maps Python types we care about here:
         from django_graphex.core.fields import (  # type: ignore[import]
+            BigIntValue,
             IDScalar,
             JSONScalar,
         )
         from django_graphex.core.scalars import (  # type: ignore[import]
+            GdxBigInt,
             GdxDate,
             GdxDateTime,
             GdxDecimal,
@@ -189,6 +640,7 @@ def _native_scalar_map() -> dict[type, GraphQLScalarType]:
         )
 
         return {
+            BigIntValue: GdxBigInt,
             datetime.date: GdxDate,
             datetime.datetime: GdxDateTime,
             datetime.time: GdxTime,
@@ -280,14 +732,20 @@ def _resolve_input_model_type(py_type: Any) -> Any:
 def _python_type_to_gql(py_type: Any) -> Any:
     """Map a Python type to a graphql-core scalar/type.
 
-    Returns GraphQLString as a fallback for unknown types so the schema
-    still builds. Unlike the pre-fix silent fallback, a truly-unknown CLASS
-    annotation (not a scalar, not an Enum, not a BaseModel input model)
-    now emits a loud UserWarning so the degradation is visible rather than
-    silently corrupting a structured field into a String.
+    Unknown classes and unsupported typing forms retain the GraphQLString
+    fallback, but warn so that the wire-type degradation is visible.
+
+    Args:
+        py_type: The annotation after optional and list handling.
+
+    Returns:
+        The existing GraphQL input scalar or nested input type.
     """
     if py_type is None:
         return GraphQLString
+
+    if _typed_map_value_type(py_type) is not None:
+        return _native_scalar_map()[dict]
 
     # Direct builtins
     if py_type in _BUILTIN_MAP:
@@ -319,6 +777,18 @@ def _python_type_to_gql(py_type: Any) -> Any:
     if isinstance(py_type, type) and issubclass(py_type, _enum.Enum):
         return GraphQLString
 
+    # Unsupported typing forms also retain the legacy String fallback. Optional
+    # and list annotations are handled before this function is called.
+    if get_origin(py_type) is not None:
+        warnings.warn(
+            f"compile_input_type: unsupported input field type {py_type!s} — "
+            "falling back to the GraphQLString scalar. Annotate the field "
+            "with a supported scalar, a list of supported scalars, or an "
+            "InputType/BaseModel subclass to avoid this degradation.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     # Truly-unknown CLASS: keep the String fallback (schema still builds) but
     # warn LOUDLY — a silent String here historically corrupted structured data.
     if isinstance(py_type, type):
@@ -333,6 +803,47 @@ def _python_type_to_gql(py_type: Any) -> Any:
 
     # Fallback
     return GraphQLString
+
+
+def _string_literal_enum(
+    py_type: Any, *, input_name: str, alias: str
+) -> GraphQLEnumType | None:
+    """Build an enum only for a Literal containing plain string members.
+
+    Args:
+        py_type: The unwrapped field annotation.
+        input_name: The compiled GraphQL input type name.
+        alias: The public GraphQL field name.
+
+    Returns:
+        An enum with original string values, or None for unsupported forms.
+
+    Raises:
+        ImproperlyConfigured: If members normalize to the same enum name or
+            would generate a reserved ("__"-prefixed) enum member name.
+    """
+    if get_origin(py_type) is not Literal:
+        return None
+    members = get_args(py_type)
+    if not members or any(type(member) is not str for member in members):
+        return None
+    for member in members:
+        if member.startswith("__"):
+            raise ImproperlyConfigured(
+                f"Literal input field {alias!r} of {input_name!r}: value "
+                f"{member!r} would generate a GraphQL enum member name starting "
+                'with "__", which GraphQL reserves. Rename the value.'
+            )
+    values = {
+        member_name: GraphQLEnumValue(value=raw_value)
+        for member_name, raw_value, _description in get_choices(
+            (member, member) for member in members
+        )
+    }
+    return GraphQLEnumType(
+        name=f"{input_name}{alias[:1].upper()}{alias[1:]}Enum",
+        values=values,
+    )
 
 
 def _is_required(field_info: Any) -> bool:
@@ -378,6 +889,29 @@ def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
     return annotation, False
 
 
+def _direct_int_or_string_nullable(annotation: Any) -> bool | None:
+    """Identify only the approved direct integer-or-string Union forms.
+
+    Args:
+        annotation: The declared input field annotation.
+
+    Returns:
+        Whether the exact direct Union includes None, or None when unsupported.
+    """
+    origin = get_origin(annotation)
+    if origin is not typing.Union and origin is not UnionType:
+        return None
+    members = get_args(annotation)
+    if len(members) not in (2, 3):
+        return None
+    has_int = any(member is int for member in members)
+    has_str = any(member is str for member in members)
+    nullable = any(member is type(None) for member in members)
+    if not (has_int and has_str and len(members) == 2 + nullable):
+        return None
+    return nullable
+
+
 def _unwrap_list(annotation: Any) -> tuple[Any, bool]:
     """Detect a list[T] origin and return (inner_type, is_list).
 
@@ -407,6 +941,114 @@ def _unwrap_list(annotation: Any) -> tuple[Any, bool]:
     return annotation, False
 
 
+def _is_exact_int_set(annotation: Any) -> bool:
+    """Recognize only the approved integer-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation is exactly set[int] or its typing alias.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) is GenericAlias and inner == set[int]:
+        return True
+    if type(inner) is not type(typing.Set[int]) or get_origin(inner) is not set:  # noqa: UP006
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is int
+
+
+def _is_exact_str_set(annotation: Any) -> bool:
+    """Recognize only the two approved string-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation is exactly set[str] or its typing alias.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[str])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is str
+
+
+def _is_exact_bool_set(annotation: Any) -> bool:
+    """Recognize only the two approved boolean-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation has the exact boolean-set form.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[bool])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is bool
+
+
+def _is_exact_float_set(annotation: Any) -> bool:
+    """Recognize only the two approved float-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation has the exact float-set form.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[float])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is float
+
+
+def _is_exact_uuid_set(annotation: Any) -> bool:
+    """Recognize only the two approved UUID-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation has the exact UUID-set form.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[uuid.UUID])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is uuid.UUID
+
+
+def _is_exact_decimal_set(annotation: Any) -> bool:
+    """Recognize only the two approved Decimal-set input annotations.
+
+    Args:
+        annotation: The field annotation, possibly wrapped in Optional.
+
+    Returns:
+        Whether the unwrapped annotation has the exact Decimal-set form.
+    """
+    inner, _ = _unwrap_optional(annotation)
+    if type(inner) not in (GenericAlias, type(typing.Set[decimal.Decimal])):  # noqa: UP006
+        return False
+    if get_origin(inner) is not set:
+        return False
+    args = get_args(inner)
+    return len(args) == 1 and args[0] is decimal.Decimal
+
+
 def _default_value_for(field_info: Any) -> Any:
     """Resolve the graphql-core default_value for a Pydantic FieldInfo.
 
@@ -417,12 +1059,9 @@ def _default_value_for(field_info: Any) -> Any:
       omits the = ... marker entirely).
     - explicit None default -> None (SDL renders = null).
     - a concrete value (1, False, ...) -> that value (SDL = <value>).
-    - a default_factory -> the factory is invoked ONCE here at compile time
-      and the produced value is used. SINGLE-EVALUATION CONSTRAINT: the factory
-      runs exactly once (when the fields thunk builds), so a mutable factory
-      default (e.g. list) yields one shared default instance baked into the
-      SDL — this matches graphql-core's static-default model and never re-runs
-      the factory per request.
+    - a zero-argument default_factory -> graphql-core Undefined. Its result is
+      supplied by the input object's out_type callback for each new coerced
+      object, not frozen into SDL or shared between executions.
     - a Pydantic 2.10+ VALIDATED-DATA factory (default_factory=lambda data:
       ...) -> graphql-core Undefined. Such a factory needs the partially
       validated instance data, so it has no compile-time value and cannot be a
@@ -435,11 +1074,7 @@ def _default_value_for(field_info: Any) -> Any:
     from pydantic_core import PydanticUndefined
 
     if field_info.default_factory is not None:
-        if getattr(field_info, "default_factory_takes_validated_data", False):
-            # Needs the validated data -> no compile-time value exists.
-            return Undefined
-        # Single evaluation: call the factory exactly once at compile time.
-        return field_info.default_factory()
+        return Undefined
     if field_info.default is PydanticUndefined:
         return Undefined
     return field_info.default
@@ -583,11 +1218,13 @@ def compile_input_type(
         exclude_fields: When set, omits these field names from the wire surface.
         include_fields: Field names force-included even when "only_fields" /
             "exclude_fields" would skip them (issue #65).
-        emit_defaults: Whether to surface Pydantic field defaults as graphql-core
-            "default_value" (so the SDL renders "= <value>"). None (the default)
-            AUTO-DETECTS: a hand-authored "InputType" subclass (it carries
-            "_gdx_opts") emits its user-declared defaults; a Django-model-derived
-            schema from "build_model_schema" (no "_gdx_opts") does NOT. This gate
+        emit_defaults: Whether to surface literal Pydantic field defaults as
+            graphql-core "default_value" (so the SDL renders "= <value>") and
+            to run zero-argument factories per new coerced input object. None
+            (the default) AUTO-DETECTS: a hand-authored "InputType" subclass
+            (it carries "_gdx_opts") emits user-declared literal defaults and
+            runtime factories; a Django-model-derived schema from
+            "build_model_schema" (no "_gdx_opts") does NOT. This gate
             is load-bearing: graphql-core injects an input field's "default_value"
             into the coerced dict for OMITTED fields, and the mutation
             "save_object" path relies on "model_fields_set" to distinguish an
@@ -598,19 +1235,47 @@ def compile_input_type(
             semantics. Pass True/False to force the behavior.
 
     Returns:
-        A "GraphQLInputObjectType" with a "lambda" thunk for fields.
+        A "GraphQLInputObjectType" with a lazy field thunk and, where enabled,
+        a per-object zero-argument factory callback.
     """
     # AUTO-DETECT (emit_defaults=None): only hand-authored ``InputType`` subclasses
-    # (which carry ``_gdx_opts``) surface their declared defaults into the SDL.
+    # (which carry ``_gdx_opts``) surface literal defaults in SDL and run
+    # zero-argument factories when new input objects are coerced.
     # Django-model-derived schemas (``<Model>Native`` from ``build_model_schema``)
     # must NOT, so the mutation omit-vs-null contract stays intact (see the
     # ``emit_defaults`` docstring above).
     _emit_defaults = (
         hasattr(model, "_gdx_opts") if emit_defaults is None else emit_defaults
     )
+    factory_fields: dict[str, Callable[[], Any]] = {}
+    typed_map_fields: dict[str, tuple[str, bool, type]] = {}
+    set_int_fields: set[str] = set()
+    set_str_fields: set[str] = set()
+    set_bool_fields: set[str] = set()
+    set_float_fields: set[str] = set()
+    set_float_defaults: dict[str, Any] = {}
+    set_uuid_fields: set[str] = set()
+    set_decimal_fields: set[str] = set()
+    set_decimal_defaults: dict[str, Any] = {}
+    boolean_maps: dict[str, tuple[str, _OmittedBooleanMap | None]] = {}
+    mutable_defaults: dict[str, tuple[Any, Any]] = {}
 
     def _build_fields() -> dict[str, GraphQLInputField]:
         fields: dict[str, GraphQLInputField] = {}
+        factory_candidates: dict[
+            str, tuple[str, GraphQLInputField, Callable[[], Any]]
+        ] = {}
+        typed_map_candidates: dict[
+            str, tuple[str, GraphQLInputField, str, int, type]
+        ] = {}
+        set_int_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_str_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_bool_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_float_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_uuid_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        set_decimal_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        boolean_map_candidates: dict[str, tuple[str, GraphQLInputField]] = {}
+        mutable_default_candidates: dict[str, tuple[str, GraphQLInputField, Any]] = {}
 
         # The snake out_names claimed by nested object inputs; the base scalar
         # loop below skips these so a forward-FK ``author_id``-style scalar does
@@ -636,7 +1301,9 @@ def compile_input_type(
         _excl = set(exclude_fields) if exclude_fields else None
         _incl = set(include_fields) if include_fields else None
 
-        for field_name, field_info in model.model_fields.items():
+        original_names: dict[str, str] = getattr(model, "__gdx_original_fields__", {})
+        for internal_name, field_info in model.model_fields.items():
+            field_name = original_names.get(internal_name, internal_name)
             if field_name in _nested_out_names:
                 continue
             if field_name in _relation_replace:
@@ -655,14 +1322,6 @@ def compile_input_type(
             else:
                 alias = to_camel(field_name)
 
-            # For multi-word fields: wire key != snake name → assert guard
-            if alias != field_name:
-                # Build-time assertion: out_name (snake) MUST differ from alias (camel)
-                assert field_name != alias, (
-                    f"compile_input_type: field {field_name!r} alias {alias!r} "
-                    f"collision — out_name must differ from alias for multi-word fields."
-                )
-
             # Resolve the Python type from annotation. First strip Optional
             # (``Optional[list[T]]`` / ``list[T] | None`` -> ``list[T]``), then
             # detect a list origin so ``list[T]`` compiles to a GraphQL list
@@ -670,19 +1329,60 @@ def compile_input_type(
             annotation = field_info.annotation
             inner_type, is_optional_flag = _unwrap_optional(annotation)
             list_inner, is_list = _unwrap_list(inner_type)
+            int_or_string_nullable = _direct_int_or_string_nullable(annotation)
 
-            if is_list:
+            nested_list = _supported_nested_list(annotation) if is_list else None
+            if nested_list is not None:
+                element_type, nullable_elements = nested_list
+                gql_element = _string_literal_enum(
+                    element_type, input_name=name, alias=alias
+                ) or _python_type_to_gql(element_type)
+                gql_base_type: Any = gql_element
+                for element_optional in reversed(nullable_elements):
+                    gql_base_type = GraphQLList(
+                        gql_base_type
+                        if element_optional
+                        else GraphQLNonNull(gql_base_type)
+                    )
+            elif int_or_string_nullable is not None:
+                from django_graphex.core.scalars import IntOrString
+
+                gql_base_type = IntOrString
+                is_optional_flag = int_or_string_nullable
+            elif _is_exact_boolean_map(annotation):
+                gql_base_type = _native_scalar_map()[dict]
+            elif _is_exact_int_set(annotation):
+                gql_base_type = GraphQLList(GraphQLNonNull(GraphQLInt))
+            elif _is_exact_str_set(annotation):
+                gql_base_type = GraphQLList(GraphQLNonNull(GraphQLString))
+            elif _is_exact_bool_set(annotation):
+                gql_base_type = GraphQLList(GraphQLNonNull(GraphQLBoolean))
+            elif _is_exact_float_set(annotation):
+                gql_base_type = GraphQLList(GraphQLNonNull(GraphQLFloat))
+            elif _is_exact_uuid_set(annotation):
+                gql_base_type = GraphQLList(
+                    GraphQLNonNull(_native_scalar_map()[uuid.UUID])
+                )
+            elif _is_exact_decimal_set(annotation):
+                gql_base_type = GraphQLList(
+                    GraphQLNonNull(_native_scalar_map()[decimal.Decimal])
+                )
+            elif is_list:
                 # Element type: recurse the optionality strip so ``list[T | None]``
                 # yields a nullable element and ``list[T]`` a non-null element,
                 # mirroring the relation-list inner-NonNull precedent (:503-504).
                 element_type, element_optional = _unwrap_optional(list_inner)
-                gql_element = _python_type_to_gql(element_type)
-                gql_base_type: Any = (
+                gql_element = _string_literal_enum(
+                    element_type, input_name=name, alias=alias
+                ) or _python_type_to_gql(element_type)
+                gql_base_type = (
                     gql_element if element_optional else GraphQLNonNull(gql_element)
                 )
                 gql_base_type = GraphQLList(gql_base_type)
             else:
-                gql_base_type = _python_type_to_gql(inner_type)
+                gql_base_type = _string_literal_enum(
+                    inner_type, input_name=name, alias=alias
+                ) or _python_type_to_gql(inner_type)
 
             # Determine nullability: required = NonNull, optional = nullable
             required = _is_required(field_info)
@@ -696,20 +1396,133 @@ def compile_input_type(
                 gql_type = gql_base_type
 
             # Build the GraphQLInputField with out_name = snake field_name.
-            # ``default_value`` carries the Pydantic default (Undefined when the
-            # field has none) so the SDL renders the correct ``= ...`` marker.
+            # ``default_value`` carries a concrete Pydantic literal default
+            # (Undefined for absent defaults or factories) so SDL renders only
+            # values that are genuinely fixed across input objects.
             # Gated on ``_emit_defaults``: the Django-mutation path leaves it
             # Undefined so graphql-core does NOT inject a value for omitted fields
             # (preserving the ``model_fields_set`` omit-vs-null contract).
             default_value = (
                 _default_value_for(field_info) if _emit_defaults else Undefined
             )
-            gql_field = GraphQLInputField(
-                type_=gql_type,
-                out_name=field_name,
-                description=field_info.description,
-                default_value=default_value,
-            )
+            # External defaults allow SDL metadata for representable JSON
+            # values. A valid list may gain an outer copy during coercion;
+            # malformed list defaults retain their legacy internal path.
+            gql_field_kwargs: dict[str, Any] = {
+                "type_": gql_type,
+                "out_name": field_name,
+                "description": field_info.description,
+            }
+            if (
+                default_value is not Undefined
+                and default_value is not None
+                and (
+                    (
+                        not is_list
+                        and gql_base_type is _native_scalar_map()[dict]
+                        and _native_scalar_map()[dict].value_to_literal(default_value)
+                        is not None
+                    )
+                    or (
+                        is_list
+                        and nested_list is None
+                        and gql_element is _native_scalar_map()[dict]
+                        and _printable_json_list_default(
+                            default_value, element_type, element_optional
+                        )
+                    )
+                    or (
+                        nested_list is not None
+                        and gql_element is _native_scalar_map()[dict]
+                        and _printable_nested_json_list_default(
+                            default_value, element_type, nested_list[1]
+                        )
+                    )
+                )
+            ):
+                gql_field_kwargs["default"] = GraphQLDefaultInput(value=default_value)
+            else:
+                gql_field_kwargs["default_value"] = default_value
+            gql_field = GraphQLInputField(**gql_field_kwargs)
+            if (
+                int_or_string_nullable is not None
+                and default_value is not Undefined
+                and default_value is not None
+                and not (
+                    type(default_value) is str
+                    or (
+                        type(default_value) is int and -(2**31) <= default_value < 2**31
+                    )
+                )
+            ):
+                # This fixed default predates the stricter supplied-input
+                # scalar. Keep its String fallback spelling for SDL while the
+                # private memo retains the original omitted object. An explicit
+                # variable with the very same object still hits parse_value.
+                gql_field.default = GraphQLDefaultInput(
+                    literal=StringValueNode(value=str(default_value))
+                )
+                gql_field.default._memoized_coerced_value = default_value
+                setattr(gql_field, "_memoized_coerced_value", default_value)
+            if default_value is not Undefined and is_mutable_default(default_value):
+                mutable_default_candidates[alias] = (
+                    field_name,
+                    gql_field,
+                    default_value,
+                )
+            if _is_exact_boolean_map(annotation):
+                boolean_map_candidates[alias] = (field_name, gql_field)
+                if default_value is not Undefined and default_value is not None:
+                    if not isinstance(gql_field.default, GraphQLDefaultInput):
+                        # Retain the old String fallback's printable spelling
+                        # for an otherwise unprintable legacy default. The
+                        # private cache below still delivers its original object.
+                        gql_field.default = GraphQLDefaultInput(
+                            literal=StringValueNode(value=str(default_value))
+                        )
+                    # graphql-core 3.3 preserves JSON variable object identity.
+                    # Keep the public printable default unchanged while marking
+                    # only its private coerced cache for omitted-field provenance.
+                    marker = _OmittedBooleanMap(default_value)
+                    gql_field.default._memoized_coerced_value = marker
+                    setattr(gql_field, "_memoized_coerced_value", marker)
+            if _is_exact_int_set(annotation):
+                set_int_candidates[alias] = (field_name, gql_field)
+            if _is_exact_str_set(annotation):
+                set_str_candidates[alias] = (field_name, gql_field)
+            if _is_exact_bool_set(annotation):
+                set_bool_candidates[alias] = (field_name, gql_field)
+            if _is_exact_float_set(annotation):
+                set_float_candidates[alias] = (field_name, gql_field)
+            if _is_exact_uuid_set(annotation):
+                set_uuid_candidates[alias] = (field_name, gql_field)
+            if _is_exact_decimal_set(annotation):
+                set_decimal_candidates[alias] = (field_name, gql_field)
+            typed_leaf = element_type if is_list else inner_type
+            value_type = _typed_map_value_type(typed_leaf)
+            if value_type is not None:
+                list_depth = (
+                    len(nested_list[1]) if nested_list is not None else int(is_list)
+                )
+                typed_map_candidates[alias] = (
+                    field_name,
+                    gql_field,
+                    f"{name}.{alias}",
+                    list_depth,
+                    value_type,
+                )
+            if (
+                _emit_defaults
+                and field_info.default_factory is not None
+                and not getattr(
+                    field_info, "default_factory_takes_validated_data", False
+                )
+            ):
+                factory_candidates[alias] = (
+                    field_name,
+                    gql_field,
+                    field_info.default_factory,
+                )
             fields[alias] = gql_field
 
         # ----------------------------------------------------------------
@@ -821,6 +1634,112 @@ def compile_input_type(
                 extensions=({"gdx_required_perms": perms} if perms is not None else {}),
             )
 
+        # The base and injected loops can replace a field at the same wire
+        # alias. Only the final emitted field may contribute a factory; an
+        # overwritten field must not reappear in the resolver input mapping.
+        factory_fields.clear()
+        factory_fields.update(
+            {
+                field_name: factory
+                for alias, (
+                    field_name,
+                    gql_field,
+                    factory,
+                ) in factory_candidates.items()
+                if fields.get(alias) is gql_field
+            }
+        )
+        typed_map_fields.clear()
+        typed_map_fields.update(
+            {
+                field_name: (schema_path, list_depth, value_type)
+                for alias, (
+                    field_name,
+                    gql_field,
+                    schema_path,
+                    list_depth,
+                    value_type,
+                ) in typed_map_candidates.items()
+                if fields.get(alias) is gql_field
+            }
+        )
+        boolean_maps.clear()
+        boolean_maps.update(
+            (
+                field_name,
+                (
+                    f"{name}.{alias}",
+                    gql_field.default._memoized_coerced_value
+                    if isinstance(gql_field.default, GraphQLDefaultInput)
+                    and isinstance(
+                        gql_field.default._memoized_coerced_value, _OmittedBooleanMap
+                    )
+                    else None,
+                ),
+            )
+            for alias, (field_name, gql_field) in boolean_map_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        mutable_defaults.clear()
+        mutable_defaults.update(
+            (field_name, (default, gql_field))
+            for alias, (
+                field_name,
+                gql_field,
+                default,
+            ) in mutable_default_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_int_fields.clear()
+        set_int_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_int_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_str_fields.clear()
+        set_str_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_str_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_bool_fields.clear()
+        set_bool_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_bool_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_float_fields.clear()
+        set_float_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_float_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_float_defaults.clear()
+        set_float_defaults.update(
+            (field_name, gql_field.default_value)
+            for alias, (field_name, gql_field) in set_float_candidates.items()
+            if fields.get(alias) is gql_field
+            and gql_field.default_value is not Undefined
+        )
+        set_uuid_fields.clear()
+        set_uuid_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_uuid_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_decimal_fields.clear()
+        set_decimal_fields.update(
+            field_name
+            for alias, (field_name, gql_field) in set_decimal_candidates.items()
+            if fields.get(alias) is gql_field
+        )
+        set_decimal_defaults.clear()
+        set_decimal_defaults.update(
+            (field_name, gql_field.default_value)
+            for alias, (field_name, gql_field) in set_decimal_candidates.items()
+            if fields.get(alias) is gql_field
+            and gql_field.default_value is not Undefined
+        )
         return fields
 
     # Wrap in a lambda thunk for lazy evaluation
@@ -828,6 +1747,35 @@ def compile_input_type(
         name=name,
         fields=lambda: _build_fields(),
         description=description,
+        out_type=(
+            _FactoryOutType(
+                factory_fields,
+                typed_map_fields,
+                set_int_fields,
+                set_str_fields,
+                set_bool_fields,
+                set_float_fields,
+                set_float_defaults,
+                set_uuid_fields,
+                set_decimal_fields,
+                set_decimal_defaults,
+                boolean_maps,
+                mutable_defaults,
+            )
+            if _emit_defaults
+            or any(
+                _has_wrapped_typed_map(info.annotation)
+                or _is_exact_boolean_map(info.annotation)
+                or _is_exact_int_set(info.annotation)
+                or _is_exact_str_set(info.annotation)
+                or _is_exact_bool_set(info.annotation)
+                or _is_exact_float_set(info.annotation)
+                or _is_exact_uuid_set(info.annotation)
+                or _is_exact_decimal_set(info.annotation)
+                for info in getattr(model, "model_fields", {}).values()
+            )
+            else None
+        ),
         extensions={
             "gdx": GdxInputSpec(
                 pydantic_model=model,

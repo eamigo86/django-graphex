@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from inspect import cleandoc, isclass
+from threading import local
 from typing import Any
 
 # S8h (graphene-removal): core/base.py is now FULLY graphene-free at the top
@@ -33,6 +34,7 @@ from typing import Any
 # ``name = graphene.String()`` -> ``name = field(GraphQLString)``. The native
 # descriptor currency below (``NativeField`` / ``NativeMountedField`` /
 # ``GraphQLField``) is what the detection tuples recognize now.
+from django.core.exceptions import ImproperlyConfigured
 from graphql import GraphQLField
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -450,10 +452,11 @@ class ObjectType(_GdxGetItemMixin, BaseModel):
 
         if abstract:
             # Abstract base: graphene asserts no other options accompany it.
-            assert not options, (
-                "Abstract types can only contain the abstract attribute. "
-                f"Received: abstract, {', '.join(options)}"
-            )
+            if options:
+                raise ImproperlyConfigured(
+                    "Abstract types can only contain the abstract attribute. "
+                    f"Received: abstract, {', '.join(options)}"
+                )
             return
 
         # --- dispatch into the PARENT's __init_subclass_with_meta__ ---
@@ -642,6 +645,32 @@ class _GdxOutputEntry:
 
 _gdx_output_registry: list[_GdxOutputEntry] = []
 
+
+def append_output_entry(entry: _GdxOutputEntry) -> None:
+    """Append an output entry, dropping stale entries of the same declaration.
+
+    Re-executing a schema module (reload, re-import) redefines each type with
+    the same module and qualified name. The earlier entry is stale, so it is
+    removed instead of piling up and being recompiled forever.
+
+    Args:
+        entry: the registration record to add.
+    """
+
+    def _key(e: _GdxOutputEntry) -> tuple[Any, ...]:
+        return (
+            e.cls.__module__,
+            e.cls.__qualname__,
+            e.gql_name,
+            e.model,
+            getattr(e.cls._meta, "registry", None),
+        )
+
+    key = _key(entry)
+    _gdx_output_registry[:] = [e for e in _gdx_output_registry if _key(e) != key]
+    _gdx_output_registry.append(entry)
+
+
 # ---------------------------------------------------------------------------
 # Shared output registry singleton
 # ---------------------------------------------------------------------------
@@ -701,8 +730,8 @@ def recompile_fields(gql_type: Any) -> None:
         gql_type: The compiled type whose field map is forced.
 
     Raises:
-        Exception: The buried "ImproperlyConfigured", when the thunk raised
-            one; otherwise graphql-core's own wrapper, untouched.
+        Exception: The buried "ImproperlyConfigured", retaining any original
+            cause; otherwise graphql-core's own wrapper, untouched.
     """
     gql_type.__dict__.pop("fields", None)
     try:
@@ -711,7 +740,7 @@ def recompile_fields(gql_type: Any) -> None:
         buried = buried_config_error(error)
         if buried is None:
             raise
-        raise buried from None
+        raise buried from buried.__cause__
 
 
 def get_shared_output_registry() -> Any:
@@ -833,40 +862,39 @@ def resolved_output_type(cls: Any, registries: Any) -> Any:
 # blocks unconditionally append to the process-global ``_gdx_output_registry`` and
 # (for object types) write to the global shared output registry — leaking
 # pair-scoped, often duplicate-named types into the GLOBAL app-ready compile and
-# poisoning later default-pair builds. This depth counter is raised for the WHOLE
+# poisoning later default-pair builds. This thread-local depth counter is raised for the WHOLE
 # forked-build lifetime (compile + root assembly + lazy thunk eval) so those
 # class-def blocks SKIP the global registrations: the auto-created types stay in
 # their PAIR registry (forked there), never the global namespace. The DEFAULT pair
 # never raises it, so the single/default-schema path is byte-identical.
-_forking_depth: int = 0
+_forking_state = local()
 
 
 def is_forking() -> bool:
     """Report whether a forked (non-default) schema build is in progress (B5).
 
     Returns:
-        True while the forked-build depth counter is positive, so class-def
-        auto-creation of pair-scoped types skips the global registry writes.
+        True while this thread's forked-build depth is positive, so class-def
+        auto-creation of pair-scoped types skips the global registry writes
+        without suppressing another thread's registrations.
     """
-    return _forking_depth > 0
+    return getattr(_forking_state, "depth", 0) > 0
 
 
 class _forking_build:
     """Context manager that marks a forked-schema build in progress (B5).
 
-    Raises _forking_depth for the duration so class-def auto-creation of
+    Raises this thread's depth for the duration so class-def auto-creation of
     pair-scoped types skips the GLOBAL registry writes. Re-entrant (depth-counted)
     so nested fork operations are safe.
     """
 
     def __enter__(self) -> "_forking_build":
-        global _forking_depth
-        _forking_depth += 1
+        _forking_state.depth = getattr(_forking_state, "depth", 0) + 1
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        global _forking_depth
-        _forking_depth -= 1
+        _forking_state.depth -= 1
 
 
 # Process-wide DEFAULT pair, created once. Its members ARE the existing global
@@ -945,6 +973,21 @@ class InputType(ObjectType):
         identical to before S6a.
         """
         super().__init_subclass__(**kwargs)
+        # An explicit Meta.name (the driver already consumed Meta and defaulted
+        # it to the class name) is the public GraphQL name; None means "the
+        # class name", resolved at compile time.
+        meta_name = getattr(getattr(cls, "_meta", None), "name", None)
+        cls._gdx_gql_name = meta_name if meta_name != cls.__name__ else None  # type: ignore[attr-defined]
+
+        # A re-executed module redefines the same declaration (module, qualified
+        # name AND public name): drop the stale entry so compile_all_inputs()
+        # does not see a duplicate input name. Factory variants with different
+        # public names are distinct inputs and both stay registered.
+        def _key(c: Any) -> tuple[Any, ...]:
+            return (c.__module__, c.__qualname__, c._gdx_gql_name or c.__name__)
+
+        key = _key(cls)
+        _gdx_input_registry[:] = [c for c in _gdx_input_registry if _key(c) != key]
         _gdx_input_registry.append(cls)
 
         # Attach an empty _meta (graphql_input_type populated by compile_all_inputs)
@@ -993,8 +1036,8 @@ def compile_all_inputs() -> None:
     # PASS 2: compile_input_type for all (detect duplicates)
     seen_names: dict[str, type] = {}
     for cls in _gdx_input_registry:
-        # GraphQL type name defaults to the class name
-        gql_name = cls.__name__
+        # GraphQL type name defaults to the class name (Meta.name overrides)
+        gql_name = cls._gdx_gql_name or cls.__name__  # type: ignore[attr-defined]
         if gql_name in seen_names:
             raise ImproperlyConfigured(
                 f"compile_all_inputs: duplicate GraphQL input type name "

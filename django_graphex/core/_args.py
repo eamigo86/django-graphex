@@ -22,6 +22,7 @@ from graphql import GraphQLArgument, Undefined
 from graphql.type.definition import GraphQLType
 
 from django_graphex._strconv import to_snake_case
+from django_graphex.core.fresh_defaults import graphql_argument, is_mutable_default
 
 # ---------------------------------------------------------------------------
 # Internal type unwrapper
@@ -150,12 +151,17 @@ def native_arg(value: Any, name: str | None = None) -> GraphQLArgument:
     out_name: str | None = to_snake_case(name) if name is not None else None
 
     if isinstance(value, GraphQLArgument):
-        if out_name is None or value.out_name is not None:
+        shared = type(value) is GraphQLArgument and is_mutable_default(
+            value.default_value
+        )
+        if not shared and (out_name is None or value.out_name is not None):
             return value
-        # Rebuild with out_name set, preserving every other attribute.
+        # Rebuild with out_name set (and a per-execution copy of a mutable
+        # default), preserving every other attribute.
         kwargs = value.to_kwargs()
-        kwargs["out_name"] = out_name
-        return GraphQLArgument(**kwargs)
+        if value.out_name is None and out_name is not None:
+            kwargs["out_name"] = out_name
+        return graphql_argument(**kwargs) if shared else type(value)(**kwargs)
 
     if isinstance(value, GraphQLType):
         return GraphQLArgument(value, out_name=out_name)
@@ -232,7 +238,7 @@ def to_graphql_argument(
         out_name = arg.out_name
         if out_name is None and name is not None:
             out_name = to_snake_case(name)
-        return GraphQLArgument(
+        return graphql_argument(
             _unwrap_graphql_type(arg.type),
             default_value=arg.default_value,
             description=arg.description,
@@ -253,7 +259,7 @@ def to_graphql_argument(
     default_value = getattr(arg, "default_value", Undefined)
     description = getattr(arg, "description", None)
 
-    return GraphQLArgument(
+    return graphql_argument(
         graphql_type,
         default_value=default_value,
         description=description,

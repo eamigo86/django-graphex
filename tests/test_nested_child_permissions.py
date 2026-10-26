@@ -16,8 +16,9 @@ Invariants asserted here:
 * a nested upsert naming a primary key the child's host does not expose is a
   clean not-found, never a create or an update at that key,
 * the gate is INERT for a child whose host declares no "permission_classes",
-* the LINK paths (forward FK / M2M by primary key) stay ungated by design: they
-  attach an existing row exactly as the plain "category: ID" surface always did,
+* the LINK paths (forward FK / M2M by primary key) do not run child WRITE
+  permissions: they attach an existing row exactly as the plain "category: ID"
+  surface does. The destination public get_queryset row scope is separate,
 * the reverse ownership guard still fires for a row the scope does expose.
 """
 
@@ -413,10 +414,10 @@ class TestNestedChildPermissions:
         assert any("does not belong to this NestedPermAuthor" in m for m in messages)
 
     def test_forward_link_path_is_not_gated(self) -> None:
-        """Attaching an existing forward-FK row stays allowed.
+        """Attaching an FK row does not invoke child write permissions.
 
         The link path writes nothing on the child; it is the same reachability
-        the plain "category: ID" surface always offered.
+        as the plain "category: ID" surface without a scoped output hook.
         """
         category = NestedPermCategory.objects.create(name="c")
         result = _create(
@@ -426,7 +427,7 @@ class TestNestedChildPermissions:
         assert NestedPermAuthor.objects.get().category_id == category.pk
 
     def test_m2m_link_path_is_not_gated(self) -> None:
-        """Attaching an existing many-to-many row stays allowed.
+        """Attaching an M2M row does not invoke child write permissions.
 
         Same boundary as the forward link path, on the relation whose rows the
         parent shares with every other parent.

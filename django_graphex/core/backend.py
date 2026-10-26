@@ -14,11 +14,14 @@ import enum
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, connections, models, router, transaction
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ..backends import SerializerBackend
 from ..errors import ErrorType
+from ..utils import present_values
 from .fields import build_model_schema
 from .input_compiler import translate_validation_error
 
@@ -239,11 +242,10 @@ class PydanticBackend(SerializerBackend):
         fks = self._fk_fields()
         for name, fk in fks.items():
             pk = payload.get(name)
-            if (
-                pk is not None
-                and not fk.related_model._default_manager.db_manager(alias)
-                .filter(**{fk.target_field.name: pk})
-                .exists()
+            if pk is not None and not present_values(
+                fk.related_model._default_manager.db_manager(alias),
+                fk.target_field,
+                [pk],
             ):
                 errors.setdefault(name, []).append(
                     f'Invalid pk "{pk}" - object does not exist.'
@@ -259,20 +261,13 @@ class PydanticBackend(SerializerBackend):
             if not isinstance(pks, (list, tuple)) or not pks:
                 continue
             unique_pks = list(dict.fromkeys(pks))  # deduplicate, preserve order
-            existing_count = (
-                field.related_model._default_manager.db_manager(alias)
-                .filter(pk__in=unique_pks)
-                .count()
+            present = present_values(
+                field.related_model._default_manager.db_manager(alias),
+                field.related_model._meta.pk,
+                unique_pks,
             )
-            if existing_count != len(unique_pks):
-                missing = [
-                    pk
-                    for pk in unique_pks
-                    if not field.related_model._default_manager.db_manager(alias)
-                    .filter(pk=pk)
-                    .exists()
-                ]
-                for pk in missing:
+            for pk in unique_pks:
+                if pk not in present:
                     errors.setdefault(field.name, []).append(
                         f'Invalid pk "{pk}" - object does not exist.'
                     )
@@ -390,6 +385,54 @@ class PydanticBackend(SerializerBackend):
 
         return errors
 
+    def _model_field_errors(
+        self, payload: dict[str, Any], obj: models.Model
+    ) -> dict[str, list[str]]:
+        """Run Django field validation for every written concrete field.
+
+        Mirrors "Field.clean" (type coercion, choices, null, blank and the
+        field validators) for the fields present in the payload only. It never
+        calls "Model.clean", "validate_unique" or "validate_constraints". A
+        relation, file or binary field runs its validators only, so no query is
+        issued to check an FK target.
+
+        Args:
+            payload: The written field values keyed by model field name.
+            obj: The instance being created or updated.
+
+        Returns:
+            A mapping of field name to Django's validation messages.
+        """
+        errors: dict[str, list[str]] = {}
+        for name, value in payload.items():
+            try:
+                field = self.model._meta.get_field(name)
+            except FieldDoesNotExist:
+                continue
+            if (
+                not getattr(field, "concrete", False)
+                or field.many_to_many
+                or not field.editable
+                or field.primary_key
+            ):
+                continue
+            if value is None and field.null:
+                continue  # an explicit null on a nullable column is accepted
+            if value in field.empty_values and value in [
+                c for c, _ in field.flatchoices
+            ]:
+                continue  # an empty value the developer listed as a choice
+            try:
+                if field.is_relation or isinstance(
+                    field, (models.FileField, models.BinaryField)
+                ):
+                    field.run_validators(value)
+                else:
+                    field.clean(value, obj)
+            except DjangoValidationError as exc:
+                errors[name] = list(exc.messages)
+        return errors
+
     # -- backend API ----------------------------------------------------------- #
     def save_object(
         self,
@@ -450,7 +493,19 @@ class PydanticBackend(SerializerBackend):
 
         # Only client-provided fields (so Django defaults apply on create and
         # untouched fields are left alone on update).
-        payload = validated.model_dump(include=set(validated.model_fields_set))
+        included = set(validated.model_fields_set)
+        # A generated Django column named model_dump shadows the instance
+        # method. Use Pydantic's descriptor only for that formerly unusable
+        # schema; leave custom bases' normal serialization behavior intact.
+        if "model_dump" in schema.model_fields:
+            payload = BaseModel.model_dump(validated, include=included)
+        else:
+            payload = validated.model_dump(include=included)
+        original_names: dict[str, str] = getattr(schema, "__gdx_original_fields__", {})
+        if original_names:
+            payload = {
+                original_names.get(key, key): value for key, value in payload.items()
+            }
 
         # Unwrap enum (choices) members to their stored value.
         # List/tuple values are also recursed into so that multi-valued choice
@@ -464,6 +519,11 @@ class PydanticBackend(SerializerBackend):
 
         payload = {key: _unwrap(value) for key, value in payload.items()}
 
+        obj = instance or self.model()
+        model_errors = self._model_field_errors(payload, obj)
+        if model_errors:
+            return False, _errors_to_type(model_errors)
+
         fks = self._fk_fields()
         m2m = self._m2m_names()
         # Snapshot the full payload (M2M keys included) BEFORE popping, so the
@@ -472,7 +532,6 @@ class PydanticBackend(SerializerBackend):
         diagnostic_payload = dict(payload)
         m2m_values = {name: payload.pop(name) for name in list(payload) if name in m2m}
 
-        obj = instance or self.model()
         for name, value in payload.items():
             setattr(obj, f"{name}_id" if name in fks else name, value)
         for name, value in (save_kwargs or {}).items():
@@ -527,12 +586,14 @@ class PydanticBackend(SerializerBackend):
                             ).remote_field.through
                             check_tables.append(through._meta.db_table)
                         db_connection.check_constraints(table_names=check_tables)
-        except IntegrityError:
+        except (IntegrityError, OverflowError):
             # Reproduce the exact structured envelope the eager check produced.
+            # An OverflowError is a key beyond the database integer range: it
+            # cannot name a row, so the diagnostics report it like a missing one.
             errors = self._db_check_errors(diagnostic_payload, instance, using)
             if errors:
                 return False, _errors_to_type(errors)
-            # Integrity error of another kind (not a missing FK/M2M we can
+            # Failure of another kind (not a missing FK/M2M we can
             # attribute): re-raise so the existing generic handling upstream
             # surfaces it unchanged.
             raise

@@ -212,10 +212,14 @@ class RegistryKeyCollisionTest(TestCase):
                 "assertRaises" around the cross-registry "register" call.
         """
 
-        class AuthorType(DjangoObjectType):
-            class Meta:
-                model = Author
+        from tests._schema_isolation import isolated_default_pair
 
-        # AuthorType is bound to the global registry, not this fresh one.
-        with self.assertRaises(ValueError):
-            Registry().register(AuthorType)
+        with isolated_default_pair():
+
+            class AuthorType(DjangoObjectType):
+                class Meta:
+                    model = Author
+
+            # AuthorType is bound to the scoped default registry, not this fresh one.
+            with self.assertRaises(ValueError):
+                Registry().register(AuthorType)

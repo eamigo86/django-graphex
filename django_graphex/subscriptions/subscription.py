@@ -7,6 +7,8 @@ engine.
 
 from __future__ import annotations
 
+import json
+import math
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -459,10 +461,12 @@ class Subscription(NativeObjectType):
 
         Hook meant to be overridden (or injected by "DjangoModelType").
         The returned mapping (Django ORM lookup -> value, e.g.
-        "{'owner': info.context.user.pk}") is merged into the subscriber's
-        filters with SERVER PRECEDENCE, so it cannot be widened or removed by
-        the client, and is enforced per event at delivery time. The default
-        returns "None" (no scoping).
+        "{'owner': info.context.user.pk}") is combined with the subscriber's
+        filters by AND: an event is delivered only if it matches both, so the
+        client can narrow the scope but never widen or remove it. A client
+        value that contradicts the scope on the same key delivers nothing. It is
+        enforced per event at delivery time. The default returns "None" (no
+        scoping).
 
         Args:
             info: GraphQL resolve info for the subscribe request.
@@ -515,6 +519,45 @@ class Subscription(NativeObjectType):
         """
         data = serialize_instance(cls._meta.backend, instance)
         return {key: value for key, value in data.items() if cls._projection_keeps(key)}
+
+    @classmethod
+    def _serialize_delete_match(cls, instance: Any) -> dict[str, Any]:
+        """Capture only declared concrete scalar fields for private delete matching.
+
+        The snapshot is detached and JSON-safe before the on-commit callback is
+        registered. Custom backends are not assumed to share the native field
+        representation, so their private match set stays empty. A deferred
+        scalar is omitted rather than fetched after its row has been deleted.
+
+        Args:
+            instance: The model instance at the delete signal.
+
+        Returns:
+            A mapping of projected scalar names to immutable JSON values.
+        """
+        from ..core.backend import PydanticBackend, _json_safe
+        from .mixins import _LosslessDateTimeJSONEncoder
+
+        if type(cls._meta.backend) is not PydanticBackend:
+            return {}
+
+        snapshot: dict[str, Any] = {}
+        deferred_fields = instance.get_deferred_fields()
+        for name in cls._output_field_names():
+            field = cls._meta.model._meta.get_field(name)
+            if (
+                not field.concrete
+                or field.is_relation
+                or field.attname in deferred_fields
+            ):
+                continue
+            value = _json_safe(field, getattr(instance, name))
+            value = json.loads(json.dumps(value, cls=_LosslessDateTimeJSONEncoder))
+            if type(value) in (str, int, float, bool, type(None)) and not (
+                isinstance(value, float) and not math.isfinite(value)
+            ):
+                snapshot[name] = value
+        return snapshot
 
     @classmethod
     def get_binding(cls) -> SubscriptionBinding:
@@ -601,6 +644,7 @@ class Subscription(NativeObjectType):
             from django.db import models as _dj_models
             from graphql import GraphQLID as _GraphQLID
             from graphql import GraphQLList as _GraphQLList
+            from graphql import get_named_type
 
             from ..core.base import get_shared_output_registry
             from ..core.output_compiler import (
@@ -608,6 +652,7 @@ class Subscription(NativeObjectType):
                 _to_camel_case,
                 compile_output_fields,
             )
+            from ..core.scalars import GdxDateTime
             from ..registry import get_global_registry
 
             # 1) Scalars via the SHARED output registry — the SAME builder the
@@ -648,9 +693,15 @@ class Subscription(NativeObjectType):
             # ``to_representation`` serializes: concrete + M2M) and render every
             # RELATION as its DELIVERABLE pk shape, keyed by ``field.name`` (the
             # exact key the flat payload writes).
+            datetime_names: set[str] = set()
+            duration_names: set[str] = set()
             for field in cls._meta.backend._output_fields():
                 name = field.name
                 wire = _to_camel_case(name)
+                if isinstance(field, _dj_models.DateTimeField):
+                    datetime_names.add(name)
+                if isinstance(field, _dj_models.DurationField):
+                    duration_names.add(name)
                 if isinstance(field, _dj_models.ManyToManyField):
                     # M2M -> [pk scalar]; payload carries a list of pks under
                     # key ``field.name``.
@@ -682,7 +733,14 @@ class Subscription(NativeObjectType):
                 rewrapped[wire] = _GraphQLField(
                     field.type,
                     args=field.args,
-                    resolve=make_snake_resolver(snake),
+                    resolve=make_snake_resolver(
+                        snake,
+                        native_datetime=(
+                            snake in datetime_names
+                            and get_named_type(field.type) is GdxDateTime
+                        ),
+                        native_duration=snake in duration_names,
+                    ),
                     description=field.description,
                     deprecation_reason=field.deprecation_reason,
                 )

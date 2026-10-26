@@ -18,7 +18,7 @@ from typing import Any, Callable
 from django.db import models
 from pydantic import BaseModel, field_validator, model_validator
 
-from .fields import m2m_fields, writable_fields
+from .fields import _isolated_model_config_name, m2m_fields, writable_fields
 
 _PREFIX = "validate_"
 
@@ -78,15 +78,42 @@ def _object_wrapper(fn: Callable, host_cls: type) -> Callable:
     """Wrap a user validate as a Pydantic model_validator(mode="after").
 
     Exposes the set fields as a dict (DRF's validate(self, data) shape) and
-    writes any returned keys back onto the model so transforms persist.
+    writes any returned keys back onto the model so transforms persist. A
+    private Pydantic name for a Django model_config column is translated at
+    both boundaries so user hooks still see the original Django field name.
+
+    Args:
+        fn: User-defined object validator.
+        host_cls: Public type or mutation class declaring the validator.
+
+    Returns:
+        A Pydantic-compatible validator callable.
     """
 
     def _validator(self: BaseModel) -> BaseModel:
-        data = {name: getattr(self, name) for name in self.model_fields_set}
+        """Apply an object validator using original Django field names.
+
+        Returns:
+            The validated model with any returned field changes applied.
+
+        Raises:
+            ValueError: The application validator rejects the input.
+            AssertionError: The application validator asserts an invalid value.
+        """
+        original_names: dict[str, str] = getattr(
+            type(self), "__gdx_original_fields__", {}
+        )
+        internal_names = {
+            original: internal for internal, original in original_names.items()
+        }
+        data = {
+            original_names.get(name, name): getattr(self, name)
+            for name in self.model_fields_set
+        }
         result = fn(host_cls, data)
         if isinstance(result, dict):
             for key, value in result.items():
-                setattr(self, key, value)
+                setattr(self, internal_names.get(key, key), value)
         return self
 
     return _validator
@@ -130,8 +157,13 @@ def build_validator_model(
                 UserWarning,
                 stacklevel=2,
             )
+        validator_name = (
+            _isolated_model_config_name(model, pydantic_model)
+            if field_name == "model_config"
+            else field_name
+        )
         namespace[f"_inline_{_PREFIX}{field_name}"] = field_validator(
-            field_name, check_fields=False
+            validator_name, check_fields=False
         )(classmethod(_field_wrapper(fn, host_cls)))
 
     if object_fn is not None:

@@ -12,6 +12,9 @@ MANUAL_DOCS = ROOT / ".github/workflows/docs.yml"
 RELEASE_DOCS = ROOT / "docs/releasing.md"
 CONTRIBUTING_DOCS = ROOT / "docs/contributing.md"
 DOCS_CONFIG = ROOT / "zensical.yml"
+PRODUCTION_REF_GUARD = (
+    "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+)
 
 
 def _workflow() -> str:
@@ -217,9 +220,9 @@ def test_pages_deployment_exists_only_in_tag_release_workflow() -> None:
 
 
 def test_manual_publish_is_testpypi_only_and_tags_are_production_only() -> None:
-    """Manual runs stay in staging while only a version tag can reach PyPI.
+    """Manual runs stay in staging even when dispatched from a version tag.
 
-    This test protects the corresponding regression contract.
+    Production requires both a tag ref and a push event; neither alone suffices.
     """
     workflow = _workflow()
     dispatch = workflow.split("  workflow_dispatch:", 1)[1].split(
@@ -228,17 +231,48 @@ def test_manual_publish_is_testpypi_only_and_tags_are_production_only() -> None:
     publish = _job("publish")
     assert "inputs:" not in dispatch
     assert "github.event.inputs" not in publish
-    assert (
-        "startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging'" in publish
+    routing = publish.split("    if: |\n", 1)[1].split("    environment:", 1)[0]
+    assert " ".join(routing.split()) == (
+        f"({PRODUCTION_REF_GUARD}) || github.event_name == 'workflow_dispatch'"
     )
-    assert re.search(
-        r"name: Publish to PyPI\n\s+if: startsWith\(github\.ref, 'refs/tags/v'\)",
-        publish,
-    )
+    assert f"{PRODUCTION_REF_GUARD} && 'production' || 'staging'" in publish
+    pypi = re.search(r"name: Publish to PyPI\n\s+if: ([^\n]+)", publish)
+    assert pypi and pypi.group(1) == PRODUCTION_REF_GUARD
     assert re.search(
         r"name: Publish to TestPyPI\n\s+if: github\.event_name == 'workflow_dispatch'",
         publish,
     )
+    for event, ref, production in (
+        ("push", "refs/tags/v4.1.0", True),
+        ("push", "refs/heads/main", False),
+        ("workflow_dispatch", "refs/tags/v4.1.0", False),
+        ("workflow_dispatch", "refs/heads/main", False),
+    ):
+        assert (event == "push" and ref.startswith("refs/tags/v")) is production
+    assert "manual dispatch from a version tag" in RELEASE_DOCS.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_release_and_pages_require_a_pushed_version_tag() -> None:
+    """Keep manual tag dispatches out of downstream production actions.
+
+    The release and Pages jobs must not infer production from a tag ref alone.
+    """
+    create_release = _job("create-release")
+    release_guard = create_release.split("    if: |\n", 1)[1].split("    steps:", 1)[0]
+    assert " ".join(release_guard.split()) == (
+        f"needs.publish.result == 'success' && {PRODUCTION_REF_GUARD}"
+    )
+    docs = _job("docs-build")
+    for step in (
+        "Setup Pages for a tagged release",
+        "Upload tagged documentation artifact",
+    ):
+        match = re.search(rf"name: {step}\n\s+if: ([^\n]+)", docs)
+        assert match and match.group(1) == PRODUCTION_REF_GUARD
+    deploy = _job("deploy-docs")
+    assert f"    if: {PRODUCTION_REF_GUARD}\n" in deploy
 
 
 def test_tag_version_is_rejected_before_the_artifact_build() -> None:

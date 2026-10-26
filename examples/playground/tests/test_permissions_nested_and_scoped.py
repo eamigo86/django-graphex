@@ -241,16 +241,16 @@ def test_scoped_schema_prunes_the_nested_comments_input(
 
 
 @pytest.mark.django_db
-def test_the_readme_validation_sample_is_refused_and_a_blank_title_is_not(
+def test_the_readme_validation_samples_are_refused(
     client: Client, django_user_model: type[AbstractBaseUser]
 ) -> None:
-    """Pin both halves of the README's validation section.
+    """Pin both samples of the README's validation section.
 
-    Validation is PYDANTIC, derived from the column, so "max_length" fails and
-    Django's form-level "blank" does not. The README used to claim the opposite
-    with "title: ''", which returns "ok: true" and creates the row. Both the
-    refusal and the non-refusal are asserted here so the section cannot rot
-    back.
+    Validation is PYDANTIC, derived from the column ("max_length", type and
+    nullability), and generated writes also run the column's Django validators,
+    so a "blank=False" title refuses "title: ''" with the Django message. The
+    README used to claim the opposite; both refusals are asserted here so the
+    section cannot rot back.
 
     Args:
         client: The Django test client issuing the requests.
@@ -270,11 +270,12 @@ def test_the_readme_validation_sample_is_refused_and_a_blank_title_is_not(
         {"field": "title", "messages": ["String should have at most 200 characters"]}
     ]
 
-    # The half the README got wrong: "blank" is a form concern Django never
-    # enforces on save(), so an empty title is accepted.
-    accepted = _graphql(
+    # Field validators run too, so the blank=False title is refused as well.
+    blank = _graphql(
         client,
         'mutation { noteCreate(newNote: { title: "" }) { ok errors { field messages } } }',
     )["data"]["noteCreate"]
-    assert accepted["ok"] is True
-    assert accepted["errors"] is None
+    assert blank["ok"] is False
+    assert blank["errors"] == [
+        {"field": "title", "messages": ["This field cannot be blank."]}
+    ]

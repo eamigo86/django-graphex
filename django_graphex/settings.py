@@ -13,6 +13,7 @@ merged into this package's own settings dict — there is no separate namespace)
 from __future__ import annotations
 
 from difflib import get_close_matches
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
@@ -30,7 +31,7 @@ DEFAULTS = {
     # Dotted path (or class) of the default paginator applied to list fields
     # that don't set their own. None disables default pagination.
     "DEFAULT_PAGINATION_CLASS": "django_graphex.paginations.LimitOffsetGraphqlPagination",
-    "DEFAULT_PAGE_SIZE": None,  # page size when the client omits one (None = unbounded)
+    "DEFAULT_PAGE_SIZE": 100,  # page size when the client omits one (None = no default)
     "MAX_PAGE_SIZE": None,  # hard ceiling on the effective page size (None = no cap)
     # Response shaping & cache
     "CLEAN_RESPONSE": False,  # strip null values from the response payload
@@ -46,6 +47,10 @@ DEFAULTS = {
     # the schema OBJECT (a per-schema sub-cache) so a permission-pruned schema
     # never serves another schema's verdict. 0 disables both caches entirely.
     "DOCUMENT_CACHE_MAXSIZE": 128,
+    # Per-entry bound (characters of query text) for those caches. A longer
+    # document is parsed/validated but never retained, so worst-case retained
+    # text is DOCUMENT_CACHE_MAXSIZE x this value. None = no per-entry bound.
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH": 65_536,
     # Queryset optimization (N+1)
     # Apply nested select_related / prefetch_related derived from the query.
     "OPTIMIZE_QUERYSET": True,
@@ -119,6 +124,15 @@ DEFAULTS = {
     # list fields cost 1 unless a type declares `Meta.complexity`.
     "MAX_QUERY_COST": None,  # None disables the budget (queries are never blocked)
     "EXPOSE_QUERY_COST": False,  # True -> add `extensions.cost` to responses
+    # Per-field @replace output cap in Unicode characters (not encoded bytes).
+    # None restores the former uncapped behavior.
+    "MAX_REPLACE_OUTPUT_LENGTH": 1_000_000,
+    # Per-HTTP-request budget (Unicode characters) for text GROWN by directives,
+    # summed over every field, alias and row, and shared by all items of a batch.
+    # A subscription event has its own. None disables it.
+    "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,
+    # Cost added for each custom directive use on a field (0 = directives are free).
+    "COST_DIRECTIVE": 0,
     # Multiplier for a list field whose page size is unknown (no literal/variable
     # value and no MAX_PAGE_SIZE cap to fall back to).
     "DEFAULT_LIST_MULTIPLIER": 10,
@@ -132,6 +146,14 @@ DEFAULTS = {
     # optimization block degrades to the un-optimized queryset and logs a WARNING
     # instead of surfacing a 500. Default False (fail loud).
     "OPTIMIZER_SAFE_MODE": False,
+    # Per-operation-execution (each batch item is its own), per-walker cap on
+    # the selection contexts the queryset
+    # optimizer expands. A fragment reached through distinct relation paths
+    # describes exponentially many select/prefetch lookups, so no memo can plan
+    # it in linear time. Past the cap the optimizer stops planning deeper
+    # relations (results stay correct; those relations load lazily). Far above
+    # any realistic document. None disables the cap.
+    "OPTIMIZER_WORK_BUDGET": 2000,
     # Inject DB annotations declared via AnnotatedField only when the field is
     # selected in the GraphQL query. This is the DEPENDABLE runtime kill-switch
     # for annotation injection — independent of OPTIMIZE_ONLY_FIELDS.
@@ -142,12 +164,14 @@ DEFAULTS = {
     # this False to disable injection entirely without a code change.
     "OPTIMIZE_ANNOTATED_FIELDS": True,
     # ---------------------------------------------------------------------------
-    # File uploads (Base64FileInput — opt-in, import from django_graphex.uploads)
+    # File uploads (multipart parts and opt-in Base64FileInput)
     # ---------------------------------------------------------------------------
-    # Maximum decoded size (bytes) of a single base64 upload. REQUIRED when
-    # Base64FileInput is used; raises ImproperlyConfigured if unset and no
-    # per-field override is given. A per-field max_size= kwarg on
+    # Maximum size (bytes) of each received multipart file and decoded base64
+    # upload. REQUIRED when Base64FileInput is used; raises ImproperlyConfigured
+    # if unset and no per-field override is given. A per-field max_size= kwarg on
     # to_uploaded_file() / decode_base64_file() overrides this global cap.
+    # None leaves multipart files without a per-file cap; MAX_REQUEST_BODY_SIZE
+    # remains the separate whole-request limit.
     # Example: 5 * 1024 * 1024  →  5 MB
     "MAX_UPLOAD_SIZE": None,
     # Maximum total HTTP request body length (bytes) enforced by
@@ -192,6 +216,12 @@ DEFAULTS = {
     # Set to None to allow any number (pre-cap behavior, not recommended for
     # public endpoints — use only when you control all clients).
     "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
+    # SSE controls are independent and inert until explicitly enabled.
+    "SSE_HEARTBEAT_ENABLED": False,
+    "SSE_HEARTBEAT_INTERVAL": 15,
+    "SSE_CONNECTION_LIMIT_ENABLED": False,
+    "SSE_MAX_CONNECTIONS_PER_USER": 5,
+    "SSE_CONNECTION_REDIS_URL": None,
 }
 
 
@@ -204,13 +234,33 @@ IMPORT_STRINGS = ("DEFAULT_PAGINATION_CLASS", "MIDDLEWARE", "SCHEMA")
 #: enforced a budget no query could meet while naming that negative in the
 #: error; the cache bound at zero quietly restored the default 64. Each is now
 #: refused where every reader routes through, so the mistake surfaces as a
-#: configuration error instead of as a guard that is not running.
+#: configuration error instead of as a guard that is not running. The batch,
+#: body, and document-cache bounds allow zero but reject negative integers.
 LIMIT_MINIMUMS = {
     "MAX_QUERY_DEPTH": (1, "Use None to disable the global depth guard."),
     "MAX_QUERY_COST": (1, "Use None to disable the cost budget."),
+    "MAX_REPLACE_OUTPUT_LENGTH": (1, "Use None to disable the output cap."),
+    "MAX_DIRECTIVE_OUTPUT_TOTAL": (1, "Use None to disable the output budget."),
+    "OPTIMIZER_WORK_BUDGET": (1, "Use None to disable the optimizer work cap."),
     "PERMISSION_SCHEMA_CACHE_MAXSIZE": (
         0,
         "Use 0 to cache nothing, or None to keep the calibrated default.",
+    ),
+    "MAX_BATCH_SIZE": (
+        0,
+        "Use 0 to allow no batch operations, or None to remove the cap.",
+    ),
+    "MAX_REQUEST_BODY_SIZE": (
+        0,
+        "Use 0 to allow no request-body bytes, or None to disable the body-size guard.",
+    ),
+    "DOCUMENT_CACHE_MAXSIZE": (
+        0,
+        "Use 0 to disable both document caches, or None to leave them unbounded.",
+    ),
+    "DOCUMENT_CACHE_MAX_QUERY_LENGTH": (
+        0,
+        "Use 0 to cache no document, or None to remove the per-entry bound.",
     ),
 }
 
@@ -219,6 +269,41 @@ LIMIT_MINIMUMS = {
 SETTING_CHOICES = {
     "CACHE_INVALIDATION_SCOPE": frozenset({"global", "identity"}),
 }
+
+_SSE_BOOLEAN_SETTINGS = frozenset(
+    {"SSE_HEARTBEAT_ENABLED", "SSE_CONNECTION_LIMIT_ENABLED"}
+)
+
+
+def _validate_sse_setting(value: Any, attr: str, namespace: str) -> None:
+    """Reject malformed SSE controls before the streaming response is opened.
+
+    Args:
+        value: The configured value.
+        attr: The SSE setting key.
+        namespace: The containing Django setting namespace.
+
+    Raises:
+        ImproperlyConfigured: If the value cannot safely drive this control.
+    """
+    valid = True
+    if attr in _SSE_BOOLEAN_SETTINGS:
+        valid = isinstance(value, bool)
+    elif attr == "SSE_HEARTBEAT_INTERVAL":
+        valid = (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and isfinite(value)
+            and value > 0
+        )
+    elif attr == "SSE_MAX_CONNECTIONS_PER_USER":
+        valid = not isinstance(value, bool) and isinstance(value, int) and value > 0
+    elif attr == "SSE_CONNECTION_REDIS_URL":
+        valid = value is None or (
+            isinstance(value, str) and value.startswith(("redis://", "rediss://"))
+        )
+    if not valid:
+        raise ImproperlyConfigured(f"{namespace}['{attr}'] has an invalid value.")
 
 
 class _BaseAPISettings:
@@ -285,8 +370,25 @@ class _BaseAPISettings:
             value = _perform_import(value, attr)
         if attr in LIMIT_MINIMUMS:
             _validate_limit(value, attr, self.setting_name)
+        if (
+            attr in ("MAX_REPLACE_OUTPUT_LENGTH", "MAX_DIRECTIVE_OUTPUT_TOTAL")
+            and value is not None
+            and (isinstance(value, bool) or not isinstance(value, int))
+        ):
+            raise ImproperlyConfigured(
+                f"{self.setting_name}['{attr}'] must be a positive integer or None."
+            )
+        if attr == "COST_DIRECTIVE" and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise ImproperlyConfigured(
+                f"{self.setting_name}['COST_DIRECTIVE'] = {value!r} must be a "
+                "non-negative integer (0 makes directives free)."
+            )
         if attr in SETTING_CHOICES:
             _validate_choice(value, attr, self.setting_name)
+        if attr.startswith("SSE_"):
+            _validate_sse_setting(value, attr, self.setting_name)
         setattr(self, attr, value)
         return value
 
@@ -334,11 +436,20 @@ class GraphQLAPISettings(_BaseAPISettings):
         )
 
 
-def _validate_limit(value: Any, key: str, setting_name: str) -> None:
-    """Refuse a limit written below the smallest value that means anything.
+#: Limits that are strictly integer or None. The older limits keep their
+#: lenient type policy; these were added later and are compared or sliced
+#: directly, so a string fails on every request and "True" silently means 1.
+_STRICT_INTEGER_LIMITS = frozenset(
+    {"OPTIMIZER_WORK_BUDGET", "DOCUMENT_CACHE_MAX_QUERY_LENGTH"}
+)
 
-    Only integers are inspected: "None" is every one of these keys' documented
-    off switch, and a non-integer is somebody else's error to report.
+
+def _validate_limit(value: Any, key: str, setting_name: str) -> None:
+    """Refuse a limit below its smallest useful value, or of the wrong type.
+
+    "None" is every one of these keys' documented off switch. For the keys in
+    "_STRICT_INTEGER_LIMITS" only an integer (not a boolean) is accepted; for
+    the others a non-integer is somebody else's error to report.
 
     Args:
         value: The resolved setting value.
@@ -346,8 +457,18 @@ def _validate_limit(value: Any, key: str, setting_name: str) -> None:
         setting_name: The Django setting namespace (for the message).
 
     Raises:
-        ImproperlyConfigured: When "value" is an integer below the minimum.
+        ImproperlyConfigured: When "value" is not an integer or None, or is an
+            integer below the minimum.
     """
+    if value is None:
+        return
+    strict = key in _STRICT_INTEGER_LIMITS
+    if strict and (isinstance(value, bool) or not isinstance(value, int)):
+        raise ImproperlyConfigured(
+            "{}['{}'] = {!r} must be an integer or None.".format(
+                setting_name, key, value
+            )
+        )
     minimum, remedy = LIMIT_MINIMUMS[key]
     if not isinstance(value, int) or value >= minimum:
         return

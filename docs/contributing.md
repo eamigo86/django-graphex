@@ -120,6 +120,10 @@ python3 scripts/check_docstrings.py . --strict-public --strict-content
 
 The `.` scope includes runtime, scripts, tests, benchmarks, and
 examples/playground; environments, caches, site output, and migrations are excluded.
+It also scans eligible local Python files that Git ignores. A clean CI checkout
+contains tracked files, not ad hoc ignored scripts. When a local result differs
+from CI, identify the input files before attributing findings to the committed
+project; do not weaken the checker or add exclusions to hide them.
 
 #### Strict result sections
 
@@ -147,6 +151,11 @@ def iter_ids(limit: int) -> Iterator[int]:
 - Follow strict **RED → GREEN → REFACTOR** for code, documentation, workflows
   and benchmark-harness changes.
 - Write tests for every feature and regression.
+- When a test deliberately triggers a warning, assert its category and stable
+  message with `pytest.warns`, and check the captured count when the scenario
+  emits more than one. Keep the behavior assertions alongside the warning
+  contract. Do not suppress warnings through global filters: an unexpected
+  warning must still fail a focused run with `-W error`.
 - Keep branch coverage strictly above 95%; the root and changed-line floor is
   **95.01%**. The combined line-plus-branch percentage is not the pure branch
   percentage. After a fresh full-suite run, check the latter separately with
@@ -157,9 +166,33 @@ def iter_ids(limit: int) -> Iterator[int]:
   fresh XML, alongside the unchanged combined and changed-line 95.01% gates.
 - Use descriptive test names
 - Follow the existing test structure
+- When a test calls a view directly with a `RequestFactory` multipart request,
+  close the test-owned request after dispatch so Django can close temporary
+  uploaded files. An `ASGIRequest` built over a test-owned spooled body also
+  needs that original spool closed: `request.close()` closes uploaded files,
+  not the body stream. Use `try/finally` around dispatch so assertions and
+  exceptions cannot leave these test fixtures open. Django's test client owns
+  its own request lifecycle; do not close borrowed requests.
 - Capability-path tests may use strict legacy signatures to verify that a
   newer GraphQL-core engine does not receive keywords unsupported by an older
   API. They do not extend the declared runtime support range.
+- Runtime identity guards for local audits belong in
+  external verification runners, not shipped tests. They may assert a
+  checkout or overlay path for that run; shipped tests must remain usable
+  with any supported GraphQL-core 3.3 installation. Keep behavioral assertions
+  in the tests.
+- Date-part behavior tests verify SDL, HTTP responses, filters, and database
+  results without requiring a specific GraphQL-core 3.3 patch, checkout path,
+  or working directory. Verify the active runtime in an external runner before
+  the test call rather than asserting its identity inside the test.
+- Tests that temporarily replace the default schema registries should use
+  `isolated_default_pair()` from `tests._schema_isolation`. It creates a fresh
+  default pair within the scope and restores the exact previous cached pair,
+  global Registry, output companion, and output entries on exit, including
+  nested scopes and exceptions. Do not replace those globals manually: a
+  cached pair can otherwise retain a temporary Registry and make later tests
+  depend on execution order. This is test isolation, not a claim that the
+  production Registry is generally thread-safe.
 
 ### Resolver fixture ownership
 
@@ -218,6 +251,15 @@ minimum supported version and an upper major-version bound.
 
 ### Test contract
 
+The historical `django60` tox factor is a name, not an exact-version pin:
+its dependency range is `Django>=6.0,<7.0`, so a fresh matrix environment
+may resolve a later 6.x release. Likewise, `django52` uses
+`Django>=5.2,<6.0`. The separately locked coverage environment currently
+uses Django 6.0.8; passing there does not replace testing the versions
+actually resolved by tox. Record installed dependency versions with each
+matrix result rather than inferring them from the factor name. These ranges
+state the tested compatibility policy, not a guarantee about future releases.
+
 Focused RED/GREEN commands must disable the repository-wide coverage options:
 
 ```bash
@@ -233,6 +275,13 @@ uv run python scripts/check_branch_coverage.py coverage.xml --threshold 95.01
 uvx 'diff-cover>=10.5.1,<11' coverage.xml \
   --compare-branch=origin/main --fail-under=95.01
 ```
+
+Tests that assert a model relation appears in a compiled output type must
+register the related model's output type in the **same test-local registry**.
+Use an allowlisted projection for sensitive models such as Django's `User`;
+do not rely on another test module importing a global type first. This keeps
+isolated test runs and shuffled full-suite runs equivalent without changing
+production's rule that unregistered relation targets are omitted.
 
 Assert the **exact exception** class and a stable message with `match=`; broad
 `pytest.raises(Exception)` checks can hide unrelated failures:

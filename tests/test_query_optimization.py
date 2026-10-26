@@ -21,6 +21,7 @@ from graphql.language.ast import (
 
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField, DjangoObjectField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.settings import graphql_api_settings
@@ -323,6 +324,7 @@ class PostListType(DjangoListObjectType):
 
         model = Post
         registry = _RQO
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class Query(ObjectType):

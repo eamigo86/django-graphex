@@ -31,6 +31,7 @@ from django_graphex.fields import (
     DjangoFilterListField,
     DjangoListObjectField,
 )
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -458,6 +459,7 @@ class _DPostListType(DjangoListObjectType):
 
         model = _P
         registry = _RANN
+        pagination = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
 
 class _AnnQuery(ObjectType):

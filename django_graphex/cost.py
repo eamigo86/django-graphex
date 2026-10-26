@@ -35,6 +35,8 @@ from graphql.validation import ValidationRule
 
 from . import settings as _settings
 from ._directives_eval import is_selection_skipped
+from ._fragment_cycles import find_fragment_cycle
+from ._strconv import to_snake_case
 from .core.compat import _gdx_meta as _native_gdx_meta
 
 if TYPE_CHECKING:
@@ -92,7 +94,7 @@ def _type_complexity(named_type: GraphQLNamedType) -> int | None:
 
 
 class _CostAnalyzer:
-    """Recursively estimates the cost of an operation's selection tree."""
+    """Estimates the cost of an operation's selection tree."""
 
     def __init__(
         self,
@@ -114,7 +116,11 @@ class _CostAnalyzer:
         self._get_fragment = get_fragment
         self._variable_values = variable_values
         self._variable_defaults = variable_defaults
-        self._pagination_args = tuple(_settings_value("COST_PAGINATION_ARGS") or ())
+        # Compare snake_case forms so the wire name (``pageSize``) matches ``page_size``.
+        self._pagination_args = frozenset(
+            to_snake_case(name)
+            for name in _settings_value("COST_PAGINATION_ARGS") or ()
+        )
         #: Cost of a spread, keyed by (fragment name, parent type name).
         self._spread_costs: dict[tuple[str, str], int] = {}
         #: Counts cycle-guard short-circuits so truncated walks are not cached.
@@ -131,7 +137,7 @@ class _CostAnalyzer:
         }.get(node.operation)
         if root_type is None:
             return 0
-        return self._selection_set_cost(node.selection_set, root_type, frozenset())
+        return self._selection_set_cost(node.selection_set, root_type)
 
     # -- internals -------------------------------------------------------------
 
@@ -139,77 +145,140 @@ class _CostAnalyzer:
         self,
         selection_set: SelectionSetNode,
         parent_type: GraphQLNamedType,
-        seen_fragments: frozenset[str],
     ) -> int:
-        """Sum the cost of every selection at one level."""
-        fields = getattr(parent_type, "fields", None)
-        total = 0
+        """Sum the cost of every selection in a selection tree.
 
-        for selection in selection_set.selections:
-            # Honor @skip / @include directives (conservative: unresolvable
-            # variable conditions are never skipped).
-            if is_selection_skipped(selection, self._variable_values):
-                continue
-
-            if isinstance(selection, FieldNode):
-                if selection.name.value.startswith("__"):
-                    continue  # introspection meta-fields are free
-                if not fields or selection.name.value not in fields:
+        The tree is costed with an explicit stack instead of recursion, so
+        neither a long fragment chain nor deep inline nesting can exhaust the
+        Python stack. Fragment cycles are rejected up front; the path guard is
+        a defense for callers that reach this walker directly.
+        """
+        #: Open levels as [selections, parent type, running total, how the
+        #: finished total folds into its parent: a list multiplier and own cost
+        #: for a field, or a memo key for a fragment spread, plus the cycle-cut
+        #: count when that spread was entered].
+        stack: list[list[Any]] = [
+            [iter(selection_set.selections), parent_type, 0, None, None, 0]
+        ]
+        #: Fragment names on the current path (the cycle guard).
+        active: set[str] = set()
+        while True:
+            frame = stack[-1]
+            selections, level_type = frame[0], frame[1]
+            fields = getattr(level_type, "fields", None)
+            for selection in selections:
+                # Honor @skip / @include directives (conservative: unresolvable
+                # variable conditions are never skipped).
+                if is_selection_skipped(selection, self._variable_values):
                     continue
-                field_def = fields[selection.name.value]
-                field_type = get_named_type(field_def.type)
-                has_children = selection.selection_set is not None
-                own = self._own_cost(field_type, has_children)
-                if not has_children:
-                    total += own
-                    continue
-                multiplier = self._list_multiplier(selection, field_def)
-                children = self._selection_set_cost(
-                    selection.selection_set, field_type, seen_fragments
-                )
-                total += own + multiplier * children
 
-            elif isinstance(selection, InlineFragmentNode):
-                frag_type = parent_type
-                if selection.type_condition is not None:
+                if isinstance(selection, FieldNode):
+                    if selection.name.value.startswith("__"):
+                        continue  # introspection meta-fields are free
+                    if not fields or selection.name.value not in fields:
+                        continue
+                    field_def = fields[selection.name.value]
+                    field_type = get_named_type(field_def.type)
+                    has_children = selection.selection_set is not None
+                    own = self._own_cost(field_type, has_children)
+                    # A directive runs once on the field's whole value, so one
+                    # on a scalar list is costed once; only the enclosing object
+                    # lists multiply it (through the parent's multiplier).
+                    own += self._directive_cost(selection)
+                    if not has_children:
+                        frame[2] += own
+                        continue
+                    multiplier = self._list_multiplier(selection, field_def)
+                    stack.append(
+                        [
+                            iter(selection.selection_set.selections),
+                            field_type,
+                            0,
+                            (own, multiplier),
+                            None,
+                            0,
+                        ]
+                    )
+                    break
+
+                if isinstance(selection, InlineFragmentNode):
+                    frag_type = level_type
+                    if selection.type_condition is not None:
+                        frag_type = (
+                            self._schema.get_type(selection.type_condition.name.value)
+                            or level_type
+                        )
+                    stack.append(
+                        [
+                            iter(selection.selection_set.selections),
+                            frag_type,
+                            0,
+                            None,
+                            None,
+                            0,
+                        ]
+                    )
+                    break
+
+                if isinstance(selection, FragmentSpreadNode):
+                    name = selection.name.value
+                    if name in active:
+                        self._cycle_cuts += 1
+                        continue
+                    fragment = self._get_fragment(name)
+                    if fragment is None:
+                        continue
                     frag_type = (
-                        self._schema.get_type(selection.type_condition.name.value)
-                        or parent_type
+                        self._schema.get_type(fragment.type_condition.name.value)
+                        or level_type
                     )
-                total += self._selection_set_cost(
-                    selection.selection_set, frag_type, seen_fragments
-                )
-
-            elif isinstance(selection, FragmentSpreadNode):
-                name = selection.name.value
-                if name in seen_fragments:
-                    self._cycle_cuts += 1
-                    continue
-                fragment = self._get_fragment(name)
-                if fragment is None:
-                    continue
-                frag_type = (
-                    self._schema.get_type(fragment.type_condition.name.value)
-                    or parent_type
-                )
-                # A spread's cost depends only on the fragment and the type it
-                # is resolved against, so memoize it: without this a fragment
-                # reachable by K paths is costed K times (exponential for a
-                # fan-out document).  Every spread still adds its full cost.
-                key = (name, frag_type.name)
-                cost = self._spread_costs.get(key)
-                if cost is None:
-                    cuts_before = self._cycle_cuts
-                    cost = self._selection_set_cost(
-                        fragment.selection_set, frag_type, seen_fragments | {name}
+                    # A spread's cost depends only on the fragment and the type
+                    # it is resolved against, so memoize it: without this a
+                    # fragment reachable by K paths is costed K times
+                    # (exponential for a fan-out document).  Every spread still
+                    # adds its full cost.
+                    key = (name, frag_type.name)
+                    cost = self._spread_costs.get(key)
+                    if cost is not None:
+                        frame[2] += cost
+                        continue
+                    active.add(name)
+                    stack.append(
+                        [
+                            iter(fragment.selection_set.selections),
+                            frag_type,
+                            0,
+                            None,
+                            key,
+                            self._cycle_cuts,
+                        ]
                     )
+                    break
+            else:
+                _, _, total, weights, key, cuts_before = stack.pop()
+                if not stack:
+                    return int(total)
+                if weights is not None:
+                    own, multiplier = weights
+                    total = own + multiplier * total
+                elif key is not None:
+                    active.discard(key[0])
                     if cuts_before == self._cycle_cuts:
                         # A walk truncated by the cycle guard is path-dependent
                         # and must not be reused elsewhere.
-                        self._spread_costs[key] = cost
-                total += cost
+                        self._spread_costs[key] = total
+                stack[-1][2] += total
 
-        return total
+    @staticmethod
+    def _directive_cost(node: FieldNode) -> int:
+        """Return the configured cost of the custom directives used on a field."""
+        weight = max(int(_settings_value("COST_DIRECTIVE") or 0), 0)
+        if not weight:
+            return 0
+        used = sum(
+            1 for d in node.directives or () if d.name.value not in ("skip", "include")
+        )
+        return used * weight
 
     @staticmethod
     def _own_cost(field_type: GraphQLNamedType, has_children: bool) -> int:
@@ -244,7 +313,7 @@ class _CostAnalyzer:
     def _page_size_argument(self, node: FieldNode) -> int | None:
         """Resolve the page-size argument value from the query, if present."""
         for argument in node.arguments or ():
-            if argument.name.value not in self._pagination_args:
+            if to_snake_case(argument.name.value) not in self._pagination_args:
                 continue
             value = argument.value
             if isinstance(value, IntValueNode):
@@ -322,6 +391,9 @@ def analyze_cost(
     Returns:
         report: A "CostReport" with the estimated total and the configured
             budget.
+
+    Raises:
+        GraphQLError: If any named fragments form a reference cycle.
     """
     from graphql.language import FragmentDefinitionNode, OperationDefinitionNode
 
@@ -332,6 +404,10 @@ def analyze_cost(
             fragments[definition.name.value] = definition
         elif isinstance(definition, OperationDefinitionNode):
             operations.append(definition)
+
+    cycle = find_fragment_cycle(document)
+    if cycle is not None:
+        raise GraphQLError("Cyclic fragment reference in document.", cycle)
 
     operation = None
     if operation_name is not None:
@@ -365,6 +441,15 @@ class CostLimitValidationRule(ValidationRule):
     sends the real, possibly much larger, variable values at execution time.
     """
 
+    def enter_document(self, node: DocumentNode, *_args: Any) -> None:
+        """Check the fragment graph before any operation's cost expansion.
+
+        Args:
+            node: The document definition root.
+            *_args: Additional visitor arguments supplied by graphql-core.
+        """
+        self._cyclic_fragments = find_fragment_cycle(node) is not None
+
     def enter_operation_definition(
         self, node: OperationDefinitionNode, *_args: Any
     ) -> None:
@@ -374,6 +459,8 @@ class CostLimitValidationRule(ValidationRule):
             node: The operation definition AST node.
             *_args: Additional visitor arguments supplied by graphql-core.
         """
+        if self._cyclic_fragments:
+            return
         max_cost = _settings_value("MAX_QUERY_COST")
         if not max_cost:
             return

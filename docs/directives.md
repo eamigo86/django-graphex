@@ -36,6 +36,37 @@ GraphQL directives in `django-graphex` allow you to transform field values at qu
     registered directive class. Both the schema `directives=` list **and** the
     middleware entry are required — either alone does nothing.
 
+## Limits on directive output and cost
+
+Directives can lengthen text (`@replace`, `@center`), and a client can repeat
+them across aliases and list rows. Three settings bound that:
+
+- `MAX_REPLACE_OUTPUT_LENGTH`: cap on each `@replace` result.
+- `MAX_DIRECTIVE_OUTPUT_TOTAL` (default 10,000,000 characters): budget for the
+  text all directives add to one HTTP request. Every item of a batch draws from
+  the same budget, and each subscription event has its own. Past it, further
+  directive uses return a field error and produce no text. Applies to custom directives you
+  register as well, because the middleware charges any directive whose result
+  is longer than its input.
+- `COST_DIRECTIVE` (default `0`): cost added per directive use so they count
+  toward `MAX_QUERY_COST`.
+
+See [Settings](usage/settings.md#string-directive-output) and
+[Query limits](usage/query-limits.md#query-cost-analysis).
+
+## Asynchronous resolvers
+
+When using graphql-core's native asynchronous execution, the middleware waits
+for an asynchronous resolver's value before applying field directives in query
+order. For example, an asynchronous resolver returning `"Hello"` yields
+`"HELLO"` for `@uppercase`, not a representation of its coroutine.
+
+The built-in Django HTTP views remain synchronous. They reject asynchronous
+resolvers with a JSON error and HTTP 500; adding a directive does not enable
+asynchronous HTTP execution. Use synchronous resolvers and middleware with
+these views. A rejected request does not run or cancel a caller-owned pending
+Future or Task, even when another middleware wraps the directive result.
+
 ## Overview
 
 Directives are applied to fields in your GraphQL queries and are processed after the field value is resolved. They enable you to:
@@ -202,18 +233,18 @@ Transform text case with these directives:
 
 === "Code Style Conversion"
 
-    Each directive expects a specific input shape: `@camel_case` converts a
-    **snake_case** string, while `@snake_case` and `@kebab_case` convert a
-    **space-separated Title Case** string (they title-case the input before
-    splitting on words, so already-camelCase input will *not* round-trip back
-    to snake/kebab).
+    All three directives recognize words separated by spaces, underscores or
+    hyphens, plus camelCase and PascalCase boundaries. Acronym blocks remain
+    words: `HTTPServer` becomes `httpServer`, `http_server` or `http-server`.
+    The conversion changes field **values**, not GraphQL schema names. Other
+    punctuation and characters keep their previous handling.
 
     ```graphql
     query GetData {
       post {
-        apiName @camel_case      # "api_name" → "apiName"
-        title @snake_case        # "My Blog Post" → "my_blog_post"
-        url @kebab_case          # "My Blog Post" → "my-blog-post"
+        apiName @camel_case      # "order_total" → "orderTotal"
+        title @snake_case        # "orderTotal" → "order_total"
+        url @kebab_case          # "order_total" → "order-total"
       }
     }
     ```
@@ -327,11 +358,17 @@ Format numeric values with precision and style:
 !!! warning "`@number` and `@currency` only format `String` fields"
 
     Both produce a formatted **string**, which a field typed `Int` or `Float`
-    cannot serialize. On those fields the raw value is returned unchanged and
+    cannot serialize. The `Decimal` and `BigInt` scalars reject it as well. On those fields the raw value is returned unchanged and
     the formatting is skipped, so the response stays valid instead of nulling
     the field with an opaque coercion error. Expose the value as a `String`
     field when you want the formatting to apply. The format-spec
     width/precision cap still applies on every field type.
+
+    A resolver's `None` stays GraphQL `null` under either directive. On a
+    non-null field, GraphQL reports the usual nullability error and bubbles
+    to the nearest nullable parent. The `@number` cap still applies to null
+    values, and an invalid format spec still errors on a field where
+    formatting applies.
 
 ### Basic Number Formatting
 
@@ -403,6 +440,70 @@ Powerful date and time formatting with multiple options:
       }
     }
     ```
+
+### Naive dates and timezone
+
+For text input, missing time components now default to zero. A resolver value
+of `"2026-01-10"` or `"January 10, 2026"` formats as
+`2026-01-10T00:00:00` with `@date(format: "iso")`; `"2026-01-10 14:30"`
+formats as `2026-01-10T14:30:00`. The zero default includes microseconds,
+although the directive's `iso` output does not display them. A time-only
+string such as `"14:30"` still uses the current date for missing date
+components, but formats with seconds zero. Explicit time and offset
+components are preserved as inputs. Absolute output formats display an
+originally aware Python `datetime`, or text carrying an explicit numeric
+offset or `Z`, in Django's **active timezone**. The instant is unchanged, but
+the displayed calendar date and clock can change. For example, with the active
+timezone set to `America/New_York`:
+
+```graphql
+{ publishedAt @date(format: "iso") }
+```
+
+If the resolver returns `"2026-01-01T03:30:00+02:00"`, the field returns
+`"2025-12-31T20:30:00"`. The `iso` output still omits the offset and
+microseconds; clients must not read it as an offset-bearing timestamp. The
+same conversion applies to `default`, `js`/`javascript`, and custom absolute
+formats. Clock-adjacent `+00:00` and `+0000` also count as explicit offsets:
+`"2026-01-10T00:30:00+00:00"` displays as `"2026-01-09T19:30:00"` in
+`America/New_York`, just like the equivalent `Z` text. Text with **no timezone
+information** follows a different rule: its written date and time are
+interpreted directly in the active Django timezone, even when `USE_TZ=False`.
+No assumed UTC instant is converted. For example,
+with `TIME_ZONE="UTC"` and `Europe/Madrid` active in July, a resolver returning
+`"2026-07-10 14:30"` gives `"14:30 +0200"` for
+`@date(format: "HH:mm ZZ")`, rather than `"14:30 +0000"`. Its `iso` output
+still shows `"2026-07-10T14:30:00"` without an offset.
+
+The timezone-less text rule also changes `"time ago"` and `"time ago 2d"`:
+they compare the wall clock in the active zone, so relative wording can change.
+Text carrying an explicit numeric offset or `Z` keeps its previous relative
+behavior. Named UTC/GMT text and unknown timezone names are not treated as
+timezone-less; their existing fallback and warning behavior remains. Python
+`date`, naive `datetime`, and other input kinds keep their existing behavior.
+Missing time components still become zero, and a time-only string still gets
+its missing date from the parser's current-date default. Near midnight, that
+date can differ from the active zone's calendar date; this change does not
+reselect it or add a daylight-saving gap/overlap policy.
+
+When a nullable field resolves to `null`, `@date` leaves it as `null` with or
+without an explicit format. It does not replace missing dates with the
+`INVALID FORMAT STRING` fallback. For a field declared non-null in the GraphQL
+schema, the same null value produces the normal GraphQL error and null
+propagation; a root non-null field can make the entire response `data` null.
+Check the field's declared nullability rather than treating the directive as
+a default-value provider.
+
+`@date` converts a `date` or naive `datetime` into an aware datetime in the
+**active Django timezone** (falling back to `TIME_ZONE`) before formatting,
+even when `USE_TZ=False`. For example, a resolver returning
+`date(2026, 1, 10)` is interpreted as `2026-01-10 00:00` in that timezone;
+the directive does not infer a timezone from the client or preserve a naive
+midnight. Supply an offset-aware datetime when the instant must be explicit.
+
+This is the directive's formatting behavior, **not** native DateTime scalar
+input coercion: the native DateTime scalar preserves naive input and leaves
+the model write path to Django's own timezone rules.
 
 ### Relative Time Formatting
 
@@ -539,6 +640,27 @@ Perform mathematical operations on numbers:
     `@floor`, `@ceil`, `@round` and `@abs` work on both `Float` and `String`
     fields — when the field is a `String` the result comes back as a string. A
     `null` value passes through unchanged.
+
+    `@floor` rejects `NaN`, positive infinity, and negative infinity after
+    numeric coercion with
+    `GraphQLError('@floor cannot operate on a non-finite value.')`. This also
+    applies to numeric strings such as `"nan"` and `"inf"`. Finite values,
+    including negative zero, retain their existing rounding behavior. This
+    rule applies only to `@floor`, not to the other math directives.
+
+!!! note "Decimal and BigInt fields"
+
+    On `DecimalField` (`Decimal` scalar) and `BigIntegerField` (`BigInt`
+    scalar) the math directives compute on the exact value, never on a `float`.
+    `@floor` and `@ceil` return a whole number, `@abs` keeps the scale, and
+    `@round` rounds half to even on the exact decimal digits (so `2.665` with
+    `precision: 2` is `2.66`), quantizing to exactly the requested precision
+    and returning a whole number for a precision of zero or below. A precision
+    beyond the stored scale leaves the value unchanged, and so does a value
+    with a huge exponent (`1E+100000`), which is already whole. Results come back in the scalar's own string format.
+    `@number` and `@currency` cannot produce text these scalars accept, so, as
+    on `Int` and `Float` fields, they return the raw value unchanged; use a
+    `String` field to format.
 
 ## Combining Directives
 
@@ -684,12 +806,41 @@ query Mask($n: Int!) {
 }
 ```
 
+### Transformation directive locations
+
+Library transformation directives, including custom subclasses of
+`BaseExtraGraphQLDirective`, apply to **fields only** (`FIELD`). Placing one on a
+fragment spread (`FRAGMENT_SPREAD`) or inline fragment (`INLINE_FRAGMENT`) now
+produces a GraphQL validation error before any resolver runs. Put the transform
+on each field whose value should change; a field inside a named or inline
+fragment is still a field and works normally.
+
+Before (now invalid):
+
+```graphql
+query { ...Words @uppercase }
+fragment Words on Query { text }
+```
+
+After (valid):
+
+```graphql
+query { ...Words }
+fragment Words on Query { text @uppercase }
+```
+
+This does not change the GraphQL specification's `@skip` and `@include`
+directives: they can still control field and fragment selection. A third-party
+raw `GraphQLDirective` retains the locations its author declares; this
+field-only rule is for library transformation directives, not a new fragment
+inheritance engine.
+
 !!! note "How it works (and two gotchas)"
 
     - These are **execution / value-transform** directives. They run on
-      `FIELD`, `FRAGMENT_SPREAD` and `INLINE_FRAGMENT` locations and post-process
-      whatever the resolver returned — they are *not* schema/SDL type-system
-      directives and do not change resolution logic.
+      `FIELD` locations and post-process the selected field's resolved value.
+      They are *not* schema/SDL type-system directives and do not change
+      resolution logic.
     - Both steps are required: the directive must be in the schema's
       `directives=` list **and** the middleware must be enabled. Instantiating the
       directive also self-registers it so the middleware can find it by name.
@@ -848,7 +999,7 @@ Directives handle errors gracefully:
     query {
       post {
         invalidDate @date(format: "YYYY-MM-DD")     # Returns "INVALID FORMAT STRING"
-        nullValue @currency                         # Returns "$0.00" (String field)
+        nullValue @currency                         # Returns null (nullable field)
         emptyString @default(to: "fallback")        # Returns "fallback"
         emptyList @default(to: "fallback")          # Returns [] — never replaced
       }
@@ -866,11 +1017,13 @@ an unhandled 500 or an opaque `errors[]` entry):
 | `@base64(op:"decode")` | Non-base64 or non-UTF-8 bytes | `GraphQLError('@base64 could not decode value: ...')` |
 | `@currency` | Non-numeric field value | `GraphQLError('@currency could not format value ...: expected a numeric value.')` |
 | `@floor`, `@ceil`, `@round`, `@abs` | Non-numeric field value | `GraphQLError('@floor/@ceil/@round/@abs could not convert value ... to a number.')` |
+| `@floor` | Non-finite number or numeric string | `GraphQLError('@floor cannot operate on a non-finite value.')` |
 | `@center` | `fillchar` length ≠ 1 (empty or multi-char) | `GraphQLError('@center fillchar must be exactly one character; got ...')` |
 
 !!! info "Null and empty values"
     `@base64` returns `None` on an empty/null input. On a `String` field
-    `@currency` returns `"$0.00"` for a `None` or falsy-but-coercible value.
+    `@number` and `@currency` return `null` for a `None` value; falsy but
+    coercible values such as `0`, `False`, and `""` still format as zero.
     `@floor`, `@ceil`, `@round`, and `@abs` return `None` when the field value
     is `None`, and so does every string directive (`@uppercase`, `@slugify`,
     `@truncate`, …) — a null column is never rendered as the literal text

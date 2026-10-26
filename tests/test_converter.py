@@ -46,6 +46,7 @@ from django_graphex.core.output_compiler import _to_graphql_field
 from django_graphex.core.scalars import (
     GdxDate,
     GdxDateTime,
+    GdxDecimal,
     GdxJSON,
     GdxTime,
     GdxUUID,
@@ -179,13 +180,13 @@ class ConverterTest(TestCase):
         self.assertIs(_native_scalar(field), GraphQLFloat)
 
     def test_convert_decimal_field(self) -> None:
-        """DecimalField must convert to GraphQLFloat, matching graphene-django #1508.
+        """DecimalField must use the approved exact native output scalar.
 
-        Ships broken if DecimalField stops mapping to GraphQLFloat, breaking
-        parity with the historical graphene-django behavior.
+        Native output intentionally differs from historical graphene-django
+        Float parity; the legacy converter dispatcher is not used here.
         """
         field = TestModel._meta.get_field("decimal_field")
-        self.assertIs(_native_scalar(field), GraphQLFloat)
+        self.assertIs(_native_scalar(field), GdxDecimal)
 
     def test_convert_boolean_field(self) -> None:
         """BooleanField must convert to GraphQLBoolean on the native output path.
@@ -494,13 +495,33 @@ class FieldConversionIntegrationTest(TestCase):
 
         On native, the model -> GraphQL OUTPUT type is built by the native output
         compiler and exposed as "_meta.graphql_output_type" (a graphql-core
-        "GraphQLObjectType"). Assert it carries the converted fields.
+        "GraphQLObjectType"). Register the FK target in a local registry so
+        this test does not depend on another module's import order. Assert it
+        carries the converted fields without publishing User globally.
         """
+        from django_graphex.registry import Registry
         from django_graphex.types import DjangoObjectType
 
-        class TestModelType(DjangoObjectType):
+        local_registry = Registry()
+
+        class UserType(DjangoObjectType):
+            """Minimal local User target for the conversion fixture."""
+
             class Meta:
+                """Keep the User projection test-local and allowlisted."""
+
+                model = User
+                only_fields = ("id", "username")
+                registry = local_registry
+
+        class TestModelType(DjangoObjectType):
+            """Compile the fixture model against its local FK target."""
+
+            class Meta:
+                """Bind the fixture model to the same local registry."""
+
                 model = TestModel
+                registry = local_registry
 
         # Should be able to create the type without errors
         type_instance = TestModelType()
@@ -515,6 +536,7 @@ class FieldConversionIntegrationTest(TestCase):
         self.assertIn("charField", fields)
         self.assertIn("choiceField", fields)
         self.assertIn("user", fields)
+        self.assertIs(fields["user"].type, UserType._meta.graphql_output_type)
 
     def test_input_type_conversion(self) -> None:
         """Test model to input type conversion.

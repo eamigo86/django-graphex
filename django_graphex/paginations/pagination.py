@@ -9,10 +9,29 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime
+import math
+from decimal import ROUND_CEILING, ROUND_FLOOR, Context, Decimal
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
-from django.core.exceptions import ValidationError
-from django.db.models import QuerySet
+from django.conf import settings
+from django.core.exceptions import FieldDoesNotExist, ValidationError
+from django.db import connections
+from django.db.models import (
+    BigIntegerField,
+    BooleanField,
+    DateField,
+    DateTimeField,
+    DecimalField,
+    F,
+    FloatField,
+    IntegerField,
+    QuerySet,
+    TimeField,
+    UUIDField,
+    Value,
+)
+from django.db.models.expressions import OrderBy
 from graphql import (
     GraphQLBoolean,
     GraphQLError,
@@ -112,15 +131,199 @@ NATIVE_CURSOR_PAGE_INFO: Any = GraphQLObjectType(
 def _sort_key(value: Any) -> tuple[bool, Any]:
     """Build a sort key tolerant of "None" values.
 
-    Sorts "None" first and avoids "None < x" comparison errors.
+    Places NULL values last in ascending order and first in descending order
+    when the caller reverses the sort. It avoids incompatible comparisons.
 
     Args:
         value: The value to derive a sort key from.
 
     Returns:
-        A tuple ordering "None" values before other values.
+        A tuple with NULL values last in ascending order and NULL values first in descending order.
     """
     return (value is None, value if value is not None else 0)
+
+
+# Largest decimal magnitude (power of ten) a cursor may carry. Far beyond any
+# real column, yet small enough that every database accepts it as a parameter,
+# so an absurd boundary is a client error and not a database error.
+_MAX_CURSOR_EXPONENT = 10_000
+
+
+def _coerce_cursor_component(raw: str, kind: type, aware: bool) -> Any:
+    """Coerce one cursor component to a column kind, the single cursor rule.
+
+    Both the database path (kind from the model field) and the in-memory path
+    (kind from a live row value) call this, so a boundary is accepted or
+    refused identically. Numbers must be finite (decided on the parsed value,
+    never through a float conversion, so a large finite Decimal is valid, up to
+    a magnitude of ten to the 10,000th);
+    datetimes and times must be timezone-aware exactly when the column is.
+
+    Args:
+        raw: The decoded cursor component.
+        kind: The Python type of the column value: bool, int, float, Decimal,
+            UUID, datetime, date or time.
+        aware: Whether datetime and time boundaries must carry a timezone.
+
+    Returns:
+        The boundary as a value of the column kind.
+
+    Raises:
+        ValueError: If the component cannot be converted, is not finite or
+            has the wrong timezone awareness.
+    """
+    try:
+        if kind is bool:
+            if raw not in ("True", "False"):
+                raise ValueError(raw)
+            return raw == "True"
+        if kind is int:
+            return int(raw)
+        if kind is float:
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError(raw)
+            return value
+        if kind is Decimal:
+            number = Decimal(raw)
+            if not number.is_finite() or abs(number.adjusted()) > _MAX_CURSOR_EXPONENT:
+                raise ValueError(raw)
+            return number
+        if kind is UUID:
+            return UUID(raw)
+        # Temporal kinds: str(value) is ISO 8601, so fromisoformat is the exact
+        # inverse. Order matters — datetime is a subclass of date. A naive/aware
+        # mismatch cannot be compared, so it is invalid too.
+        if kind is datetime.datetime:
+            moment = datetime.datetime.fromisoformat(raw)
+            if (moment.tzinfo is not None) is not aware:
+                raise ValueError(raw)
+            return moment
+        if kind is datetime.date:
+            return datetime.date.fromisoformat(raw)
+        if kind is datetime.time:
+            moment_time = datetime.time.fromisoformat(raw)
+            if (moment_time.tzinfo is not None) is not aware:
+                raise ValueError(raw)
+            return moment_time
+    except (TypeError, ArithmeticError) as exc:
+        raise ValueError(raw) from exc
+    return raw
+
+
+def _decimal_scale_bounds(
+    number: Decimal, field: Any
+) -> tuple[Decimal, Decimal] | None:
+    """Return the column-scale neighbours of a boundary finer than the column.
+
+    On backends that enforce the declared column scale, no stored value can
+    equal a finer boundary; its ceiling or floor gives an exact inclusive
+    comparison. SQLite does not enforce that scale: this function only detects
+    finer input there, before SQLite-specific numeric bounds are calculated.
+    Trailing zeros do not count, so "2.50" and "2.5" both fit two places.
+
+    Args:
+        number: The finite boundary already coerced to a Decimal.
+        field: The model field behind the ordering column.
+
+    Returns:
+        The (ceiling, floor) pair at the column scale, or None when the field
+        is not a DecimalField or the boundary fits its places.
+    """
+    if not isinstance(field, DecimalField) or field.decimal_places is None:
+        return None
+    places = field.decimal_places
+    _, digits, exponent = number.as_tuple()
+    text = "".join(map(str, digits))
+    zeros = len(text) - len(text.rstrip("0"))
+    if not text.strip("0") or -(int(exponent) + zeros) <= places:
+        return None
+    step = Decimal(1).scaleb(-places)
+    # The context must hold every integer digit plus the places kept.
+    context = Context(prec=max(number.adjusted(), 0) + places + 2)
+    return (
+        number.quantize(step, rounding=ROUND_CEILING, context=context),
+        number.quantize(step, rounding=ROUND_FLOOR, context=context),
+    )
+
+
+def _sqlite_numeric_bounds(number: Decimal) -> tuple[int | float, int | float, bool]:
+    """Bracket a Decimal by SQLite's representable numeric values.
+
+    SQLite stores numeric affinity values as binary64 REAL or signed int64
+    INTEGER, regardless of a DecimalField's declared scale. The nearest
+    representable value on either side is therefore chosen from both sets.
+
+    Args:
+        number: A finite Decimal cursor boundary finer than the field scale.
+
+    Returns:
+        The upper and lower bounds, and whether the boundary is representable.
+    """
+    minimum, maximum = -(1 << 63), (1 << 63) - 1
+    nearest = float(number)
+    if math.isinf(nearest):
+        lower, upper = (
+            (math.nextafter(math.inf, -math.inf), math.inf)
+            if number > 0
+            else (-math.inf, math.nextafter(-math.inf, math.inf))
+        )
+    else:
+        represented = Decimal.from_float(nearest)
+        if represented == number:
+            return nearest, nearest, True
+        lower = nearest if represented < number else math.nextafter(nearest, -math.inf)
+        upper = nearest if represented > number else math.nextafter(nearest, math.inf)
+
+    if number > minimum:
+        lower_integer = maximum if number > maximum else math.floor(number)
+        if lower == -math.inf or Decimal(lower_integer) > Decimal.from_float(lower):
+            lower = lower_integer
+    if number < maximum:
+        upper_integer = minimum if number < minimum else math.ceil(number)
+        if upper == math.inf or Decimal(upper_integer) < Decimal.from_float(upper):
+            upper = upper_integer
+    return upper, lower, False
+
+
+def _numeric_bound_value(bound: Any) -> Any:
+    """Bind a SQLite numeric bound without DecimalField preparation.
+
+    Args:
+        bound: A native binary64 or signed int64 bound.
+
+    Returns:
+        A typed ORM value expression for the numeric parameter.
+    """
+    return Value(
+        bound,
+        output_field=FloatField() if isinstance(bound, float) else BigIntegerField(),
+    )
+
+
+# Model field classes by cursor kind; the first match wins, so DateTimeField
+# precedes its base DateField.
+_FIELD_KINDS: tuple[tuple[type, tuple[type, ...]], ...] = (
+    (bool, (BooleanField,)),
+    (int, (IntegerField,)),
+    (float, (FloatField,)),
+    (Decimal, (DecimalField,)),
+    (UUID, (UUIDField,)),
+    (datetime.datetime, (DateTimeField,)),
+    (datetime.date, (DateField,)),
+    (datetime.time, (TimeField,)),
+)
+
+_CURSOR_KINDS: tuple[type, ...] = (
+    bool,
+    int,
+    float,
+    Decimal,
+    UUID,
+    datetime.datetime,
+    datetime.date,
+    datetime.time,
+)
 
 
 def _coerce_like(raw: Any, sample: Any) -> Any:
@@ -128,47 +331,36 @@ def _coerce_like(raw: Any, sample: Any) -> Any:
 
     Cursor components are serialised as strings inside the opaque token, so the
     in-memory keyset comparison must convert them back to the row's own value
-    type (int, date, etc.) before comparing — otherwise "10" < "2" (lexical)
-    is wrong and int/date vs str raises TypeError. This keeps the
-    in-memory path in parity with the DB path, whose filter coerces the same
-    string back to the field's runtime type. Unsupported samples and any failed
-    coercion fall back to the raw string (lenient, matching the DB path).
+    type (int, float, Decimal, UUID, date, etc.) before comparing — otherwise
+    "10" < "2" (lexical) is wrong and unlike types raise TypeError. The rule is
+    the one the database path applies to the model field
+    ("_coerce_cursor_component"): a boundary that cannot be converted, is not
+    finite, or has the wrong timezone awareness is an invalid cursor. Samples
+    of other types (for example strings) keep the raw string.
 
     Args:
         raw: The decoded cursor component (typically a string).
         sample: A live value read from a row, used only for its type.
 
     Returns:
-        *raw* coerced to type(sample) when possible, else *raw* unchanged.
+        *raw* coerced to type(sample) when it is a supported type, else *raw*
+        unchanged.
+
+    Raises:
+        GraphQLError: If the boundary cannot be converted to the sample's type
+            or is not finite.
     """
     if sample is None or not isinstance(raw, str):
         return raw
-    if isinstance(sample, bool):
+    # Subclasses count (a bool is an int); the first matching kind wins.
+    kind = next((k for k in _CURSOR_KINDS if isinstance(sample, k)), None)
+    if kind is None:
         return raw
-    if isinstance(sample, int):
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return raw
-    # Temporal samples: str(value) is ISO 8601, so fromisoformat is the exact
-    # inverse. Order matters — datetime is a subclass of date, so it is checked
-    # first. A parse failure keeps the raw string (lenient fallback).
-    if isinstance(sample, datetime.datetime):
-        try:
-            return datetime.datetime.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return raw
-    if isinstance(sample, datetime.date):
-        try:
-            return datetime.date.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return raw
-    if isinstance(sample, datetime.time):
-        try:
-            return datetime.time.fromisoformat(raw)
-        except (TypeError, ValueError):
-            return raw
-    return raw
+    aware = getattr(sample, "tzinfo", None) is not None
+    try:
+        return _coerce_cursor_component(raw, kind, aware)
+    except ValueError as exc:
+        raise GraphQLError("Invalid cursor") from exc
 
 
 def _normalize_ordering_term(term: str) -> str:
@@ -321,12 +513,11 @@ def _resolve_ordering(
 def _pk_tiebreak_ordering(
     items: Any, order: Any, allowed: set[str] | None
 ) -> tuple[Any, set[str] | None]:
-    """Substitute the paginator's own pk ordering when none was resolved.
+    """Use model ordering, then PK, when no paginator ordering was resolved.
 
-    G4 ordering parity: the DB-side window path always emits ORDER BY pk as a
-    deterministic tiebreak, so the prefetch-cache path has to agree or the same
-    query answers differently depending on how the nested list happened to
-    resolve.
+    The DB-side window path appends PK as a deterministic tiebreak, so the
+    prefetch-cache path must agree or the same nested query can answer
+    differently depending on which path served it.
 
     The substituted term is SERVER-generated, so the allowlist is dropped with
     it. "_resolve_ordering" hands back the projection allowlist whenever the
@@ -347,14 +538,131 @@ def _pk_tiebreak_ordering(
 
     Returns:
         The ordering to apply and the allowlist to validate it against; the
-        allowlist is "None" whenever the pk tiebreak was substituted.
+        allowlist is "None" for server-owned Meta or PK ordering.
     """
     if order or not items:
         return order, allowed
-    pk = getattr(getattr(items[0].__class__, "_meta", None), "pk", None)
+    model = items[0].__class__
+    meta = getattr(model, "_meta", None)
+    pk = getattr(meta, "pk", None)
     if pk is None:
         return order, allowed
+    default = getattr(meta, "ordering", ())
+    if default and all(isinstance(term, str) for term in default):
+        try:
+            _validate_ordering_terms(model, list(default))
+        except GraphQLError:
+            pass  # Keep the historical PK fallback for unsupported list terms.
+        else:
+            return list(default), None
     return pk.attname, None
+
+
+def _append_model_pk_ordering(model: Any, terms: list[Any]) -> list[Any]:
+    """Append a model's ascending key unless an existing term already uses it.
+
+    Args:
+        model: The model whose primary key makes the ordering total.
+        terms: Existing ORM ordering terms, including any expressions.
+
+    Returns:
+        A new term list preserving every original term and direction.
+    """
+    pk = getattr(getattr(model, "_meta", None), "pk", None)
+    if pk is None:
+        return list(terms)
+    aliases = {"pk", pk.name, pk.attname}
+    for term in terms:
+        if isinstance(term, str):
+            name = term.lstrip("-+")
+        else:
+            expression = getattr(term, "expression", term)
+            name = getattr(expression, "name", None)
+            if name is None:
+                name = getattr(getattr(expression, "target", None), "attname", None)
+        if name in aliases:
+            return list(terms)
+    return [*terms, pk.attname]
+
+
+def _effective_queryset_ordering(qs: QuerySet) -> tuple[list[Any], bool]:
+    """Read Django's effective server ordering without changing the queryset.
+
+    Match SQLCompiler's precedence: extra ordering, explicit ordering, then
+    model ordering when defaults remain enabled. A reversed queryset flips
+    each original direction, including ORM OrderBy expressions. The returned
+    terms are explicit directions so a later ascending PK will not be reversed.
+
+    Args:
+        qs: The server-provided model queryset.
+
+    Returns:
+        The effective terms and whether they came from extra_order_by.
+    """
+    query = qs.query
+    from_extra = bool(query.extra_order_by)
+    if from_extra:
+        terms = list(query.extra_order_by)
+    elif not query.default_ordering or query.order_by:
+        terms = list(query.order_by)
+    else:
+        meta = query.get_meta()
+        terms = list(meta.ordering) if meta and meta.ordering else []
+
+    if query.standard_ordering:
+        return terms, from_extra
+
+    effective = []
+    for term in terms:
+        if hasattr(term, "resolve_expression"):
+            expression = term if isinstance(term, OrderBy) else term.asc()
+            expression = expression.copy()
+            expression.reverse_ordering()
+            effective.append(expression)
+        elif term == "?":
+            effective.append(term)
+        elif term.startswith("-"):
+            effective.append(term[1:])
+        else:
+            effective.append("-" + term)
+    return effective, from_extra
+
+
+def _automatic_null_ordering(model: Any, terms: list[Any]) -> list[Any]:
+    """Place nulls consistently for plain nullable model-column terms.
+
+    Explicit ORM expressions and non-column terms retain their original
+    ordering. The resulting expressions preserve each term's position and
+    direction, including the ascending primary-key tie-break.
+
+    Args:
+        model: The model whose concrete fields identify nullable columns.
+        terms: Effective ordering terms in their original priority order.
+
+    Returns:
+        Terms with automatic nullable-column placement made explicit.
+    """
+    fields = {field.attname: field for field in model._meta.concrete_fields}
+    result: list[Any] = []
+    for term in terms:
+        if not isinstance(term, str) or term == "?":
+            result.append(term)
+            continue
+        name = term.lstrip("-+")
+        if term not in (name, f"-{name}", f"+{name}"):
+            result.append(term)
+            continue
+        field = fields.get(name)
+        if field is None or not field.null:
+            result.append(term)
+            continue
+        expression = F(field.attname)
+        result.append(
+            expression.desc(nulls_first=True)
+            if term.startswith("-")
+            else expression.asc(nulls_last=True)
+        )
+    return result
 
 
 def projected_ordering_attnames(model: Any, compiled_type: Any) -> set[str]:
@@ -525,9 +833,9 @@ def _inmemory_order(
     """Order an in-memory sequence of model instances by an ordering string.
 
     Used when a nested list resolves from the "prefetch_related" cache (a Python
-    list) instead of a queryset. Supports a comma-separated list of direct fields
-    with an optional leading "-" for descending; unknown or related lookups are
-    ignored (treated as "None").
+    list) instead of a queryset. Supports direct fields with optional descending
+    prefixes and adds an internal ascending model-PK term after validating all
+    client terms. Unknown attributes retain their historical "None" sort key.
 
     Args:
         items: The model instances to order.
@@ -536,7 +844,8 @@ def _inmemory_order(
             attribute the instances happen to carry.
 
     Returns:
-        A new list of the items ordered by the given ordering.
+        A new list ordered by the given terms and a model-PK tie-break, when
+        model instances are available.
 
     Raises:
         GraphQLError: When "allowed" is supplied and a term names an attribute
@@ -567,6 +876,8 @@ def _inmemory_order(
                 raise GraphQLError(f"Invalid ordering field: '{bare}'.")
 
     ordered = list(items)
+    if ordered:
+        terms = _append_model_pk_ordering(ordered[0].__class__, terms)
     for term in reversed(terms):  # last key first -> stable multi-key sort
         reverse = term.startswith("-")
         field = term.lstrip("+-")
@@ -581,12 +892,10 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
     """Apply an ordering to a queryset or an in-memory list of rows.
 
     The ONE place the "ordering" pagination argument is turned into a real
-    ordering, so every paginator branch (bounded page, unbounded "return
-    everything", queryset, prefetch-cache list) honors it identically. A
-    queryset is validated against the allowed attnames BEFORE "order_by" so an
-    invalid term raises the clean "Invalid ordering field" error instead of
-    Django's "FieldError", whose message enumerates every column of the model
-    (CWE-209); an in-memory list is sorted by _inmemory_order.
+    ordering. A queryset is validated against allowed attnames BEFORE adding
+    the internal PK secondary term, so hidden client columns stay rejected.
+    Existing queryset or model ordering is retained when no argument is given;
+    model-backed querysets then gain ascending PK only if absent already.
 
     Args:
         qs: The queryset or list of model instances to order.
@@ -596,19 +905,35 @@ def _apply_ordering(qs: Any, ordering: Any, allowed: set[str] | None = None) -> 
             concrete column.
 
     Returns:
-        The ordered queryset or a new ordered list; *qs* unchanged when
-        *ordering* is falsy.
+        The ordered queryset or a new ordered list. Unsupported non-queryset
+        objects keep their legacy behavior when ordering is absent.
 
     Raises:
         GraphQLError: When a term is invalid, relation-spanning, or projected
             away by the type.
     """
-    if not ordering:
-        return qs
     if not isinstance(qs, QuerySet):
-        return _inmemory_order(qs, ordering, allowed)
-    _validate_ordering_terms(qs.model, ordering, allowed)
-    return qs.order_by(*_split_ordering(ordering))
+        return _inmemory_order(qs, ordering, allowed) if ordering else qs
+    if ordering:
+        _validate_ordering_terms(qs.model, ordering, allowed)
+        qs = qs.order_by(*_split_ordering(ordering))
+        # A hook's earlier reverse() must not invert the requested terms.
+        qs.query.standard_ordering = True
+    terms, from_extra = _effective_queryset_ordering(qs)
+    total_terms = _append_model_pk_ordering(qs.model, terms)
+    ordered_terms = (
+        total_terms if from_extra else _automatic_null_ordering(qs.model, total_terms)
+    )
+    if ordered_terms == terms:
+        return qs
+    if from_extra:
+        # order_by() would clear extra_order_by and reject its SQL aliases.
+        ordered = qs.all()
+        ordered.query.extra_order_by = total_terms
+    else:
+        ordered = qs.order_by(*ordered_terms)
+    ordered.query.standard_ordering = True
+    return ordered
 
 
 # *********************************************** #
@@ -995,8 +1320,8 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         # validation allowlist all see the same terms. Resolved BEFORE the
         # unbounded early-return below: ``ordering`` is advertised on every list
         # field this paginator backs, so skipping it whenever no page size is
-        # configured made the argument silently inert under the SHIPPED defaults
-        # (``DEFAULT_PAGE_SIZE`` and ``MAX_PAGE_SIZE`` are both ``None``).
+        # configured made the argument silently inert under the former library
+        # defaults (both global page-size settings were ``None``).
         order, allowed = _resolve_ordering(
             kwargs, self.ordering_param, self.ordering, self.ordering_allowed_attnames
         )
@@ -1004,6 +1329,10 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination):
         # Unbounded only when neither a default nor a max is configured: the
         # page is the WHOLE set, but it still has to come back ordered.
         if limit is None:
+            if not order:
+                # Preserve the original queryset cache for totalCount when no
+                # actual page boundary or requested ordering exists.
+                return qs
             return _apply_ordering(qs, order, allowed)
 
         offset = kwargs.get(self.offset_query_param, 0) or 0
@@ -1115,7 +1444,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         # Client can control the page using this query parameter.
         self.page_query_param = "page"
 
-        # The default page size. Defaults to `None`.
+        # The default page size inherits DEFAULT_PAGE_SIZE (100 if not overridden).
         self.page_size = page_size
 
         # Client can control the page size using this query parameter.
@@ -1195,6 +1524,8 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
     def paginate_queryset(self, qs: Any, **kwargs: Any) -> Any:
         """Paginate a queryset using page number and page size parameters.
 
+        An explicit null page selects page 1, the same as omitting the argument.
+
         Args:
             qs: The queryset or list to paginate.
             **kwargs: The pagination arguments from the query.
@@ -1204,9 +1535,12 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
 
         Raises:
             GraphQLError: On a zero page number, a zero/negative page size, or
-                an invalid/relation-spanning ordering term (bad client input).
+                an invalid/relation-spanning ordering term (bad client input),
+                or a failed database count for a negative page.
         """
         page = kwargs.pop(self.page_query_param, 1)
+        if page is None:
+            page = 1
         requested = (
             kwargs.get(self.page_size_query_param)
             if self.page_size_query_param
@@ -1265,6 +1599,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
         - When "page < 0" (count-relative offset), returns None because the
           offset cannot be computed without the total row count at build time.
         - For "page >= 0", "offset = page_size * (page - 1)".
+        - An explicit null page is equivalent to omitting it (page 1).
 
         Args:
             **kwargs: Pagination arguments extracted from the GraphQL query
@@ -1274,6 +1609,8 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination):
             A (offset, page_size, ordering) tuple, or None to fall back.
         """
         page = kwargs.pop(self.page_query_param, 1)
+        if page is None:
+            page = 1
         requested = (
             kwargs.get(self.page_size_query_param)
             if self.page_size_query_param
@@ -1594,7 +1931,11 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
     @staticmethod
     def _keyset_predicate(
-        field_name: str, descending: bool, value: Any, pk: Any
+        field_name: str,
+        descending: bool,
+        value: Any,
+        pk: Any,
+        bounds: tuple[Any, Any, bool] | None = None,
     ) -> Any:
         """Build the compound keyset Q predicate for "rows after the cursor".
 
@@ -1623,6 +1964,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             descending: Whether the ordering is descending.
             value: The boundary row's ordering value ("None" for a NULL boundary).
             pk: The boundary row's primary key.
+            bounds: Upper and lower neighbours of a finer Decimal boundary,
+                with a flag indicating whether a stored value can equal it.
 
         Returns:
             A Django Q object selecting the rows strictly after the boundary.
@@ -1644,8 +1987,16 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             return within_null_group
 
         # Boundary row's ordering value is NOT NULL.
-        strictly_beyond = Q(**{f"{field_name}__{cmp}": value})
-        pk_tied = Q(**{field_name: value, f"pk__{cmp}": pk})
+        if bounds is None or bounds[2]:
+            boundary = value if bounds is None else bounds[0]
+            strictly_beyond = Q(**{f"{field_name}__{cmp}": boundary})
+            pk_tied = Q(**{field_name: boundary, f"pk__{cmp}": pk})
+        else:
+            strictly_beyond = Q(
+                **{f"{field_name}__{cmp}e": bounds[1] if descending else bounds[0]}
+            )
+            # Dropped, but still built so a bad pk is refused as before.
+            pk_tied = Q(pk__in=[], **{f"pk__{cmp}": pk})
         if descending:
             # NULLs first: no NULL row sorts after a non-NULL boundary.
             return strictly_beyond | pk_tied
@@ -1670,20 +2021,16 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             obj: The candidate model instance.
             field_name: The bare ordering-field name.
             descending: Whether the ordering is descending.
-            value: The boundary row's ordering value (as decoded from the cursor).
-            pk: The boundary row's primary key (as decoded from the cursor).
+            value: The boundary row's ordering value, already coerced to the
+                rows' type by "_inmemory_cursor_start".
+            pk: The boundary row's primary key, already coerced likewise.
 
         Returns:
             True when *obj* comes after the boundary in the ordered sequence.
         """
         obj_value = getattr(obj, field_name, None)
         obj_pk = getattr(obj, "pk", None)
-        # The cursor components arrive as strings (they were serialised into the
-        # opaque token). Coerce them to the runtime type of the row's own value/pk
-        # so the comparison is numeric/date-aware instead of a broken lexical
-        # "10" < "2", and so int-vs-str never raises a TypeError.
-        boundary_value = _coerce_like(value, obj_value)
-        boundary_pk = _coerce_like(pk, obj_pk) if pk is not None else None
+        boundary_value, boundary_pk = value, pk
         obj_key = _sort_key(obj_value)
         boundary_key = _sort_key(boundary_value)
         if obj_key != boundary_key:
@@ -1790,6 +2137,15 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             value, pk = self.decode_cursor_parts(cursor)
         except ValueError as exc:
             raise GraphQLError("Invalid cursor") from exc
+        # The cursor components arrive as strings (they were serialised into the
+        # opaque token). Coerce them ONCE to the runtime type of the rows' own
+        # value/pk so the comparison is numeric/date-aware instead of a broken
+        # lexical "10" < "2", and so a tampered component is an "Invalid cursor"
+        # (like the DB path) instead of a TypeError/InvalidOperation.
+        values = [getattr(obj, field_name, None) for obj in items]
+        value = _coerce_like(value, next((v for v in values if v is not None), None))
+        if pk is not None:
+            pk = _coerce_like(pk, next((o.pk for o in items if o.pk is not None), None))
         for index, obj in enumerate(items):
             if self._inmemory_after_cursor(obj, field_name, descending, value, pk):
                 return index
@@ -1830,17 +2186,24 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             #      produce a clean GraphQLError, not an unhandled HTTP 500.
             try:
                 value, pk = self.decode_cursor_parts(cursor)
+                bounds = self._validate_boundary(
+                    qs.model, field_name, value, connections[qs.db].vendor
+                )
                 if pk is None:
                     # Legacy value-only cursor: fall back to the plain value
                     # boundary (no pk tiebreak available). A NULL boundary value
                     # cannot use a "field > NULL" comparison (never true), so
                     # route it through the isnull-aware group filter instead.
                     qs = qs.filter(
-                        self._legacy_value_predicate(field_name, descending, value)
+                        self._legacy_value_predicate(
+                            field_name, descending, value, bounds
+                        )
                     )
                 else:
                     qs = qs.filter(
-                        self._keyset_predicate(field_name, descending, value, pk)
+                        self._keyset_predicate(
+                            field_name, descending, value, pk, bounds
+                        )
                     )
             except (ValueError, ValidationError) as exc:
                 raise GraphQLError("Invalid cursor") from exc
@@ -1848,7 +2211,59 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
         return qs[:page_size]
 
     @staticmethod
-    def _legacy_value_predicate(field_name: str, descending: bool, value: Any) -> Any:
+    def _validate_boundary(
+        model: Any, field_name: str, value: str | None, vendor: str | None = None
+    ) -> tuple[Any, Any, bool] | None:
+        """Apply the shared cursor rule to the ordering column's boundary.
+
+        The in-memory path coerces the boundary with the same function
+        ("_coerce_cursor_component"), so both paths accept or refuse a given
+        boundary alike. Without it the database would silently accept values
+        such as NaN and return a wrong page, or a naive datetime.
+
+        Args:
+            model: The model whose column is the ordering field.
+            field_name: The bare ordering-field name.
+            value: The decoded boundary ordering value ("None" for NULL).
+            vendor: The selected queryset database vendor.
+
+        Returns:
+            Upper and lower comparison bounds plus an equality flag for a finer
+            Decimal boundary, otherwise None.
+
+        Raises:
+            ValueError: If the boundary is not valid for the column.
+        """
+        if value is None:
+            return None
+        try:
+            field = model._meta.get_field(field_name)
+        except FieldDoesNotExist:
+            return None
+        kind = next((k for k, types in _FIELD_KINDS if isinstance(field, types)), None)
+        if kind is not None:
+            aware = bool(settings.USE_TZ) if kind is datetime.datetime else False
+            number = _coerce_cursor_component(value, kind, aware)
+            if kind is Decimal:
+                scale_bounds = _decimal_scale_bounds(number, field)
+                if scale_bounds is not None:
+                    if vendor == "sqlite":
+                        upper, lower, exact = _sqlite_numeric_bounds(number)
+                        return (
+                            _numeric_bound_value(upper),
+                            _numeric_bound_value(lower),
+                            exact,
+                        )
+                    return *scale_bounds, False
+        return None
+
+    @staticmethod
+    def _legacy_value_predicate(
+        field_name: str,
+        descending: bool,
+        value: Any,
+        bounds: tuple[Any, Any, bool] | None = None,
+    ) -> Any:
         """Build the pk-less (legacy) "rows after the cursor" predicate.
 
         The composite keyset predicate needs a pk tiebreak; a legacy value-only
@@ -1863,6 +2278,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             field_name: The bare ordering-field name.
             descending: Whether the ordering is descending.
             value: The boundary ordering value ("None" for a NULL boundary).
+            bounds: Upper and lower neighbours of a finer Decimal boundary,
+                with a flag indicating whether a stored value can equal it.
 
         Returns:
             A Django Q object selecting the rows after the value boundary.
@@ -1873,8 +2290,12 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # Ascending NULLs last: nothing follows a NULL boundary without a
             # pk tiebreak. Descending NULLs first: the entire non-NULL body does.
             return Q(**{f"{field_name}__isnull": False}) if descending else Q(pk__in=[])
+        if bounds is not None and not bounds[2]:
+            lookup = f"{field_name}__{'lte' if descending else 'gte'}"
+            return Q(**{lookup: bounds[1] if descending else bounds[0]})
         lookup = f"{field_name}__{'lt' if descending else 'gt'}"
-        return Q(**{lookup: value})
+        boundary = value if bounds is None else bounds[0]
+        return Q(**{lookup: boundary})
 
     @staticmethod
     def _inmemory_keyset_order(
@@ -2014,13 +2435,20 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             # decode_cursor_parts (malformed base64) or at filter() (type coercion).
             try:
                 value, pk = self.decode_cursor_parts(cursor)
+                bounds = self._validate_boundary(
+                    qs.model, field_name, value, connections[qs.db].vendor
+                )
                 if pk is None:
                     page_qs = page_qs.filter(
-                        self._legacy_value_predicate(field_name, descending, value)
+                        self._legacy_value_predicate(
+                            field_name, descending, value, bounds
+                        )
                     )
                 else:
                     page_qs = page_qs.filter(
-                        self._keyset_predicate(field_name, descending, value, pk)
+                        self._keyset_predicate(
+                            field_name, descending, value, pk, bounds
+                        )
                     )
             except (ValueError, ValidationError) as exc:
                 raise GraphQLError("Invalid cursor") from exc

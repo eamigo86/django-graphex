@@ -9,8 +9,8 @@ Covers:
         cached entries survive
 - #11c  Malformed query with CACHE_ACTIVE=True returns HTTP 400, not 500
 - #11d  Cache key prefix is "_graphql_", not the typo "_graplql_"
-- sentinel  A legitimately cached falsy/empty body is served from cache on
-            the second request (no spurious cache miss for falsy values)
+- invalid   An empty HTTP 200 body is not a valid GraphQL success envelope
+            and is re-executed instead of stored as a response-cache entry
 - GET-key  Two DIFFERENT GET queries share a key collision -> wrong cached
            response served (HIGH-1 fix: incorporate GET params into the hash)
 """
@@ -378,11 +378,10 @@ class CacheKeyPrefixTest(TestCase):
 
 
 @override_settings(**CACHE_ON)
-class SentinelHitCheckTest(TestCase):
-    """Sentinel test — a cached falsy/empty body MUST be served from cache.
+class InvalidResponseCacheTest(TestCase):
+    """An empty HTTP body is not a cacheable GraphQL success response.
 
-    The old "if not response:" check treats a falsy cached value as a cache
-    miss, causing the backend to be called again. The sentinel pattern fixes this.
+    Repeat the request rather than storing an invalid data envelope.
     """
 
     def setUp(self) -> None:
@@ -394,15 +393,15 @@ class SentinelHitCheckTest(TestCase):
         cache.clear()
         self.view = GraphQLView.as_view(schema=_schema)
 
-    def test_empty_cached_response_is_served_without_re_executing(self) -> None:
-        """Ship-broken contract: a falsy (empty-body) cached response must be
-        returned as-is on a repeat request, per the sentinel cache-miss check.
+    def test_empty_http_response_is_not_cached(self) -> None:
+        """Rerun a response whose HTTP 200 body has no GraphQL data envelope.
+
+        A subsequent request must not receive the invalid body from cache.
         """
-        # Pre-seed the cache with an empty-body response (falsy content).
+        # A synthetic empty body represents an invalid GraphQL envelope.
         empty_response = HttpResponse(b"", content_type="application/json", status=200)
 
-        # Seed the cache by running the view once; our patched super_call returns
-        # the empty response so that falsy value ends up in the cache.
+        # Run the view once; the patched base call returns the invalid body.
         query = "{ hello }"
         request_seed = self.factory.post(
             "/graphql/", json.dumps({"query": query}), content_type="application/json"
@@ -415,7 +414,7 @@ class SentinelHitCheckTest(TestCase):
         def counting_super_call(
             self_view: GraphQLView, request: HttpRequest, *args: Any, **kwargs: Any
         ) -> HttpResponse:
-            """Count invocations, then return the fixed empty response.
+            """Count invocations, then return the fixed invalid response.
 
             Args:
                 self_view: The view instance the call is bound to.
@@ -424,19 +423,17 @@ class SentinelHitCheckTest(TestCase):
                 kwargs: Additional keyword arguments forwarded as-is.
 
             Returns:
-                response: The fixed "empty_response" (discarding the real
-                    result) so a falsy value ends up cached.
+                response: The fixed empty response instead of the real result.
             """
             call_count["n"] += 1
-            # Discard real result; store an empty (falsy) response in its place.
+            # Discard the real result to test invalid-response eligibility.
             original_super_call(self_view, request, *args, **kwargs)
             return empty_response
 
         with patch.object(GraphQLView, "super_call", counting_super_call):
             self.view(request_seed)
 
-        # Now make a second identical request — the empty response is cached.
-        # The sentinel check MUST serve it without calling super_call again.
+        # The second identical request must run again, not replay the empty body.
         request_2 = self.factory.post(
             "/graphql/", json.dumps({"query": query}), content_type="application/json"
         )
@@ -448,8 +445,8 @@ class SentinelHitCheckTest(TestCase):
 
         self.assertEqual(
             call_count["n"],
-            0,
-            "Backend was called for a cached falsy response — sentinel check missing",
+            1,
+            "The invalid empty body was unexpectedly reused from cache",
         )
 
 

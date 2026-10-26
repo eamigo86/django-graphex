@@ -47,6 +47,289 @@ def test_docs_say_forbidden_permission_classes_fail_loudly() -> None:
     assert "ImproperlyConfigured" in filtering
 
 
+def test_guide_documents_string_literal_enum_client_migration() -> None:
+    """Keep the new wire enum contract distinct from unsupported fallbacks.
+
+    Scenario: guide documents string literal enum client migration.
+    """
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
+    for text in (usage, upgrade):
+        assert "ArticleInputStatusEnum" in text
+        assert 'status: "draft"' in text
+        assert "status: DRAFT" in text
+        assert '"status": "DRAFT"' in text
+        assert "raw string" in text or "original string" in text
+    assert "Numeric or mixed" in usage
+    assert "automatically validated as Pydantic" in usage
+
+
+def test_guide_documents_direct_int_or_string_union_migration() -> None:
+    """Keep the exact scalar boundary and client variable migration visible.
+
+    Scenario: guide documents direct int or string union migration.
+    """
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "IntOrString" in text
+        assert "typing.Union[int, str]" in text
+        assert "int | str" in text
+        assert "32-bit" in text
+        assert "default" in text
+        assert "other union" in text.lower()
+    upgrade = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
+    assert "$value: String!" in upgrade
+    assert "$value: IntOrString!" in upgrade
+    assert '{"value": 123}' in upgrade
+    assert '{"value": "123"}' in upgrade
+
+
+def test_guide_documents_typed_integer_map_json_migration() -> None:
+    """Keep the strict typed-map wire change distinct from bare JSON.
+
+    Scenario: guide documents typed integer map json migration.
+    """
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
+    for text in (usage, upgrade):
+        assert "dict[str, int]" in text
+        assert "typing.Dict[str, int]" in text
+        assert "JSON" in text
+        assert '"mapping": {"count": 3}' in text
+        assert "plain integer" in text
+        assert "Bare `dict`" in text or "bare `dict`" in text
+
+
+def test_guide_documents_exact_boolean_map_json_migration() -> None:
+    """Keep direct Boolean-map migration and default limits visible.
+
+    Scenario: guide documents exact boolean map json migration.
+    """
+    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.1.md")
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "dict[str, bool]" in text
+        assert "typing.Dict[str, bool]" in text
+        assert "exact Boolean" in text
+        assert "global JSON scalar" in text
+
+
+def test_guide_documents_typed_string_map_json_migration() -> None:
+    """Keep exact string-valued maps distinct from unsupported forms.
+
+    Scenario: guide documents typed string map json migration.
+    """
+    paths = ("docs/usage/mutations.md", "docs/api/types.md", "docs/UPGRADE-4.1.md")
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "dict[str, str]" in text
+        assert "typing.Dict[str, str]" in text
+        assert "JSON" in text
+        assert "string keys" in text and "string values" in text
+        assert "without conversion" in text or "without implicit" in text
+    for relative in ("docs/usage/mutations.md", "docs/api/types.md"):
+        normalized = " ".join((ROOT / relative).read_text(encoding="utf-8").split())
+        assert "dict[str, int]" in normalized
+        assert "typing.Dict[str, int]" in normalized
+        assert "dict[str, str]" in normalized
+        assert "typing.Dict[str, str]" in normalized
+        assert (
+            "parameterized dictionaries other than these two exact integer-map spellings"
+            not in normalized
+        )
+        assert (
+            "other parameterized dictionaries remain on the warning/`String` fallback"
+            not in normalized
+        )
+        assert "Other parameterized dictionaries remain unsupported" in normalized
+
+
+def test_guide_documents_recursive_supported_input_lists() -> None:
+    """Keep recursive list migration distinct from unsupported leaves.
+
+    Scenario: guide documents recursive supported input lists.
+    """
+    paths = (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "list[list[int]]" in text
+        assert "[[Int!]!]!" in text
+        assert "unsupported" in text.lower()
+
+
+def test_guide_documents_exact_integer_set_migration() -> None:
+    """Distinguish the two approved integer-set forms from other sets.
+
+    Scenario: guide documents exact integer set migration.
+    """
+    paths = (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[int]" in text
+        assert "[Int!]!" in text
+        assert "typing.Set[int]" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"numbers": [2, 1, 2]' in usage
+    assert "iteration order is not" in usage
+    assert "Exact `set[int]` and `typing.Set[int]` input fields" in usage
+    assert "Other set leaves and sets" in usage
+
+
+def test_guide_documents_exact_string_set_migration() -> None:
+    """Document both string-set spellings and whole-string singleton input.
+
+    Scenario: guide documents exact string set migration.
+    """
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[str]" in text
+        assert "typing.Set[str]" in text
+        assert "[String!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"colors": ["red", "red", "blue"]' in usage
+    assert '"colors": "ab"' in usage
+    assert "never the characters" in usage
+
+
+def test_guide_documents_exact_float_set_migration() -> None:
+    """Document both spellings and field-local overflow rejection.
+
+    Scenario: guide documents exact float set migration.
+    """
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[float]" in text
+        assert "typing.Set[float]" in text
+        assert "[Float!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+        assert "overflowing numeric literals" in " ".join(text.split())
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"amounts": [1.5, 1.5, 2.0]' in usage
+    assert '"amounts": 2' in usage
+    assert "{2.0}" in usage
+    assert "rejects booleans, strings and null items" in usage
+    for relative in ("CHANGELOG.md", "docs/changelog.md"):
+        assert "rejects overflowing numeric literals" in (ROOT / relative).read_text(
+            encoding="utf-8"
+        )
+
+
+def test_guide_documents_exact_uuid_set_migration() -> None:
+    """Document both UUID-set spellings and native validation.
+
+    Scenario: guide documents exact uuid set migration.
+    """
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[uuid.UUID]" in text
+        assert "typing.Set[uuid.UUID]" in text
+        assert "[UUID!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"keys": "12345678123456781234567812345678"' in usage
+    assert "canonical, uppercase and 32-hex" in usage
+    for relative in ("CHANGELOG.md", "docs/changelog.md"):
+        assert "set[uuid.UUID]" in (ROOT / relative).read_text(encoding="utf-8")
+
+
+def test_guide_documents_exact_finite_decimal_set_migration() -> None:
+    """Document Decimal list parity without claiming global scalar tightening.
+
+    Scenario: guide documents exact finite decimal set migration.
+    """
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[decimal.Decimal]" in text
+        assert "typing.Set[decimal.Decimal]" in text
+        assert "[Decimal!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+        assert "sNaN" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"1E+999999"' in usage
+    assert "global Decimal scalar" in usage
+    for relative in ("CHANGELOG.md", "docs/changelog.md"):
+        assert "set[decimal.Decimal]" in (ROOT / relative).read_text(encoding="utf-8")
+
+
+def test_guide_documents_exact_boolean_set_migration() -> None:
+    """Document both boolean-set spellings and native validation.
+
+    Scenario: guide documents exact boolean set migration.
+    """
+    for relative in (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "set[bool]" in text
+        assert "typing.Set[bool]" in text
+        assert "[Boolean!]!" in text
+        assert "singleton" in text
+        assert "resolver" in text
+    usage = (ROOT / "docs/usage/mutations.md").read_text(encoding="utf-8")
+    assert '"flags": [true, false, true]' in usage
+    assert '"flags": false' in usage
+    assert "{False}" in usage
+    assert "rejects 0, 1, strings" in usage
+
+
+def test_docs_qualify_fixed_json_object_default_metadata() -> None:
+    """Distinguish printable JSON defaults from ineligible object keys.
+
+    Scenario: docs qualify fixed json object default metadata.
+    """
+    paths = (
+        "docs/usage/mutations.md",
+        "docs/api/types.md",
+        "docs/UPGRADE-4.1.md",
+    )
+    for relative in paths:
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "fixed JSON default" in text
+        assert "print_schema" in text
+        assert "introspection" in text
+        assert "GraphQL Name" in text
+        assert "list-wrapped" in text.lower() or "list of json" in text.lower()
+        assert 'Field(default_factory=lambda: {"views": 0})' in text
+        assert "omitted input" in text.lower()
+
+
 @pytest.mark.parametrize(
     "relative", ["docs/usage/mutations.md", "docs/api/mutations.md"]
 )

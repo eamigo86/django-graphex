@@ -25,6 +25,7 @@ from graphql import graphql_sync
 
 from django_graphex.core import ObjectType
 from django_graphex.fields import DjangoListObjectField
+from django_graphex.paginations import LimitOffsetGraphqlPagination
 from django_graphex.registry import Registry
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.types import DjangoListObjectType, DjangoObjectType
@@ -395,7 +396,19 @@ def _build_window_hook_schema(
     _AuthorListType = _gtype(
         "_WinHookAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_WIN})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_WIN,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -643,7 +656,19 @@ def _build_filtered_hook_schema():
     _AuthorListType = _gtype(
         "_FiltHookAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_FILT})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_FILT,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -782,7 +807,19 @@ def _build_unfiltered_hook_schema(has_hook=True):
     _AuthorListType = _gtype(
         "_UnfHookAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_UNFILT})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_UNFILT,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -946,7 +983,19 @@ def _build_site_b_schema():
     _AuthorListType = _gtype(
         "_SiteBAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_SITE_B})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_SITE_B,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -1087,6 +1136,12 @@ def _build_related_field_forward_schema():
     _REG_RELFWD = Registry()
     captured_kwargs: list[dict] = []
 
+    _PostType = _gtype(
+        "_RelFwdPostType",
+        (DjangoObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
+    )
+
     _InnerPostListType = _gtype(
         "_RelFwdInnerPostListType",
         (DjangoListObjectType,),
@@ -1111,16 +1166,22 @@ def _build_related_field_forward_schema():
     # PostType exposes "author" as a forward FK (a plain related field). The
     # walker descends Post -> author via the related-field branch, then reaches
     # the hooked nested list on AuthorType.
-    _PostType = _gtype(
-        "_RelFwdPostType",
-        (DjangoObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
-    )
-
     _PostListType = _gtype(
         "_RelFwdPostListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_RELFWD})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Post,
+                    "registry": _REG_RELFWD,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -1258,27 +1319,6 @@ def _build_site_b_multi_schema():
         (DjangoListObjectType,),
         {"Meta": type("Meta", (), {"model": Tag, "registry": _REG_SITE_B_MULTI})},
     )
-    # Nested list of posts hung off Category (the multi-segment descendant target).
-    _CatPostListType = _gtype(
-        "_SBMCatPostListType",
-        (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_SITE_B_MULTI})},
-    )
-
-    _CategoryType = _gtype(
-        "_SBMCategoryType",
-        (DjangoObjectType,),
-        {
-            "posts": DjangoNestedListObjectField(_CatPostListType, accessor="posts"),
-            # select_related("author") is valid ONLY on Post — if mis-paired onto
-            # Comment/Tag this raises, exposing a broken multi-segment descent.
-            "optimize_posts": _record("category_posts", "author"),
-            "Meta": type(
-                "Meta", (), {"model": Category, "registry": _REG_SITE_B_MULTI}
-            ),
-        },
-    )
-
     # PostType owns TWO unfiltered hooked nested lists (comments, tags) and exposes
     # "category" (FK) for the multi-segment descent.
     _PostType = _gtype(
@@ -1306,6 +1346,27 @@ def _build_site_b_multi_schema():
                     # expose category so the FK descent into Category.posts works
                     "only_fields": ["id", "title", "comments", "tags", "category"],
                 },
+            ),
+        },
+    )
+
+    # Nested list of posts hung off Category (the multi-segment descendant target).
+    _CatPostListType = _gtype(
+        "_SBMCatPostListType",
+        (DjangoListObjectType,),
+        {"Meta": type("Meta", (), {"model": Post, "registry": _REG_SITE_B_MULTI})},
+    )
+
+    _CategoryType = _gtype(
+        "_SBMCategoryType",
+        (DjangoObjectType,),
+        {
+            "posts": DjangoNestedListObjectField(_CatPostListType, accessor="posts"),
+            # select_related("author") is valid ONLY on Post — if mis-paired onto
+            # Comment/Tag this raises, exposing a broken multi-segment descent.
+            "optimize_posts": _record("category_posts", "author"),
+            "Meta": type(
+                "Meta", (), {"model": Category, "registry": _REG_SITE_B_MULTI}
             ),
         },
     )
@@ -1338,7 +1399,19 @@ def _build_site_b_multi_schema():
     _AuthorListType = _gtype(
         "_SBMAuthorListType",
         (DjangoListObjectType,),
-        {"Meta": type("Meta", (), {"model": Author, "registry": _REG_SITE_B_MULTI})},
+        {
+            "Meta": type(
+                "Meta",
+                (),
+                {
+                    "model": Author,
+                    "registry": _REG_SITE_B_MULTI,
+                    "pagination": LimitOffsetGraphqlPagination(
+                        default_limit=None, max_limit=None
+                    ),
+                },
+            )
+        },
     )
 
     schema = DjangoGraphQLSchema(
@@ -1634,7 +1707,19 @@ class TestSafeModeDegrade(TestCase):
         _AuthorListType = _gtype(
             "_SMAuthorListType",
             (DjangoListObjectType,),
-            {"Meta": type("Meta", (), {"model": Author, "registry": _reg})},
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "model": Author,
+                        "registry": _reg,
+                        "pagination": LimitOffsetGraphqlPagination(
+                            default_limit=None, max_limit=None
+                        ),
+                    },
+                )
+            },
         )
 
         return DjangoGraphQLSchema(

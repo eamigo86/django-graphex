@@ -38,6 +38,8 @@ imported lazily/guarded so the base package never hard-requires it.
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +49,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable, Sequence
 
 __all__ = ["ChannelLayerSource"]
+
+logger = logging.getLogger(__name__)
 
 
 class ChannelLayerSource:
@@ -163,18 +167,49 @@ class ChannelLayerSource:
     async def start(self) -> "ChannelLayerSource":
         """Allocate a channel and "group_add" to EXACTLY the selected groups.
 
-        Idempotent: a second call is a no-op. Joining only "self._groups"
-        enforces the #1420 guard — a single-action source never touches the
-        other two groups.
+        Idempotent after success: a second call is a no-op. Joining only
+        "self._groups" enforces the #1420 guard — a single-action source never
+        touches the other two groups. If startup is cancelled or a join fails,
+        it attempts to discard every confirmed or in-flight membership before
+        propagating the original failure. The source remains retryable after
+        that failed attempt, but an explicit close stays terminal. The channel
+        layer's absent-member discard is a no-op; backend discard failures are
+        logged and remain best-effort.
 
         Returns:
             "self" so "await source.start()" can be chained.
+
+        Raises:
+            BaseException: The original startup failure or cancellation after
+                best-effort group cleanup.
         """
-        if self._started:
+        if self._started or self._closed:
             return self
-        self._channel = await self._channel_layer.new_channel()
+        if self._channel is None:
+            self._channel = await self._channel_layer.new_channel()
         for group in self._groups:
-            await self._channel_layer.group_add(group, self._channel)
+            try:
+                await self._channel_layer.group_add(group, self._channel)
+            except BaseException:  # noqa: BLE001 - cancellation also needs cleanup
+                # Discarding an absent member is a no-op in Channels' group
+                # contract, covering failures before or after backend join.
+                try:
+                    joined = (*self._joined, group)
+                    for joined_group in joined:
+                        try:
+                            await self._channel_layer.group_discard(
+                                joined_group, self._channel
+                            )
+                        except BaseException:  # noqa: BLE001 - best-effort cleanup
+                            # Keep the original startup failure or cancellation.
+                            logger.warning(
+                                "Subscription startup group cleanup failed; "
+                                "continuing best-effort cleanup.",
+                                exc_info=True,
+                            )
+                finally:
+                    self._joined = []
+                raise
             self._joined.append(group)
         self._started = True
         return self
@@ -341,7 +376,30 @@ class ChannelLayerSource:
             # single-row DB verification; the in-memory equality gate (the common
             # case, empty remaining) never touches the ORM here.
             if self.filters:
-                remaining = split_filters(data, self.filters)
+                match_data = data
+                if payload.get("action") == "delete":
+                    private = (message or {}).get("delete_match")
+                    if isinstance(private, dict) and isinstance(data, dict):
+                        # The public payload always takes precedence. The
+                        # private channel envelope is never returned to GraphQL.
+                        valid = all(
+                            isinstance(key, str)
+                            and type(value) in (str, int, float, bool, type(None))
+                            and not (
+                                isinstance(value, float) and not math.isfinite(value)
+                            )
+                            for key, value in private.items()
+                        )
+                        if valid:
+                            match_data = {**private, **data}
+                    if isinstance(match_data, dict) and any(
+                        key in match_data
+                        and ((match_data[key] is None) != (value is None))
+                        for key, value in self.filters.items()
+                        if "__" not in key
+                    ):
+                        continue
+                remaining = split_filters(match_data, self.filters)
                 if remaining is None:
                     # Dropped in memory — keep waiting for the next event.
                     continue

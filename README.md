@@ -43,24 +43,25 @@ your Django models — no DRF, no graphene, no `django-filter`.
 - **graphql-core:** >=3.3.0,<3.4
 - **pydantic:** >=2,<3
 
-**django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`.** The historical
+**django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`.** The historical
 3.1.1 release requires `graphql-core>=3.2.13,<3.3`. Follow the
 [4.0 upgrade guide](docs/UPGRADE-4.0.md) when migrating custom executors,
-AST builders or subscription transports.
+AST builders or subscription transports, and the
+[4.1 upgrade guide](docs/UPGRADE-4.1.md) when moving from 4.0.
 
 ## Installation
 
 ```bash
 # uv (recommended)
-uv add "django-graphex==4.0.0"
+uv add "django-graphex==4.1.0"
 # real-time subscriptions (adds Django Channels 4):
-uv add "django-graphex[subscriptions]==4.0.0"
+uv add "django-graphex[subscriptions]==4.1.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex==4.0.0"
-pip install "django-graphex[subscriptions]==4.0.0"
+pip install "django-graphex==4.1.0"
+pip install "django-graphex[subscriptions]==4.1.0"
 ```
 
 The base install never imports `channels`; only the `subscriptions` extra does.
@@ -157,6 +158,39 @@ DJANGO_GRAPHEX = {
 }
 ```
 
+When response caching is enabled, only HTTP 200 GraphQL data responses without
+errors are stored or reused; a failed request is executed again rather than
+replaying an old cached error. See the [caching guide](docs/usage/caching.md).
+
+The built-in HTTP views are synchronous. Async resolvers or middleware are not
+executed there: an awaitable execution returns HTTP 500 with a controlled
+GraphQL JSON error asking for synchronous resolvers and middleware. See the
+[view contract](docs/usage/views.md#custom-execution-backend).
+
+The library default is `DEFAULT_PAGE_SIZE: 100` and `MAX_PAGE_SIZE: None`.
+Omit `DEFAULT_PAGE_SIZE` to inherit 100 for LimitOffset, Page, and Cursor
+paginators; the explicit `20` above is an application override. A default is
+not a maximum: configure `MAX_PAGE_SIZE` to cap client-requested sizes. Clients
+that previously relied on an unbounded omitted-size list should paginate past
+the first 100 rows or explicitly opt out; `None` has paginator-specific legacy
+behavior and does not mean “all rows” for Page pagination.
+
+With `MAX_QUERY_COST` configured, `GraphQLView` checks the selected operation
+against GraphQL-coerced request variables before running resolvers. A variable
+limit above the budget now receives HTTP 400 / `QUERY_TOO_COMPLEX`, even if its
+static fallback estimate passed; `MAX_PAGE_SIZE` remains the recommended hard
+ceiling for lists with omitted sizes.
+
+`CLEAN_RESPONSE` is off by default. When enabled for `GraphQLView`, it removes
+nulls, empty strings, and empty containers recursively, but retains numeric
+zero and `false`. Selected introspection operations bypass cleaning. See
+[response cleaning](https://eamigo86.github.io/django-graphex/usage/security/#ast-based-introspection-detection-clean_response).
+
+For bounded model-backed limit/offset and page-number results, ties in the effective
+ordering use the primary key ascending unless it is already an ordering term.
+This preserves an explicit descending key, but does not prevent offset shifts
+when rows change between requests. See [pagination ordering](https://eamigo86.github.io/django-graphex/usage/pagination/#stable-ordering-for-offset-and-page-results).
+
 Two keys are **not** in that dict on purpose — both ship enabled, and pinning a
 key to its own default only hides that you depend on it:
 
@@ -196,13 +230,20 @@ A fully wired example project lives in [`examples/playground/`](examples/playgro
 [Settings](https://eamigo86.github.io/django-graphex/usage/settings/) and the
 [Migration Guide](https://eamigo86.github.io/django-graphex/migration/).
 
-The [current core33 comparison](docs/why.md#current-core33-comparison) is
-derived from eight committed portable results in `core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`,
-measured from the prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. In the SQLite
-create-comment operation, GraphEx/Ariadne p50 was 0.57× at 50,000 comments
-and 0.51× at 100,000; these are whole-stack observations under accepted
-background load, not an equal-core or universal performance guarantee.
-Earlier 4.0.0 pre-fragment, 3.1.1-source core33 and 3.1.0 figures remain historical.
+The [current core33 comparison](docs/why.md#current-core33-comparison) uses
+eight committed portable results in
+core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e, measured from
+4.1.0 source f9f4eae81954959ab71e4a9037d5ba06486d6a8e, not a published
+wheel. In the local SQLite
+create-comment operation, GraphEx/Ariadne means were 0.5159 vs 0.9268 ms at
+50,000 comments (44.34% less mean time for GraphEx) and 0.5549 vs 0.9382 ms
+at 100,000 (40.85% less mean time). The separate p50 ratios were 0.54×
+(0.4758/0.8754 ms) and 0.51× (0.4592/0.8978 ms), respectively.
+These are median-of-three-run statistics, not a paired historical comparison:
+the four whole stacks differ in graphql-core version and the host load changed.
+The result is not a PostgreSQL or universal performance claim. The preceding
+core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c and older
+series remain historical.
 
 ## License
 

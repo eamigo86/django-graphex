@@ -194,10 +194,15 @@ def test_invalid_meta_type_raises() -> None:
         def __init_subclass_with_meta__(cls, **options):
             pass
 
-    with pytest.raises(PydanticUserError, match="non-annotated attribute"):
+    with pytest.raises((PydanticUserError, TypeError)) as caught:
 
         class Sub(Base):
             Meta = "not a class or dict"
+
+    if isinstance(caught.value, PydanticUserError):
+        assert "non-annotated attribute" in str(caught.value)
+    else:
+        assert "Sub.Meta has to be either a class or a dict" in str(caught.value)
 
 
 # ---------------------------------------------------------------------------

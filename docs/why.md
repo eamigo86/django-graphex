@@ -51,47 +51,127 @@ enforced in CI.
 
 ## How it compares
 
-The repository carries four distinct benchmark series. The current
-`core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` results are
-below. The earlier `core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`,
+The repository carries six distinct benchmark series. The current
+core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e results are below.
+The preceding core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c,
+core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e,
+core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9,
 3.1.1-source core33 and original 3.1.0 comparisons remain historical evidence,
 not current-package claims.
 
 ## Current core33 comparison
 
-The current eight [portable result files](https://github.com/eamigo86/django-graphex/tree/826d5bae87ed7bbe705cf309d46a16d3ad3cdf33/benchmarks/results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/) measure the prepared 4.0.0 source, not a published wheel. The measured [source checkout](https://github.com/eamigo86/django-graphex/tree/bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e) is commit `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e` (tree `619d81147c006c1eeb4a10eadc4867140649e4dc`). The artifact files were added later at publication commit `826d5bae87ed7bbe705cf309d46a16d3ad3cdf33`; that commit is not the measuring source.
+The current eight [portable result files](https://github.com/eamigo86/django-graphex/tree/main/benchmarks/results/core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e/)
+measure 4.1.0 source, not a published wheel. The measured
+[source checkout](https://github.com/eamigo86/django-graphex/tree/f9f4eae81954959ab71e4a9037d5ba06486d6a8e)
+is commit f9f4eae81954959ab71e4a9037d5ba06486d6a8e (tree
+5a6779d44d6b6746db2d218590a4dabbeb17f03c); it ran with the unmodified
+harness. The result files were committed later, so the documentation commit is
+not the measured source.
 
-Each dataset has 1,000 or 2,000 authors, ten posts per author and five comments per post (50,000 or 100,000 comments). Four pinned whole stacks ran the same five operations in three cyclically rotated repetitions, with 15 warmups and 100 timed requests per operation per run. Cells show each per-run p50 statistic's three-run median in milliseconds and request-only SQL statements. The companion artifacts contain p95 and other statistics; their p95 is the median of per-run p95 values, **not a pooled 300-sample percentile**. Five schema rebuild figures are per-position diagnostics, not request latencies.
+Each dataset has 1,000 or 2,000 authors, ten posts per author and five comments
+per post (50,000 or 100,000 comments). Four pinned whole stacks ran the same
+five operations in three cyclically rotated repetitions: 24 validated raw runs,
+15 warmups and 100 timed requests per operation per run (1,800 warmups and
+12,000 timed requests total). The request table shows the median of three
+per-run p50 values, not a pooled percentile, with request-only SQL statements.
+The mean table below instead shows the median of three run means. Each other
+published timing statistic is independently medianed across its three run
+statistics; per-run p95 is not a pooled 300-sample percentile. Five schema
+rebuild figures are per-position diagnostics, not request latencies.
 
-All stacks use Python 3.12.11 and Django 6.0.8, but this is **not an equal-core competition**: GraphEx and Strawberry use graphql-core 3.3.0; Graphene and Ariadne use 3.2.13. Versions, distinct per-library manifest and constraints SHA-256 values, Raw SHA-256 triplets, response surface, fixed SQL counts and source/seed hashes are recorded in the artifacts. The fresh seed and measurement source are both `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`, unlike the earlier 3.1.1-source diagnostic batch. Digests corroborate retained local bytes; they are not signed attestation or a filesystem sandbox.
+All stacks use Python 3.12.11 and Django 6.0.8, but this is **not an equal-core
+competition**: GraphEx and Strawberry use graphql-core 3.3.0; Graphene and
+Ariadne use 3.2.13. Versions, per-library manifest and constraints SHA-256
+values, Raw SHA-256 triplets, response surface, fixed SQL counts, source and
+seed hashes are recorded in the artifacts. The seed and measurement source are
+both f9f4eae81954959ab71e4a9037d5ba06486d6a8e. Digests corroborate
+retained local bytes; they are not signed attestation or a filesystem sandbox.
 
 <!-- core33-stacks:start -->
 | Library | Selected whole-stack versions |
 | :-- | :-- |
-| graphex | django 6.0.8, django-graphex 4.0.0, graphql-core 3.3.0 |
+| graphex | django 6.0.8, django-graphex 4.1.0, graphql-core 3.3.0 |
 | graphene | django 6.0.8, django-filter 25.2, graphene 3.4.3, graphene-django 3.2.3, graphql-core 3.2.13 |
 | strawberry | django 6.0.8, graphql-core 3.3.0, strawberry-graphql 0.328.0, strawberry-graphql-django 0.90.0 |
 | ariadne | ariadne 1.1.0, ariadne-django 0.3.0, django 6.0.8, graphql-core 3.2.13 |
 <!-- core33-stacks:end -->
 
+**Request p50 (ms) and SQL statements.** Each p50 cell is the median of three
+run p50 values.
+
 <!-- core33-results:start -->
 | Authors | Library | Flat list | Nested | Single | Filtered | Create comment |
 | :-- | :-- | --: | --: | --: | --: | --: |
-| 1,000 | graphex | 0.9191 ms / 1 SQL | 23.9056 ms / 3 SQL | 0.4728 ms / 1 SQL | 1.3569 ms / 1 SQL | 0.4912 ms / 4 SQL |
-| 1,000 | graphene | 1.9709 ms / 2 SQL | 67.6724 ms / 442 SQL | 1.0555 ms / 2 SQL | 3.9441 ms / 2 SQL | 1.2085 ms / 1 SQL |
-| 1,000 | strawberry | 2.0616 ms / 1 SQL | 31.9331 ms / 3 SQL | 1.2226 ms / 1 SQL | 2.6168 ms / 1 SQL | 1.7608 ms / 8 SQL |
-| 1,000 | ariadne | 1.2869 ms / 1 SQL | 45.6589 ms / 221 SQL | 0.9386 ms / 2 SQL | 1.7158 ms / 1 SQL | 0.8636 ms / 1 SQL |
-| 2,000 | graphex | 1.0153 ms / 1 SQL | 24.4239 ms / 3 SQL | 0.4539 ms / 1 SQL | 1.3764 ms / 1 SQL | 0.4700 ms / 4 SQL |
-| 2,000 | graphene | 1.8954 ms / 2 SQL | 70.9776 ms / 442 SQL | 1.1866 ms / 2 SQL | 7.0437 ms / 2 SQL | 1.3248 ms / 1 SQL |
-| 2,000 | strawberry | 2.1149 ms / 1 SQL | 35.9225 ms / 3 SQL | 1.1270 ms / 1 SQL | 2.6473 ms / 1 SQL | 1.8842 ms / 8 SQL |
-| 2,000 | ariadne | 1.4982 ms / 1 SQL | 46.5779 ms / 221 SQL | 1.0243 ms / 2 SQL | 2.0179 ms / 1 SQL | 0.9234 ms / 1 SQL |
+| 1,000 | graphex | 1.0379 ms / 1 SQL | 22.8110 ms / 3 SQL | 0.5001 ms / 1 SQL | 1.4171 ms / 1 SQL | 0.4758 ms / 4 SQL |
+| 1,000 | graphene | 1.8173 ms / 2 SQL | 68.4173 ms / 442 SQL | 1.0055 ms / 2 SQL | 3.7179 ms / 2 SQL | 1.1505 ms / 1 SQL |
+| 1,000 | strawberry | 2.0768 ms / 1 SQL | 32.1046 ms / 3 SQL | 1.1325 ms / 1 SQL | 2.4846 ms / 1 SQL | 1.5579 ms / 8 SQL |
+| 1,000 | ariadne | 1.2571 ms / 1 SQL | 43.7517 ms / 221 SQL | 0.9371 ms / 2 SQL | 1.7463 ms / 1 SQL | 0.8754 ms / 1 SQL |
+| 2,000 | graphex | 1.0240 ms / 1 SQL | 22.4884 ms / 3 SQL | 0.4434 ms / 1 SQL | 1.4068 ms / 1 SQL | 0.4592 ms / 4 SQL |
+| 2,000 | graphene | 1.9271 ms / 2 SQL | 68.7733 ms / 442 SQL | 1.0631 ms / 2 SQL | 5.7772 ms / 2 SQL | 1.0970 ms / 1 SQL |
+| 2,000 | strawberry | 1.9475 ms / 1 SQL | 31.2644 ms / 3 SQL | 1.0990 ms / 1 SQL | 2.4796 ms / 1 SQL | 1.7528 ms / 8 SQL |
+| 2,000 | ariadne | 1.2582 ms / 1 SQL | 45.9615 ms / 221 SQL | 1.0027 ms / 2 SQL | 1.8293 ms / 1 SQL | 0.8978 ms / 1 SQL |
 <!-- core33-results:end -->
 
-For create_comment, GraphEx/Ariadne p50 is 0.57× at 50,000 comments (0.4912/0.8636 ms, about 43% lower) and 0.51× at 100,000 (0.4700/0.9234 ms, about 49% lower). GraphEx's direct-write integrity check uses 4 request-internal SQL statements against Ariadne's 1; the lower observed latency is not a promise of fewer statements. GraphEx had the lowest observed p50 in all five operations at both sizes **in this batch**, not universally. These are SQLite whole-stack timings, not PostgreSQL performance results. PostgreSQL 17 CI provides correctness validation only.
+**Create-comment mean (ms).** These cells are medians of three run means, not
+means of pooled requests and not the p50 values above.
 
-The user accepted existing background work. Pre/post aggregate CPU observations cannot prove constant load, thermal stability or an idle host during the batch. Rotation reduces fixed ordering bias but cannot remove every confounder. Do not compare these figures as a paired speedup against the older series from separate sessions. The successful runner validated first responses, SQL probes, warmups and timed requests with rollback isolation; individual successful child streams and HTTP bodies were not retained. The private 72-record journal was generated **after** batch completion from checked receipts, not timestamped live child events.
+<!-- core33-write-mean:start -->
+| Comments | GraphEx mean | Ariadne mean | GraphEx less mean time |
+| :-- | --: | --: | --: |
+| 50,000 | 0.5159 ms | 0.9268 ms | 44.34% |
+| 100,000 | 0.5549 ms | 0.9382 ms | 40.85% |
+<!-- core33-write-mean:end -->
 
-See the [benchmark guide](https://github.com/eamigo86/django-graphex/blob/bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/benchmarks/README.md) and [named command](https://github.com/eamigo86/django-graphex/blob/bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/benchmarks/run_publish_core33.py) for the `run` and `replay` modes. Replaying retained raws validates them but does not repeat measurement; `run` creates fresh private seeds and a costly new batch. Both require a trusted external results parent and a fresh immutable series.
+For the local SQLite create-comment operation, GraphEx/Ariadne means were
+0.5159 vs 0.9268 ms at 50,000 comments (44.34% less mean time for GraphEx)
+and 0.5549 vs 0.9382 ms at 100,000 (40.85% less mean time). The separate p50
+ratios were 0.54× (0.4758/0.8754 ms) and 0.51× (0.4592/0.8978 ms),
+respectively. GraphEx's direct-write integrity check uses four request-internal
+SQL statements versus Ariadne's one; lower observed time does not mean fewer
+statements. GraphEx had the lowest observed mean and p50 in all ten
+operation/seed combinations only in this local batch, not universally. SQL
+counts match the preceding 4.1.0 series for every operation and library.
+PostgreSQL 17 CI provides correctness validation only, not a fresh PostgreSQL
+performance claim.
+
+**Cold import.** Each artifact also records schema_import_ms: importing the
+library and dependencies plus one schema build in a fresh process (startup
+cost, not request latency).
+
+<!-- core33-cold-import:start -->
+| Library | 1,000-author seed | 2,000-author seed |
+| :-- | --: | --: |
+| graphex | 50.33 ms | 49.92 ms |
+| graphene | 27.41 ms | 26.09 ms |
+| strawberry | 330.03 ms | 346.18 ms |
+| ariadne | 148.22 ms | 153.15 ms |
+<!-- core33-cold-import:end -->
+
+Graphene had the lowest cold-import observations here; these figures are not
+request timings. Host load fell from 10.86 to 9.24 on 16 logical CPUs during
+the run, so this local batch is load-sensitive. Rotation limits fixed order
+bias but cannot control changing load or other confounders. This is not a
+paired historical comparison or evidence of a speedup over the preceding
+series. The results carry no confidence intervals or statistical-significance
+claim. The prior audit did not prehash ignored original databases, migrations
+or benchmark environments; no alteration was observed, but retrospective
+full-preservation proof is unavailable. Successful child streams and HTTP
+bodies were not retained, and the private journal was assembled after the
+batch from checked receipts.
+
+See the [benchmark guide](https://github.com/eamigo86/django-graphex/blob/f9f4eae81954959ab71e4a9037d5ba06486d6a8e/benchmarks/README.md) and [named command](https://github.com/eamigo86/django-graphex/blob/f9f4eae81954959ab71e4a9037d5ba06486d6a8e/benchmarks/run_publish_core33.py) for run and replay. Replay validates retained raws without measuring; run creates new seeds and a costly batch. Both require a trusted external results parent and a fresh immutable series.
+
+### Historical core33 4.1.0 comparison
+
+The preceding [eight portable artifacts](https://github.com/eamigo86/django-graphex/tree/main/benchmarks/results/core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c/)
+measured 4.1.0 source 460efb9b7c29b097f2939c05e79514f2fda3242c in a
+separate session. They remain unchanged as historical evidence, not a paired
+baseline for the current batch.
+
+### Historical core33 4.0.0 comparison
+
+The previous [eight portable artifacts](https://github.com/eamigo86/django-graphex/tree/826d5bae87ed7bbe705cf309d46a16d3ad3cdf33/benchmarks/results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/) measured prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. SQL counts match the current series for all operations and libraries. The separate-session timings remain historical evidence, not a paired baseline or evidence about whether latency differences are meaningful.
 
 ### Historical core33 4.0.0 pre-fragment comparison
 
@@ -250,8 +330,9 @@ process actually pays at startup:
 | **Cold import**, 2,000-author run | 10.21 ms | 10.45 ms | 93.24 ms | 47.88 ms |
 | *…at the 1,000-author seed* | *9.30 ms* | *10.81 ms* | *98.70 ms* | *45.58 ms* |
 
-Read it as an **order of magnitude**: graphex and graphene-django
-indistinguishable around 10 ms, ariadne roughly 5× them, strawberry roughly
+Read it as an **order of magnitude**: in this historical 3.1.0 series graphex
+and graphene-django were indistinguishable around 10 ms (the current core33
+series above measures them apart), ariadne roughly 5× them, strawberry roughly
 10×. It still does **not** say which of the first two is faster, and it never
 could — the two are one millisecond apart while the eight canonical
 cold-import sample sets span roughly **9–24 %** from minimum to maximum relative

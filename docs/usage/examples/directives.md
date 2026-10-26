@@ -39,7 +39,32 @@ the full directive reference see [Directives](../../directives.md).
     }
     ```
 
+### Case Conversion
+
+For a post whose title resolves to `HTTPServer`, the three case directives
+produce consistent value spellings without renaming the `title` schema field:
+
+```graphql
+query PostLabels {
+  post(id: "1") {
+    camel: title @camel_case
+    snake: title @snake_case
+    kebab: title @kebab_case
+  }
+}
+```
+
+The response values are `httpServer`, `http_server`, and `http-server`.
+Spaces, underscores, hyphens, camelCase and PascalCase are also recognized;
+for example, `order_total` yields `orderTotal`, `order_total`, and
+`order-total`. These directives change values, not field names.
+
 ### Number Formatting
+
+When a source value is null, `@number` and `@currency` preserve GraphQL
+`null` rather than displaying a formatted zero. Required fields follow
+normal GraphQL nullability errors and bubbling. Numeric zero and other
+falsy but coercible values still format as before.
 
 === "Format View Count"
 
@@ -84,6 +109,37 @@ the full directive reference see [Directives](../../directives.md).
     ```
 
 ### Date Formatting
+
+For a text value such as `"2026-01-10"`, querying
+`@date(format: "iso")` now returns `"2026-01-10T00:00:00"` rather than a
+timestamp with the server's current time. Partial text such as
+`"2026-01-10 14:30"` returns `"2026-01-10T14:30:00"`; a time-only text
+value still uses today's date. Explicit seconds and offsets are not replaced
+in the input. Absolute output formats display originally aware Python
+datetimes and text with an explicit numeric offset or `Z` in Django's active
+timezone. In `America/New_York`, `"2026-01-01T03:30:00+02:00"` with
+`@date(format: "iso")` displays as `"2025-12-31T20:30:00"`; `iso` still
+omits the output offset and microseconds. Genuinely timezone-less text keeps
+its written wall clock but now attaches Django's active timezone for absolute
+and relative formats, regardless of `USE_TZ`. With a UTC default and Madrid
+active in July, `"2026-07-10 14:30"` yields `"14:30 +0200"` for
+`@date(format: "HH:mm ZZ")`; its `iso` output still hides the offset. Relative
+wording may change because the comparison uses that active-zone wall clock.
+Numeric-offset/Z text retains its previous relative behavior; named UTC/GMT
+and unknown timezone names keep their prior handling and warnings. A
+time-only value still inherits the parser's current date, not necessarily
+the active-zone date around midnight.
+
+Clock-adjacent `+00:00` and `+0000` are explicit offsets for absolute formats:
+`"2026-01-10T00:30:00+0000"` displays as `"2026-01-09T19:30:00"` in
+`America/New_York` with `format: "iso"`, matching the equivalent `Z` text.
+
+If `publishedAt` is nullable and the resolver returns `null`, the formatted
+response still contains `"publishedAt": null`. Applying `@date` does not
+manufacture a date or an invalid-format placeholder. Declare a date field
+non-null only when its resolver always supplies a value; otherwise GraphQL
+reports the nullability violation and bubbles null to the nearest nullable
+parent.
 
 === "Format Dates"
 

@@ -18,6 +18,7 @@ Two behavior changes (v2.0.0, GraphQL-spec-correct: omitted != null):
 
 from types import SimpleNamespace
 
+import pytest
 from django.db import models
 from django.test import RequestFactory, TestCase
 from graphql import (
@@ -600,7 +601,13 @@ class PythonTypeToGqlAnyTest(TestCase):
 
         # A user's bare ``Any``-typed field is NOT hijacked to JSON: the fix is
         # scoped to the dedicated JSONField marker, not all of ``Any``.
-        self.assertIs(_python_type_to_gql(Any), GraphQLString)
+        with pytest.warns(
+            UserWarning,
+            match=r"unsupported input field type 'Any'.*falling back to the GraphQLString scalar",
+        ) as caught:
+            result = _python_type_to_gql(Any)
+        self.assertEqual([type(warning.message) for warning in caught], [UserWarning])
+        self.assertIs(result, GraphQLString)
 
     def test_json_scalar_importable_from_core(self) -> None:
         """ "GdxJSON" must be importable from "django_graphex.core" as a stable public re-export.

@@ -36,7 +36,6 @@ from asgiref.sync import sync_to_async  # noqa: E402
 from channels.layers import InMemoryChannelLayer  # noqa: E402
 from channels.testing import WebsocketCommunicator  # noqa: E402
 
-from django_graphex.types import DjangoObjectType as _DOT  # noqa: E402
 from tests.models import Post  # noqa: E402
 from tests.subscriptions._sse import sse_frames  # noqa: E402
 
@@ -49,26 +48,6 @@ pytestmark = pytest.mark.django_db(transaction=True)
 # DjangoObjectType is identity-stable, per-test registration pollutes the shared
 # output registry).
 # ---------------------------------------------------------------------------
-
-
-class _AuditTagT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Tag"]).Tag
-
-
-class _AuditCategoryT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Category"]).Category
-
-
-class _AuditAuthorT(_DOT):
-    class Meta:
-        model = __import__("tests.models", fromlist=["Author"]).Author
-
-
-class _AuditPostT(_DOT):
-    class Meta:
-        model = Post
 
 
 def _build_native_schema(subscription_type: Any = None) -> GraphQLSchema:
@@ -292,7 +271,9 @@ async def test_orm_rejected_client_lookup_is_refused_at_subscribe(
     frames = await _read_frames(response)
     assert frames[0].startswith("event: next\n")
     payload = json.loads(frames[0].split("data: ", 1)[1])
+    # A client filter the ORM refuses is client input: public, never masked.
     assert "iexact" in payload["errors"][0]["message"]
+    assert "errorId" not in json.dumps(payload)
     assert frames[-1] == "event: complete\ndata: \n\n"
     assert not layer.groups
 
@@ -326,7 +307,9 @@ async def test_sse_delivery_exception_is_framed_in_stream(
     frames = await _read_frames(response)
     assert frames[0].startswith("event: next\n")
     payload = json.loads(frames[0].split("data: ", 1)[1])
-    assert payload["errors"][0]["message"] == "delivery blew up"
+    # An unexpected delivery failure is masked like the HTTP view's.
+    assert "delivery blew up" not in json.dumps(payload)
+    assert payload["errors"][0]["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
     assert frames[-1] == "event: complete\ndata: \n\n"
 
     await sync_to_async(response.close)()
@@ -431,7 +414,10 @@ async def test_ws_delivery_exception_sends_error_then_complete(
 
     error_frame = await communicator.receive_json_from(timeout=2)
     assert error_frame["type"] == "next"
-    assert error_frame["payload"]["errors"][0]["message"] == "delivery blew up"
+    # An unexpected delivery failure is masked like the HTTP view's.
+    assert "delivery blew up" not in json.dumps(error_frame)
+    error = error_frame["payload"]["errors"][0]
+    assert error["extensions"]["code"] == "INTERNAL_SERVER_ERROR"
     complete = await communicator.receive_json_from(timeout=2)
     assert complete == {"id": "1", "type": "complete"}
     assert source.is_closed

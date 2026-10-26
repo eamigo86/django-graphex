@@ -50,6 +50,8 @@ import inspect
 from functools import partial, total_ordering
 from typing import Any, Callable, Optional
 
+from django.core.exceptions import ObjectDoesNotExist
+
 # Sentinel distinguishing an EXPLICIT ``default=None`` (a GraphQL null default)
 # from "no default supplied" on an ``InputField``. ``None`` is a legitimate
 # GraphQL default value, so it cannot double as the "unset" marker.
@@ -91,6 +93,49 @@ def _next_creation_counter() -> int:
     return _LOCAL_COUNTER[0]
 
 
+def _raised_inside_descriptor(descriptor: Any, exc: AttributeError) -> bool:
+    """Report whether an AttributeError came from computing a class descriptor.
+
+    A property, a "functools" or Django "cached_property", or any object with
+    "__get__" found on the class is not an absent attribute when it raises: the
+    error is a bug in its code and must surface. The traceback is searched for
+    the frame of the getter (following "partial" and "__wrapped__" chains) or of
+    the descriptor's own "__get__". A class defining "__getattr__" still reads
+    as absent, because Python drops the descriptor's error before calling it.
+
+    Args:
+        descriptor: The class attribute found without triggering descriptors.
+        exc: The AttributeError raised by the normal lookup.
+
+    Returns:
+        True when the error was raised by the descriptor's own code.
+    """
+    codes = set()
+    getter = descriptor.fget if isinstance(descriptor, property) else None
+    if getter is None:
+        getter = getattr(descriptor, "func", None)
+    seen_getters: set[int] = set()
+    # Inspect wrapper metadata only; never invoke the getter again. Stop at the
+    # end of the chain or on a metadata cycle.
+    while getter is not None and id(getter) not in seen_getters:
+        seen_getters.add(id(getter))
+        if inspect.isfunction(getter):
+            codes.add(getter.__code__)
+        if isinstance(getter, partial):
+            getter = getter.func
+        else:
+            getter = inspect.getattr_static(getter, "__wrapped__", None)
+    descriptor_get = getattr(type(descriptor), "__get__", None)
+    if inspect.isfunction(descriptor_get):
+        codes.add(descriptor_get.__code__)
+    traceback = exc.__traceback__
+    while traceback is not None:
+        if traceback.tb_frame.f_code in codes:
+            return True
+        traceback = traceback.tb_next
+    return False
+
+
 def _source_resolver(source: str, root: Any, info: Any, **args: Any) -> Any:
     """Graphene-free replica of "graphene.types.field.source_resolver".
 
@@ -109,14 +154,26 @@ def _source_resolver(source: str, root: Any, info: Any, **args: Any) -> Any:
 
     Returns:
         The source value (called when it is a function / method).
-    """
-    import inspect as _inspect
 
+    Raises:
+        AttributeError: A Python property getter failed while resolving source.
+    """
     if isinstance(root, dict):
         resolved = root.get(source, None)
     else:
-        resolved = getattr(root, source, None)
-    if _inspect.isfunction(resolved) or _inspect.ismethod(resolved):
+        try:
+            resolved = getattr(root, source)
+        except AttributeError as exc:
+            if isinstance(exc, ObjectDoesNotExist):
+                return None
+            try:
+                descriptor = inspect.getattr_static(root, source)
+            except AttributeError:
+                return None
+            if _raised_inside_descriptor(descriptor, exc):
+                raise
+            return None
+    if inspect.isfunction(resolved) or inspect.ismethod(resolved):
         return resolved()
     return resolved
 
@@ -951,9 +1008,10 @@ class Field(NativeMountedField):
             TypeError: When an OUTPUT-only param ("resolver" / "source" /
                 "args") was set on this INPUT-position field.
         """
-        from graphql import GraphQLArgument, GraphQLNonNull, Undefined
+        from graphql import GraphQLNonNull, Undefined
 
         from django_graphex._strconv import to_snake_case
+        from django_graphex.core.fresh_defaults import graphql_argument
 
         self._guard_output_only_params()
 
@@ -963,7 +1021,7 @@ class Field(NativeMountedField):
         declared = name if name is not None else self.name
         out_name = to_snake_case(declared) if declared is not None else None
         default_value = Undefined if self._default is _UNSET else self._default
-        return GraphQLArgument(
+        return graphql_argument(
             gtype,
             default_value=default_value,
             description=self.description,

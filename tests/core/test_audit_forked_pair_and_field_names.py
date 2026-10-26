@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any, Iterator
 
 import pytest
-from graphql import GraphQLString, print_schema
+from graphql import GraphQLString, graphql_sync, print_schema
 
 from django_graphex.core import ObjectType as NativeRoot
 from django_graphex.core.descriptors import NativeList, NativeNonNull, field
@@ -222,3 +222,90 @@ def test_explicit_field_name_is_honoured_on_a_plain_object_type() -> None:
     assert "date_" not in payload_fields
     # The camelCase pass still applies when no explicit name is declared.
     assert "isOpen" in payload_fields
+
+
+def test_explicit_interface_name_is_shared_with_implementor() -> None:
+    """Publish declared interface and implementing fields under their wire names.
+
+    The Python attributes remain resolver lookup keys. An explicit wire name
+    must not leave the old camel-cased attribute as a second SDL field.
+    """
+    local_registry = Registry()
+    author = Author(name="Ada", bio="Writer")
+
+    class Named(DjangoInterfaceType):
+        internal_name = field(GraphQLString, name="name")
+        custom_label = field(GraphQLString, name="label")
+        display_label = field(GraphQLString)
+
+        class Meta:
+            registry = local_registry
+
+        @classmethod
+        def resolve_type(cls, instance: Any, info: Any) -> type:
+            """Resolve the local implementor independent of global registrations.
+
+            Args:
+                instance: The resolved author.
+                info: GraphQL execution information.
+
+            Returns:
+                The local implementing output type.
+            """
+            return NamedAuthor
+
+    class NamedAuthor(DjangoObjectType):
+        internal_name = field(
+            GraphQLString, name="name", resolver=lambda root, _info: root.name
+        )
+        custom_label = field(
+            GraphQLString, name="label", resolver=lambda root, _info: root.bio
+        )
+        display_label = field(GraphQLString, resolver=lambda root, _info: root.bio)
+
+        class Meta:
+            model = Author
+            registry = local_registry
+            interfaces = (Named,)
+            only_fields = ("name",)
+
+    class Query(NativeRoot):
+        author = field(NamedAuthor, resolver=lambda *_args: author)
+        as_interface = field(Named, resolver=lambda *_args: author)
+
+    schema = DjangoGraphQLSchema(query=Query, types=[NamedAuthor]).graphql_schema
+    named_fields = schema.type_map["Named"].fields
+    author_fields = schema.type_map["NamedAuthor"].fields
+    for fields in (named_fields, author_fields):
+        assert {"name", "label", "displayLabel"} <= set(fields)
+        assert "internalName" not in fields
+        assert "customLabel" not in fields
+
+    sdl = print_schema(schema)
+    assert "interface Named {\n  name: String\n  label: String" in sdl
+    assert "type NamedAuthor implements Named" in sdl
+
+    introspection = graphql_sync(
+        schema,
+        '{ __type(name: "Named") { fields { name } } }',
+    )
+    assert introspection.errors is None
+    assert [item["name"] for item in introspection.data["__type"]["fields"]] == [
+        "name",
+        "label",
+        "displayLabel",
+    ]
+
+    result = graphql_sync(
+        schema,
+        """{ author { name label displayLabel }
+             asInterface { name label displayLabel } }""",
+    )
+    assert result.errors is None
+    assert result.data == {
+        "author": {"name": "Ada", "label": "Writer", "displayLabel": "Writer"},
+        "asInterface": {"name": "Ada", "label": "Writer", "displayLabel": "Writer"},
+    }
+    old_wire_name = graphql_sync(schema, "{ asInterface { internalName } }")
+    assert old_wire_name.errors is not None
+    assert "Cannot query field 'internalName'" in old_wire_name.errors[0].message

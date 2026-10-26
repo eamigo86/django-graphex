@@ -24,6 +24,7 @@ from .descriptors import (
 )
 from .mutation import Mutation
 from .scalars import (
+    GdxBigInt,
     GdxDate,
     GdxDateTime,
     GdxDecimal,
@@ -60,6 +61,7 @@ __all__ = (
     "GdxDateTime",
     "GdxTime",
     "GdxDecimal",
+    "GdxBigInt",
     "GdxUUID",
     "GdxJSONString",
     "GdxJSON",

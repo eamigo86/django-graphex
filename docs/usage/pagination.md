@@ -98,12 +98,12 @@ LimitOffsetGraphqlPagination(
     `max_page_size` is silently clamped, and an omitted `pageSize` resolves as
     `page_size` → `max_page_size`.
 
-!!! info "`ordering` applies even when the list is unbounded"
+!!! info "`ordering` also applies when the list is unbounded"
 
-    The last row of the table above is the **shipped default**: with no
-    `pagination=` on the list type and no `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`
-    in your settings, the default `LimitOffsetGraphqlPagination` is unbounded and
-    returns the whole set. `ordering` is **not** part of that page-size decision —
+    The last row now requires an explicit `None` default and no maximum. With no
+    `pagination=` on the list type and no `DEFAULT_PAGE_SIZE` override, the
+    default `LimitOffsetGraphqlPagination` inherits 100. `ordering` is **not**
+    part of that page-size decision —
     it is applied (and validated) on every request, bounded or not. So
     `results(ordering: "username")` sorts correctly on a list that has no page
     size configured, and `results(ordering: "nonexistent")` is rejected there with
@@ -171,6 +171,39 @@ LimitOffsetGraphqlPagination(
       }
     }
     ```
+
+### Stable ordering for offset and page results
+
+For bounded model-backed `LimitOffsetGraphqlPagination` and
+`PageGraphqlPagination` results, the
+server keeps your requested, configured, queryset, or model ordering and appends
+the model primary key **ascending** as the last term if it is not already there.
+With no ordering at all, the primary key becomes the ordering. An explicit
+`-pk`, `-id`, or descending custom primary-key term remains descending; it is
+not replaced or duplicated. The same rule applies to nested window pages and
+materialized model lists where those terms can be evaluated.
+
+For example, `ordering: "-createdAt"` yields SQL ordered by `created_at DESC,
+id ASC` on a model whose key is `id`. Rows tied on `created_at` therefore have
+one fixed order across offset or page-number requests against an unchanged
+dataset. Clients who previously relied on the database's unspecified order
+within ties may see those rows move; no GraphQL argument or schema changes.
+
+Server queryset ordering keeps Django's effective direction and precedence.
+For example, `order_by("title").reverse()` yields `title DESC, id ASC`, while
+`order_by("-title").extra(order_by=["views"])` yields `views ASC, id ASC`:
+the legacy extra ordering overrides the earlier title term. A nested list uses
+the same effective order; unsupported SQL alias or expression terms take the
+existing plain-prefetch path rather than being reinterpreted by the window path.
+
+An unbounded LimitOffset list with no requested or configured ordering still
+uses its original queryset, including any `Meta.ordering` (for example,
+`["handle"]`). This preserves the existing `totalCount` result-cache behavior;
+there is no page boundary to stabilize in that case.
+
+This does **not** make offset pagination stable when rows are inserted or
+deleted between requests, nor does a random primary sort become stable across
+requests. Use cursor pagination or a snapshot when those guarantees matter.
 
 ### Ordering Validation (Security)
 
@@ -571,6 +604,27 @@ PageGraphqlPagination(
     }
     ```
 
+### Explicit null page
+
+The generated `page` argument remains nullable (`page: Int = 1`). Omitting it
+or passing `page: null` selects page 1, including when a nullable `Int`
+variable has the value `null`:
+
+```graphql
+query FirstPage($page: Int) {
+  users {
+    results(page: $page) { id username }
+    totalCount
+  }
+}
+```
+
+With `{ "page": null }`, this returns the same first-page rows and count as
+omitting `page`. Previously, explicit null produced a raw comparison error in
+the GraphQL response; clients that relied on that error should validate null
+before sending the request. `page: 0` still raises its existing error, and
+negative-page navigation is unchanged.
+
 ### Backward pagination
 
 `PageGraphqlPagination` accepts negative `page` values to navigate from the
@@ -579,7 +633,7 @@ Python's `list[-page_size:]` would):
 
 | `page` | Rows returned |
 |---|---|
-| `-1` | The **last** `page_size` rows, in natural (ascending `ordering`) order |
+| `-1` | The **last** `page_size` rows in the requested or configured order (PK ascending only within ties) |
 | `-2` | The `page_size`-row window immediately **before** the last page |
 | Large negative (overshoot past the start) | Clamps to the **first** `page_size` rows |
 | `0` | `GraphQLError` — page `0` is never valid, forward or backward |
@@ -601,6 +655,12 @@ Python's `list[-page_size:]` would):
     prefetch pre-check needs the offset up front (before any query runs), which
     a negative page cannot supply without first counting, so it falls back to
     the standard (non-window) resolution path for that request.
+
+    If that `COUNT` fails with a database error, negative-page navigation now
+    reports `Unable to calculate pagination count` in GraphQL `errors[]`.
+    It does not retry by loading every row. Clients that previously received
+    a page when only `COUNT` failed should handle this error instead. The
+    database's error text is not included in the response.
 
 !!! note "`LimitOffsetGraphqlPagination` and `CursorGraphqlPagination` have no backward mode"
 
@@ -638,12 +698,49 @@ page's last row — so it stays fast and stable. The list type also exposes a
     `NULL` values sort **last** when ascending and **first** when descending,
     and pages cross a `NULL` boundary without dropping rows.
 
+    A cursor emitted for a FloatField, DecimalField, or UUIDField ordering
+    value can be reused on a nested list that has been materialized in memory.
+    Its next page normally matches the database-backed list for the same
+    ordering; no client-side cursor conversion is needed. The SQLite Decimal
+    storage exception is described below.
+
     Cursors are **opaque**: treat them as an implementation detail returned by
     the server (`pageInfo.startCursor` / `pageInfo.endCursor`) and never build
-    or edit one client-side. A tampered or malformed cursor — corrupted
-    base64, wrong internal prefix, or a value that cannot be coerced to the
-    ordering field's type — is caught internally and raised as a clean
-    `GraphQLError("Invalid cursor")`.
+    or edit one client-side. Corrupted base64, a wrong internal prefix, or a
+    decoded value that cannot convert to the ordering field's type
+    raises `GraphQLError("Invalid cursor")`.
+
+!!! note "SQLite Decimal storage and cursor boundaries"
+
+    SQLite can store more fractional digits than a `DecimalField` declares. A
+    two-place field can physically hold `1.075` even though Django reads it as
+    `1.08`. A finer cursor boundary such as `1.074` includes the stored row on
+    the database path. If you materialize the rows into a Python list, pagination
+    compares Django's rounded Decimal objects instead; the two paths are not
+    guaranteed to agree at every boundary near a stored finer-precision value.
+
+### Null ordering across paginator types
+
+`CursorGraphqlPagination`, `LimitOffsetGraphqlPagination`, and
+`PageGraphqlPagination` place **NULL last ascending** and
+**NULL first descending** for automatic ordering by a nullable concrete model column.
+Offset/page pagination applies this policy to queryset results, nested SQL
+window pages, and materialized model lists while keeping the requested term
+priority, direction, and primary-key tie-break.
+
+For example, with a nullable `category_id`, `ordering: "categoryId"` returns
+category 1, category 2, then NULL; `ordering: "-categoryId"` returns NULL,
+category 2, then category 1. Previously, a SQLite queryset put NULL first
+ascending and last descending, while the materialized list used the order
+described above. Existing clients relying on SQLite's implicit placement
+should choose an explicit ORM ordering expression if they need that placement.
+
+An existing queryset expression such as `F("category_id").asc(nulls_first=True)`
+or `F("category_id").desc(nulls_last=True)` retains its explicit placement.
+This automatic policy does not rewrite custom expressions, annotations,
+random ordering, legacy SQL aliases, or relation-name ordering that may follow
+a related model's default. Those forms retain their ORM semantics; it is not
+a blanket cross-backend parity guarantee for every ordering expression.
 
 ### Basic Usage
 
@@ -879,8 +976,8 @@ the primary key). Multi-field cursors are not supported.
 === "Django QuerySet Equivalent"
 
     ```python
-    # This GraphQL query is equivalent to:
-    User.objects.order_by('last_name', 'first_name', '-date_joined')
+    # With an id primary key, the effective ordering is:
+    User.objects.order_by('last_name', 'first_name', '-date_joined', 'id')
     ```
 
 ### Combining with Filtering
@@ -960,10 +1057,21 @@ They serve as library-wide defaults; **instance arguments always take precedence
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DEFAULT_PAGINATION_CLASS` | `"django_graphex.paginations.LimitOffsetGraphqlPagination"` | Paginator class used when no `Meta.pagination` is set on a type. |
-| `DEFAULT_PAGE_SIZE` | `None` | Default page/limit size. `None` means unbounded (all rows). |
+| `DEFAULT_PAGE_SIZE` | `100` | Default page/limit size inherited by omitted constructor size arguments. `None` restores each paginator's legacy fallback, not universally “all rows.” |
 | `MAX_PAGE_SIZE` | `None` | Maximum page/limit size the client may request. `None` means no cap. |
 
 **Precedence:** instance arg (e.g. `LimitOffsetGraphqlPagination(default_limit=25)`) > `DEFAULT_PAGE_SIZE` / `MAX_PAGE_SIZE`.
+
+Without an explicit size, global LimitOffset lists and omitted-size Page and
+Cursor instances return at most the first 100 rows. Fetch further rows with
+`offset: 100`, `page: 2`, or the returned cursor. This is a **default**, not a
+maximum: with `MAX_PAGE_SIZE: None`, a client can request more than 100 where
+the paginator exposes `limit`, `pageSize`, or `first`. A local positive size
+overrides the global default. If you deliberately set `DEFAULT_PAGE_SIZE: None`
+before startup (or pass an explicit `None` to an instance), LimitOffset remains
+unbounded, Page still returns `results: null` when no size or maximum applies,
+and Cursor keeps its 20-row final fallback. Do not use Page's `None` value as
+an “all results” mode.
 
 !!! warning "Global defaults are read at import time"
 
@@ -1001,19 +1109,27 @@ it always fires.
 
 ### Tampered or Malformed Cursors
 
-`CursorGraphqlPagination` decodes opaque cursor strings from clients. If a
-cursor is corrupted, hand-crafted, or contains a value incompatible with the
-ordering field's type, the paginator raises `GraphQLError("Invalid cursor")`
-instead of propagating an unhandled `ValueError` or Django `ValidationError`.
-
-The guard covers two failure points:
+`CursorGraphqlPagination` decodes opaque cursor strings from clients. The
+following failures return `GraphQLError("Invalid cursor")`:
 
 1. **Malformed base64 / wrong prefix** — `decode_cursor` raises `ValueError`.
-2. **Type mismatch** — the decoded value cannot be coerced by `qs.filter()` (e.g.
-   a string cursor passed to an `IntegerField` raises a Django `ValidationError`).
+2. **Type mismatch** — the decoded ordering value or pk cannot convert to
+   the ordering field's runtime type (integer, float, Decimal, UUID, date,
+   datetime or time), or a float or Decimal boundary is `NaN` or infinite,
+   whether the list is queryset-backed or already materialized in memory.
+   Both `results` and `pageInfo` report the same error. Queryset-backed filters also retain their
+   existing handling of Django validation failures.
+3. **Out-of-rule boundary** — one shared rule decides every boundary, on the
+   database and the in-memory path alike: a number must be finite (a large
+   finite `Decimal` such as `1e999` is valid, up to ten to the 10,000th), and
+   a datetime or time must carry a timezone exactly when the column does (with
+   `USE_TZ` on, a naive datetime cursor is invalid).
 
-Both are caught and re-raised as `GraphQLError`, so clients always see a clean
-error response (HTTP 200, `errors[]`) rather than an HTTP 500.
+For example, a base64-valid cursor encoding `not-a-float` against a
+FloatField-ordered materialized list previously produced a raw comparison
+TypeError in `errors[]`; it now produces `Invalid cursor`. Clients matching
+the former error text should match the latter. The HTTP response remains 200,
+with the error in `errors[]`; valid server-emitted cursor bytes are unchanged.
 
 !!! example "Tampered cursor response"
     ```json
@@ -1034,7 +1150,8 @@ error response (HTTP 200, `errors[]`) rather than an HTTP 500.
 
 `totalCount` on the list wrapper is still resolved independently by
 `DjangoListObjectType` and always reflects the filtered queryset count. This
-change only affects the internal COUNT inside `paginate_queryset`.
+change only affects the internal COUNT inside `paginate_queryset`; it does
+not change how a separately selected `totalCount` handles database errors.
 
 ## Performance Considerations
 

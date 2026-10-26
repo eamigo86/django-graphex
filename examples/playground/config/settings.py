@@ -81,6 +81,8 @@ DJANGO_GRAPHEX = {
         # Process @directives.
         "django_graphex.middleware.GraphQLDirectiveMiddleware",
     ],
+    # 4.1 changed the library default to 100; the playground pins 10 so the
+    # nested lists below span several pages with only twelve posts per author.
     "DEFAULT_PAGE_SIZE": 10,
     "MAX_PAGE_SIZE": 100,
     # Keep introspection ON so GraphiQL works. Flip to False to see the
@@ -136,14 +138,36 @@ DJANGO_GRAPHEX = {
     # MAX_BATCH_SIZE since 1.2.1. A `subscribe` past the cap gets the transport's
     # own `error` frame naming the limit; the socket and every subscription
     # already running on it survive, and a slot frees itself when its operation
-    # ends (client `complete`, stream end, or disconnect). SSE is unaffected — one
-    # request carries exactly one subscription. `None` restores the old unbounded
-    # behaviour.
+    # ends (client `complete`, stream end, or disconnect). This is a WebSocket
+    # per-socket cap; the independent SSE account cap below is off by default.
+    # `None` restores the old unbounded WebSocket behaviour.
     #   "MAX_SUBSCRIPTIONS_PER_CONNECTION": 50,
+    #
+    # Optional SSE controls (both OFF by default). A heartbeat sends idle
+    # comments every 15 seconds; it does not need Redis. The separate cap
+    # admits at most five concurrent streams per authenticated account across
+    # workers. Enabling that cap requires a shared Redis URL and the optional
+    # Redis Python client; keep its credentials out of this file. A full
+    # account gets HTTP 429, and unavailable admission gets HTTP 503, both
+    # before a source starts. See docs/usage/subscriptions.md for lease limits.
+    #   "SSE_HEARTBEAT_ENABLED": True,
+    #   "SSE_HEARTBEAT_INTERVAL": 15,
+    #   "SSE_CONNECTION_LIMIT_ENABLED": True,
+    #   "SSE_MAX_CONNECTIONS_PER_USER": 5,
+    #   "SSE_CONNECTION_REDIS_URL": os.environ["SSE_CONNECTION_REDIS_URL"],
+    # ---------------------------------------------------------------------------
+    # New in 4.1, all ON with the defaults shown, so they are only named here
+    # (uncomment to change): the optimizer stops planning deeper relations past a
+    # work budget (same results, possibly more queries), very large documents skip the parse and
+    # validation caches, and directive output is bounded in total.
+    #   "OPTIMIZER_WORK_BUDGET": 2000,
+    #   "DOCUMENT_CACHE_MAX_QUERY_LENGTH": 65_536,
+    #   "MAX_DIRECTIVE_OUTPUT_TOTAL": 10_000_000,
+    #   "COST_DIRECTIVE": 0,
     # ---------------------------------------------------------------------------
     # Base64 file uploads (v1.3.0, opt-in via Base64FileInput).
     #
-    # MAX_UPLOAD_SIZE — maximum decoded size (bytes) of a single upload field.
+    # MAX_UPLOAD_SIZE — per received multipart file or decoded base64 field.
     # REQUIRED when Base64FileInput is used; raises ImproperlyConfigured if
     # absent and no per-field override is given in the resolver.
     # 5 MB is a reasonable default for the playground demo.
@@ -167,10 +191,19 @@ DJANGO_GRAPHEX = {
     "MAX_QUERY_DEPTH": 6,
     # ---------------------------------------------------------------------------
     # Query cost analysis (CostLimitValidationRule — wired in GraphQLView).
+    # OFF by default: no budget is enforced until you set MAX_QUERY_COST.
     # Reject queries whose estimated cost exceeds the budget; report cost in
     # extensions.cost so clients can see the estimate. None = no budget.
+    #
+    # Pick the budget by measuring, not guessing. A list field with no explicit
+    # page size is charged at MAX_PAGE_SIZE (100) and costs multiply per nested
+    # list, so even { posts { results(limit: 1) { id } } } costs 201 and the
+    # README's richest example costs about 4,000,000. 10_000_000 lets every
+    # README example run and refuses three unbounded nested lists (about
+    # 100,000,000 and up); tests/test_cost_budget.py pins both. Lower it once you
+    # know what your own clients send (EXPOSE_QUERY_COST shows the number).
     # Uncomment these to see cost analysis in action:
-    #   "MAX_QUERY_COST": 200,
+    #   "MAX_QUERY_COST": 10_000_000,
     #   "EXPOSE_QUERY_COST": True,
     # ---------------------------------------------------------------------------
     # Queryset optimization (N+1 avoidance). All five default to the values shown
@@ -199,6 +232,18 @@ DJANGO_GRAPHEX = {
     # every session/tenant dependency; it preserves the narrower 3.0 behaviour.
     "CACHE_INVALIDATION_SCOPE": "global",
 }
+
+# Password policy applied by the public registerUser mutation (blog/schema.py)
+# through django.contrib.auth.password_validation.validate_password. Without
+# this setting Django validates nothing and a one-character password is valid.
+AUTH_PASSWORD_VALIDATORS = [
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"

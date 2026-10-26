@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 # ---------------------------------------------------------------------------
 # 4.1 RED: DjangoObjectField.model under native resolves graphql-core wrapped types
 # ---------------------------------------------------------------------------

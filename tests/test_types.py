@@ -6,6 +6,7 @@ construction, their Meta options, and the query/mutation field factories they
 expose.
 """
 
+from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase
 
 from django_graphex.fields import DjangoListObjectField, DjangoObjectField
@@ -122,12 +123,12 @@ class TypesTest(TestCase):
         self.assertEqual(UpdateInput._meta.input_for, "update")
 
     def test_input_for_rejects_invalid_operation(self) -> None:
-        """An unknown input_for value fails fast with an assertion error.
+        """An unknown input_for value fails fast with ImproperlyConfigured.
 
         If this fails, a typo in Meta.input_for would silently produce an
         input type bound to no real operation instead of failing loudly.
         """
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ImproperlyConfigured):
 
             class BadInput(DjangoInputObjectType):
                 class Meta:

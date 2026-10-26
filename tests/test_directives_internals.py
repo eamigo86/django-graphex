@@ -445,7 +445,7 @@ def test_center_directive_default_width_is_value_length() -> None:
 
 
 def test_snake_case_directive_resolve() -> None:
-    """ ""@snake_case"" must title-case and strip spaces before converting to snake_case.
+    """ ""@snake_case"" must convert a spaced phrase to snake_case.
 
     If this breaks, converting a spaced phrase to snake_case could produce
     incorrect casing or leftover separators.
@@ -453,7 +453,6 @@ def test_snake_case_directive_resolve() -> None:
     from django_graphex.directives.string import SnakeCaseGraphQLDirective
 
     info = _info(GraphQLString)
-    # The directive title-cases and strips spaces before snake-casing.
     out = SnakeCaseGraphQLDirective.resolve("Hello World", {}, None, None, info)
     assert out == "hello_world"
 
@@ -542,8 +541,8 @@ class DirectiveSchemaNoneTest(TestCase):
         self.assertEqual(self._run("{ text @swap_case }")["text"], "hELLO wORLD")
         # camel_case converts snake_case identifier input to camelCase.
         self.assertEqual(self._run("{ ident @camel_case }")["ident"], "helloWorld")
-        # kebab_case runs (its exact quirk on snake input is documented behavior).
-        self.assertEqual(self._run("{ ident @kebab_case }")["ident"], "hello_-world")
+        # Kebab conversion treats underscores as word separators.
+        self.assertEqual(self._run("{ ident @kebab_case }")["ident"], "hello-world")
 
     def test_replace(self) -> None:
         """ "@replace(old:, new:)" must substitute the old substring with the new one end-to-end.
@@ -594,20 +593,18 @@ def test_base64_directive_empty_value_returns_none() -> None:
 
 
 def test_number_directive_formats_value() -> None:
-    """ ""@number(as:...)" must format with a Python format spec and coerce a None value to 0.
+    """Format numbers with the spec while preserving a null value.
 
     If this breaks, numeric formatting could fail on genuine values or
-    crash instead of treating a null value as zero.
+    expose an absent value as zero.
     """
     info = _info(GraphQLString)
     # Formats with a Python format spec (line 185).
     assert NumberGraphQLDirective.resolve(3.14159, {"as": ".2f"}, None, None, info) == (
         "3.14"
     )
-    # None coerces to 0.
-    assert (
-        NumberGraphQLDirective.resolve(None, {"as": ".1f"}, None, None, info) == "0.0"
-    )
+    # Null remains null after format validation.
+    assert NumberGraphQLDirective.resolve(None, {"as": ".1f"}, None, None, info) is None
 
 
 def test_currency_directive_default_and_custom_symbol() -> None:

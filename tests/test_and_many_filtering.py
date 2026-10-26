@@ -1,0 +1,793 @@
+"""Public regression for explicit AND branches across multi-valued relations."""
+
+from __future__ import annotations
+
+import json
+import sys
+import types
+
+import pytest
+from django.db import connection, models
+from django.db.models import F
+from django.test import Client, override_settings
+from django.test.utils import CaptureQueriesContext
+from django.urls import path
+from graphql import Undefined
+
+from django_graphex.core import ObjectType
+from django_graphex.fields import DjangoListObjectField
+from django_graphex.filtering.backend import NativeFilterBackend
+from django_graphex.registry import Registry
+from django_graphex.schema import DjangoGraphQLSchema
+from django_graphex.types import DjangoListObjectType, DjangoObjectType
+
+from ._schema_isolation import isolated_pair
+
+
+class AndManyTag(models.Model):
+    """Tag used to distinguish same-row and distinct-row M2M matches.
+
+    Its label and color let two branches select separate rows.
+    """
+
+    label = models.CharField(max_length=20)
+    color = models.CharField(max_length=20)
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        app_label = "tests"
+        db_table = "t11c_and_many_tag"
+
+
+class AndManyPost(models.Model):
+    """Public query root with M2M tags and reverse-FK comments.
+
+    Both relation paths begin at the same parent row.
+    """
+
+    title = models.CharField(max_length=40)
+    tags = models.ManyToManyField(AndManyTag, related_name="posts")
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        app_label = "tests"
+        db_table = "t11c_and_many_post"
+
+
+class AndManyOwner(models.Model):
+    """A to-one hop below the reverse-FK comments relation.
+
+    It proves a nested path does not unbind its parent comment.
+    """
+
+    name = models.CharField(max_length=20)
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        app_label = "tests"
+        db_table = "t11c_and_many_owner"
+
+
+class AndManyComment(models.Model):
+    """Reverse-FK child used to test independent AND branches.
+
+    Two comments can satisfy different predicates for one post.
+    """
+
+    post = models.ForeignKey(
+        AndManyPost, related_name="comments", on_delete=models.CASCADE
+    )
+    label = models.CharField(max_length=20)
+    color = models.CharField(max_length=20)
+    note = models.CharField(max_length=20, null=True)
+    owner = models.ForeignKey(AndManyOwner, on_delete=models.CASCADE)
+    tags = models.ManyToManyField(AndManyTag, related_name="comments")
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        app_label = "tests"
+        db_table = "t11c_and_many_comment"
+
+
+registry = Registry()
+
+
+class AndManyTagType(DjangoObjectType):
+    """Publish the tag relation as a selectable output type.
+
+    The filter compiler requires a published related target.
+    """
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        model = AndManyTag
+        registry = registry
+        only_fields = ("label", "color")
+
+
+class AndManyCommentType(DjangoObjectType):
+    """Publish the reverse-FK target for native filter input construction.
+
+    The projected columns include every tested child lookup.
+    """
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        model = AndManyComment
+        registry = registry
+        only_fields = ("label", "color", "note", "owner", "tags")
+
+
+class AndManyOwnerType(DjangoObjectType):
+    """Publish the second hop of a multi-hop relation filter.
+
+    Its name field is visible to the generated input.
+    """
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        model = AndManyOwner
+        registry = registry
+        only_fields = ("name",)
+
+
+class AndManyPostList(DjangoListObjectType):
+    """Expose both to-many paths in the generated filter input.
+
+    The declared paths cover direct and multi-hop predicates.
+    """
+
+    class Meta:
+        """Configure the test-local model or GraphQL type.
+
+        The declaration keeps the filter surface explicit.
+        """
+
+        model = AndManyPost
+        registry = registry
+        filter_fields = {
+            "title": ("exact",),
+            "tags__label": ("exact",),
+            "tags__color": ("exact",),
+            "comments__label": ("exact",),
+            "comments__color": ("exact",),
+            "comments__note": ("exact", "isnull"),
+            "comments__owner__name": ("exact",),
+            "comments__tags__label": ("exact",),
+            "comments__tags__color": ("exact",),
+        }
+
+
+class AndManyQuery(ObjectType):
+    """Mount the public filtered-list resolver.
+
+    The tests exercise the shipped HTTP view and backend.
+    """
+
+    posts = DjangoListObjectField(AndManyPostList)
+
+
+schema = DjangoGraphQLSchema(query=AndManyQuery, registries=isolated_pair(registry))
+urlconf = types.ModuleType("t11c_and_many_urls")
+urlconf.urlpatterns = [
+    path(
+        "graphql/",
+        __import__(
+            "django_graphex.views", fromlist=["GraphQLView"]
+        ).GraphQLView.as_view(schema=schema),
+    ),
+]
+sys.modules[urlconf.__name__] = urlconf
+
+
+def _payload(query: str, variables: dict | None = None) -> dict:
+    """Execute a public GraphQL request and return its successful JSON payload.
+
+    Args:
+        query: Complete GraphQL query document.
+        variables: Optional GraphQL variables.
+
+    Returns:
+        The parsed response payload.
+    """
+    body = {"query": query}
+    if variables is not None:
+        body["variables"] = variables
+    with override_settings(ROOT_URLCONF=urlconf.__name__):
+        response = Client().post(
+            "/graphql/", data=json.dumps(body), content_type="application/json"
+        )
+    payload = json.loads(response.content)
+    assert response.status_code == 200, payload
+    assert "errors" not in payload, payload
+    return payload
+
+
+def _post(query: str, variables: dict | None = None) -> list[str]:
+    """Execute one public HTTP query and return sorted post titles.
+
+    Args:
+        query: Complete GraphQL query document.
+        variables: Optional GraphQL variables.
+
+    Returns:
+        Sorted titles returned by the public filtered list.
+    """
+    payload = _payload(query, variables)
+    return sorted(row["title"] for row in payload["data"]["posts"]["results"])
+
+
+def _seed() -> None:
+    """Create same-row, split-row, single-side, and absent-side controls.
+
+    The same rows serve M2M and reverse-FK assertions.
+    """
+    owner_x = AndManyOwner.objects.create(name="owner-x")
+    owner_y = AndManyOwner.objects.create(name="owner-y")
+    x_red = AndManyTag.objects.create(label="x", color="red")
+    y_blue = AndManyTag.objects.create(label="y", color="blue")
+    x_blue = AndManyTag.objects.create(label="x", color="blue")
+    split = AndManyPost.objects.create(title="split")
+    split.tags.add(x_red, y_blue)
+    same = AndManyPost.objects.create(title="same")
+    same.tags.add(x_blue)
+    only_x = AndManyPost.objects.create(title="only-x")
+    only_x.tags.add(x_red)
+    AndManyPost.objects.create(title="absent")
+
+    for post, label, color, owner in (
+        (split, "x", "red", owner_x),
+        (split, "y", "blue", owner_y),
+        (same, "x", "blue", owner_x),
+        (only_x, "x", "red", owner_x),
+    ):
+        AndManyComment.objects.create(post=post, label=label, color=color, owner=owner)
+
+
+def _seed_deeper() -> None:
+    """Create entries whose tag branches must share one outer child.
+
+    The wrong post has both tags, but only on different comments.
+    """
+    owner = AndManyOwner.objects.create(name="owner")
+    x_red = AndManyTag.objects.create(label="x", color="red")
+    y_blue = AndManyTag.objects.create(label="y", color="blue")
+    x_blue = AndManyTag.objects.create(label="x", color="blue")
+    posts = {
+        name: AndManyPost.objects.create(title=f"deep-{name}")
+        for name in ("good", "wrong", "same", "only", "missing")
+    }
+    for name, label, tags in (
+        ("good", "focus", (x_red, y_blue)),
+        ("wrong", "focus", (x_red,)),
+        ("wrong", "other", (y_blue,)),
+        ("same", "focus", (x_blue,)),
+        ("only", "focus", (x_red,)),
+    ):
+        comment = AndManyComment.objects.create(
+            post=posts[name],
+            label=label,
+            color="red",
+            note="filled",
+            owner=owner,
+        )
+        comment.tags.add(*tags)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    ("wrapper", "expected"),
+    [
+        ("plain", ["deep-good"]),
+        ("or", ["deep-good", "deep-missing"]),
+        ("not", ["deep-missing", "deep-only", "deep-same", "deep-wrong"]),
+    ],
+)
+def test_public_deeper_and_keeps_one_outer_comment(
+    wrapper: str, expected: list[str]
+) -> None:
+    """Independent tags must bind to the same matching focus comment.
+
+    Args:
+        wrapper: Boolean context for the deeper AND expression.
+        expected: Sorted post titles for that context.
+    """
+    _seed_deeper()
+    deeper = (
+        'comments: { label: { exact: "focus" }, and: ['
+        '{ tags: { label: { exact: "x" } } }, '
+        '{ tags: { label: { exact: "y" } } } ] }'
+    )
+    if wrapper == "or":
+        value = f'or: [{{ {deeper} }}, {{ title: {{ exact: "deep-missing" }} }}]'
+    elif wrapper == "not":
+        value = f"not: {{ {deeper} }}"
+    else:
+        value = deeper
+    query = "{ posts(filter: { " + value + " }) { results { title } totalCount } }"
+    payload = _payload(query)
+    rows = payload["data"]["posts"]
+    assert sorted(row["title"] for row in rows["results"]) == expected
+    assert rows["totalCount"] == len(expected)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_deeper_grouping_and_missing_child_sql_null() -> None:
+    """Grouped tags stay same-row; missing children retain SQL NULL matching.
+
+    The nullable OR branch must not turn the deeper tag AND into a different
+    outer comment witness.
+    """
+    _seed_deeper()
+    grouped = (
+        '{ posts(filter: { comments: { label: { exact: "focus" }, '
+        'tags: { label: { exact: "x" }, color: { exact: "blue" } } } }) '
+        "{ results { title } } }"
+    )
+    assert _post(grouped) == ["deep-same"]
+    nullable = (
+        "{ posts(filter: { comments: { or: ["
+        "{ note: { exact: null } }, "
+        '{ label: { exact: "focus" }, and: ['
+        '{ tags: { label: { exact: "x" } } }, '
+        '{ tags: { label: { exact: "y" } } } ] }'
+        "] } }) { results { title } } }"
+    )
+    assert _post(nullable) == ["deep-good", "deep-missing"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_m2m_and_branches_match_distinct_rows() -> None:
+    """Two explicit tag branches may match different tags of one post.
+
+    The split post has no tag that satisfies both labels.
+    """
+    _seed()
+    query = (
+        "{ posts(filter: { and: ["
+        '{ tags: { label: { exact: "x" } } }, '
+        '{ tags: { label: { exact: "y" } } }'
+        "] }) { results { title } } }"
+    )
+    assert _post(query) == ["split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_reverse_fk_and_branches_match_distinct_rows() -> None:
+    """Two explicit reverse-FK branches may match different comments.
+
+    The split post has separate matching child rows.
+    """
+    _seed()
+    query = (
+        "{ posts(filter: { and: ["
+        '{ comments: { label: { exact: "x" } } }, '
+        '{ comments: { label: { exact: "y" } } }'
+        "] }) { results { title } } }"
+    )
+    assert _post(query) == ["split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_and_keeps_relation_object_same_row() -> None:
+    """Only explicit branches, not one relation object, permit split rows.
+
+    The grouped form retains a single related-row witness.
+    """
+    _seed()
+    separate_tags = (
+        "{ posts(filter: { and: ["
+        '{ tags: { label: { exact: "x" } } }, '
+        '{ tags: { color: { exact: "blue" } } }'
+        "] }) { results { title } } }"
+    )
+    grouped_tags = (
+        '{ posts(filter: { tags: { label: { exact: "x" }, '
+        'color: { exact: "blue" } } }) { results { title } } }'
+    )
+    grouped_comments = (
+        '{ posts(filter: { comments: { label: { exact: "x" }, '
+        'color: { exact: "blue" } } }) { results { title } } }'
+    )
+    grouped_nested_and = (
+        "{ posts(filter: { tags: { and: ["
+        '{ label: { exact: "x" } }, { color: { exact: "blue" } }'
+        "] } }) { results { title } } }"
+    )
+    sibling_and_branch = (
+        '{ posts(filter: { tags: { label: { exact: "x" } }, and: ['
+        '{ tags: { color: { exact: "blue" } } }'
+        "] }) { results { title } } }"
+    )
+    assert _post(separate_tags) == ["same", "split"]
+    assert _post(grouped_tags) == ["same"]
+    assert _post(grouped_comments) == ["same"]
+    assert _post(grouped_nested_and) == ["same"]
+    assert _post(sibling_and_branch) == ["same", "split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_nested_or_not_and_multihop_correlation() -> None:
+    """Nested Boolean branches stay composable without unbinding a comment.
+
+    The owner hop must remain anchored to its comment.
+    """
+    _seed()
+    nested_or = (
+        "{ posts(filter: { or: ["
+        '{ and: [{ comments: { owner: { name: { exact: "owner-x" } } } }, '
+        '{ comments: { owner: { name: { exact: "owner-y" } } } }] }, '
+        '{ title: { exact: "absent" } }'
+        "] }) { results { title } } }"
+    )
+    nested_not = (
+        "{ posts(filter: { not: { and: ["
+        '{ comments: { label: { exact: "x" } } }, '
+        '{ comments: { label: { exact: "y" } } }'
+        "] } }) { results { title } } }"
+    )
+    grouped_multihop = (
+        '{ posts(filter: { comments: { label: { exact: "x" }, '
+        'owner: { name: { exact: "owner-y" } } } }) '
+        "{ results { title } } }"
+    )
+    assert _post(nested_or) == ["absent", "split"]
+    assert _post(nested_not) == ["absent", "only-x", "same"]
+    assert _post(grouped_multihop) == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_exact_null_and_isnull_keep_absent_reverse_row() -> None:
+    """A missing reverse child still matches SQL NULL under explicit AND.
+
+    The existing left-join null behavior remains observable.
+    """
+    _seed()
+    for lookup in ("exact: null", "isnull: true"):
+        query = (
+            "{ posts(filter: { and: ["
+            "{ comments: { note: { " + lookup + " } } }, "
+            '{ title: { exact: "absent" } }'
+            "] }) { results { title } } }"
+        )
+        assert _post(query) == ["absent"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_empty_boolean_operands_and_direct_many_ids() -> None:
+    """Existing empty operands and direct relation IDs keep their contracts.
+
+    The new planner may not invent classical Boolean identities.
+    """
+    _seed()
+    tag_x = AndManyTag.objects.get(label="x", color="red")
+    tag_y = AndManyTag.objects.get(label="y", color="blue")
+    backend = NativeFilterBackend()
+    pk_branch = {
+        "and": [
+            {"tags": {"exact": tag_x.pk}},
+            {"tags": {"exact": tag_y.pk}},
+        ]
+    }
+    assert list(
+        backend.apply(AndManyPost.objects.all(), pk_branch).values_list(
+            "title", flat=True
+        )
+    ) == ["split"]
+    empty_branch = {
+        "and": [
+            {"tags": {"label": {"exact": "x"}}},
+            {"or": [{}, {"title": {"exact": "split"}}]},
+            {"or": []},
+            {"not": {}},
+        ]
+    }
+    assert list(
+        backend.apply(AndManyPost.objects.all(), empty_branch).values_list(
+            "title", flat=True
+        )
+    ) == ["split"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("unset", [None, Undefined])
+def test_unset_boolean_children_keep_independent_branch(unset: object) -> None:
+    """Unset children remain no-ops beside a real independent AND.
+
+    Args:
+        unset: Null or GraphQL's omitted-value sentinel.
+    """
+    _seed()
+    value = {
+        "title": unset,
+        "or": [
+            unset,
+            {
+                "and": [
+                    {"tags": {"label": {"exact": "x"}}},
+                    {"tags": {"label": {"exact": "y"}}},
+                ]
+            },
+        ],
+    }
+    rows = NativeFilterBackend().apply(AndManyPost.objects.all(), value)
+    assert list(rows.values_list("title", flat=True)) == ["split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_scoped_queryset_alias_projection_and_one_sql() -> None:
+    """The backend keeps incoming scope/alias/projection and stays one query.
+
+    The SQL expression is compiled rather than evaluated per parent.
+    """
+    _seed()
+    base = (
+        AndManyPost.objects.using("default")
+        .filter(title__in=("same", "split"))
+        .annotate(title_copy=F("title"))
+        .values("pk", "title_copy")
+    )
+    value = {
+        "and": [
+            {"tags": {"label": {"exact": "x"}}},
+            {"tags": {"color": {"exact": "blue"}}},
+        ]
+    }
+    with CaptureQueriesContext(connection) as captured:
+        rows = list(NativeFilterBackend().apply(base, value))
+    assert sorted(row["title_copy"] for row in rows) == ["same", "split"]
+    assert len(captured.captured_queries) == 1
+    assert "EXISTS" in captured.captured_queries[0]["sql"].upper()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_paginated_count_and_variables() -> None:
+    """Filtered count and ordered page honor literal and variable inputs.
+
+    Pagination runs after the corrected filter predicate.
+    """
+    _seed()
+    query = (
+        "query ($filter: AndManyPostFilterInput) {"
+        " posts(filter: $filter) {"
+        ' results(limit: 1, ordering: "title") { title } totalCount'
+        " } }"
+    )
+    payload = _payload(
+        query,
+        {
+            "filter": {
+                "and": [
+                    {"tags": {"label": {"exact": "x"}}},
+                    {"tags": {"color": {"exact": "blue"}}},
+                ]
+            }
+        },
+    )
+    posts = payload["data"]["posts"]
+    assert posts["totalCount"] == 2
+    assert posts["results"] == [{"title": "same"}]
+
+
+def _tag(label: str) -> dict:
+    """Return one to-many tag predicate for a label.
+
+    Args:
+        label: Tag label to match.
+
+    Returns:
+        A filter node for one explicit AND branch.
+    """
+    return {"tags": {"label": {"exact": label}}}
+
+
+def _left_chain(labels: list[str]) -> dict:
+    """Nest AND branches to the left: and[and[and[a, b], c], d].
+
+    Args:
+        labels: Tag labels, one branch each, in order.
+
+    Returns:
+        A filter node whose nesting depth equals len(labels) - 1.
+    """
+    node = _tag(labels[0])
+    for label in labels[1:]:
+        node = {"and": [node, _tag(label)]}
+    return node
+
+
+def _right_chain(labels: list[str]) -> dict:
+    """Nest AND branches to the right: and[a, and[b, and[c, d]]].
+
+    Args:
+        labels: Tag labels, one branch each, in order.
+
+    Returns:
+        A filter node whose nesting depth equals len(labels) - 1.
+    """
+    node = _tag(labels[-1])
+    for label in reversed(labels[:-1]):
+        node = {"and": [_tag(label), node]}
+    return node
+
+
+def _flat(labels: list[str]) -> dict:
+    """Return one AND list holding every branch.
+
+    Args:
+        labels: Tag labels, one branch each, in order.
+
+    Returns:
+        A filter node with no AND nesting.
+    """
+    return {"and": [_tag(label) for label in labels]}
+
+
+def _titles(node: dict) -> list[str]:
+    """Apply a filter node through the native backend.
+
+    Args:
+        node: Filter node over the test post model.
+
+    Returns:
+        Sorted titles of the matching posts.
+    """
+    rows = NativeFilterBackend().apply(AndManyPost.objects.all(), node)
+    return sorted(rows.values_list("title", flat=True))
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("shape", [_left_chain, _right_chain, _flat])
+@pytest.mark.parametrize(
+    ("labels", "expected"),
+    [
+        (["x"] * 200, ["only-x", "same", "split"]),
+        (["x", "y"] * 100, ["split"]),
+        (["x"] * 199 + ["y"], ["split"]),
+        (["x"] * 199 + ["nope"], []),
+    ],
+)
+def test_deep_and_chain_matches_flat_result(
+    shape: object, labels: list[str], expected: list[str]
+) -> None:
+    """A 200-branch AND answers the same however it is nested.
+
+    Nested EXISTS used to exceed SQLite's expression depth near 25 levels.
+
+    Args:
+        shape: Builder that nests the branches.
+        labels: Tag labels, one branch each.
+        expected: Sorted post titles for the conjunction.
+    """
+    _seed()
+    assert _titles(shape(labels)) == expected
+
+
+@pytest.mark.django_db(transaction=True)
+def test_public_deep_and_chain_returns_data_not_access_error() -> None:
+    """A 40-level chain over HTTP no longer fails with DATA_ACCESS_ERROR.
+
+    The structural query-depth ceiling still bounds literal nesting.
+    """
+    _seed()
+    value = _left_chain(["x"] * 40)
+    text = json.dumps(value).replace('"', "")  # GraphQL object literal keys
+    text = text.replace("exact: x", 'exact: "x"')
+    query = "{ posts(filter: " + text + ") { results { title } } }"
+    assert _post(query) == ["only-x", "same", "split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_and_chain_sql_depth_is_flat_and_size_linear() -> None:
+    """Chain depth adds one sibling EXISTS per branch, never nesting.
+
+    Both nesting styles compile to the same SQL as the flat list, and the
+    statement grows linearly with the branch count.
+    """
+    _seed()
+
+    def sql_for(node: dict) -> str:
+        """Return the SQL of the filtered post query.
+
+        Args:
+            node: Filter node.
+
+        Returns:
+            The SELECT statement text.
+        """
+        rows = NativeFilterBackend().apply(AndManyPost.objects.all(), node)
+        return str(rows.query)
+
+    labels = ["x", "y"] * 20
+    flat = sql_for(_flat(labels))
+    assert sql_for(_left_chain(labels)) == flat
+    assert sql_for(_right_chain(labels)) == flat
+    assert flat.count("EXISTS") == len(labels)
+    depth = deepest = 0
+    for token in flat.replace("(", " ( ").replace(")", " ) ").split():
+        depth += token == "("
+        depth -= token == ")"
+        deepest = max(deepest, depth)
+    assert deepest <= 8
+    small = len(sql_for(_left_chain(["x"] * 50)))
+    large = len(sql_for(_left_chain(["x"] * 100)))
+    assert large < small * 2.2
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "nested",
+    [
+        {"and": [{"and": [_tag("x"), _tag("y")]}]},
+        {"and": [_tag("x"), {"and": [_tag("y")]}]},
+        {"and": [{"and": [_tag("x")]}, {"and": [_tag("y")]}]},
+        {"and": [{"and": []}, _tag("x"), _tag("y")]},
+        {"and": [{"and": [_tag("x"), _tag("y")]}, {"title": {"exact": "split"}}]},
+        {"and": [{"and": [None, _tag("x")]}, _tag("y")]},
+    ],
+)
+def test_nested_and_equals_flat_and(nested: dict) -> None:
+    """Associativity: nesting pure AND wrappers never changes the answer.
+
+    Args:
+        nested: A nested spelling of tags x AND tags y.
+    """
+    _seed()
+    assert _titles(nested) == _titles(_flat(["x", "y"])) == ["split"]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_nested_and_keeps_siblings_or_and_not_wrappers() -> None:
+    """Only a pure AND wrapper is spliced.
+
+    Siblings, OR and NOT wrappers keep their own meaning.
+    """
+    _seed()
+    sibling = {
+        "and": [
+            {
+                "and": [_tag("x"), {"title": {"exact": "same"}}],
+                "title": {"exact": "split"},
+            }
+        ]
+    }
+    assert _titles(sibling) == []
+    either = {
+        "and": [
+            {"or": [_tag("y"), {"title": {"exact": "same"}}]},
+            {"and": [_tag("x")]},
+        ]
+    }
+    assert _titles(either) == ["same", "split"]
+    negated = {"and": [{"not": _tag("y")}, {"and": [_tag("x")]}]}
+    assert _titles(negated) == ["only-x", "same"]
+    inner = {"comments": {"and": [{"and": [_tag("x"), _tag("y")]}]}}
+    assert _titles({"and": [inner]}) == _titles({"and": [inner, inner]})

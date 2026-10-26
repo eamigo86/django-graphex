@@ -9,6 +9,10 @@ Django's own ORM lookups and `Q` objects — **no `django-filter` dependency**.
 - **Opt-in per type** via `Meta.filter_fields`.
 - A single nested **`filter:`** argument of a generated `<Model>FilterInput` type.
 - **Per-field lookups** (`exact`, `icontains`, `in`, `range`, `isnull`, …).
+- BigInteger lookups use `BigInt` decimal-string values (see
+  [64-bit integers](types.md#bigint-64-bit-integers)); the ORM receives integers.
+- Decimal lookups reject `NaN` and the infinities (`"NaN"`, `"Infinity"`) as
+  invalid input, like any other value a scalar cannot represent.
 - **Relation descent** (`author: { name: { … } }`), to-many auto-`distinct()`.
 - **Logical operators**: `and`, `or`, `not` (arbitrarily nested).
 - `choices` fields filter through their generated **Enum**.
@@ -151,6 +155,10 @@ spelled into the key, is the same defect as the eighth:
 | `{"pk": …}`, or `{"id": …}` on a natural-key model | The name is not a field, so the entry compiled to **nothing** and the list was never filterable by its key. An option accepted and ignored is the defect every refusal here exists to prevent. |
 | `{"name__icontains": …}` — a lookup spelled into the **key** | Lookups are declared in the entry's **value**. Spelled into the key, the whole compound lands on the model's own leaves, where no field answers to it: byte-equivalent to `pk`, and refused for the same reason. Write `{"name": ("icontains",)}`. |
 
+A declared direct many-to-many filter is valid when the relation and its target
+key are published, including on Django 5.2. Hiding either still stops schema
+construction; a relation's join table is not a scalar column on the source.
+
 Each refusal opens with the `Meta` the entry has to leave — the type whose
 `Meta.filter_fields` declared it, which for a `DjangoListObjectType` that
 declares none of its own is the **node type** it inherited the declaration
@@ -243,6 +251,18 @@ class ArticleListType(DjangoListObjectType):
         }
 ```
 
+Date and datetime part lookups take **integer** inputs. On a `DateField`,
+`year`, `month`, `day`, and `week_day` are `Int`; on a `DateTimeField`, those
+four plus `hour`, `minute`, and `second` are `Int`. Django numbers `week_day`
+from Sunday (`1`) through Saturday (`7`). These lookups remain opt-in unless
+added to `COMMON_FILTER_LOOKUPS`; the list-form defaults do not gain them.
+
+The full-value lookups (`exact`, comparisons, `in`, and `range`) keep their
+existing `Date` or `DateTime` input types and ISO values. If a client declared
+`$year: Date` or `$year: DateTime` for a part lookup, change the variable to
+`$year: Int` and supply an integer such as `2024`. This is an input-schema
+change; it does not alter `TimeField` part types or subscription filters.
+
 To change the **global base set** that every list-form field receives, use the
 setting:
 
@@ -290,10 +310,171 @@ Multiple keys in the same object are **AND-ed** together.
 | `range` | `{ range: [10, 20] }` | between (a **two-element list**) |
 | `isnull` | `{ isnull: true }` | IS (NOT) NULL |
 
+An explicitly supplied `exact: null` matches rows whose field is **SQL NULL**,
+the same row set as `isnull: true`. This includes nullable scalar, choices,
+date/time, and foreign-key ID filters. For a non-nullable field it matches no
+rows. On a `JSONField`, it matches SQL NULL, **not** a stored JSON `null` value.
+Other lookups still keep their existing null handling. Omitting `exact` (or the
+whole filter) adds no predicate; it is not a request to match NULL rows:
+
+For a type that declares a nullable `published` date as filterable:
+
+```graphql
+# Only articles with a NULL published date.
+{ articles(filter: { published: { exact: null } }) { results { id } } }
+
+# No published-date predicate.
+{ articles(filter: { published: {} }) { results { id } } }
+```
+
+Clients that previously sent `exact: null` to mean “do not filter” must omit
+that lookup instead. Clients already using `isnull: true` do not need to change.
+The generated input types and their defaults are unchanged.
+
 Only the lookups you declared in `filter_fields` are exposed on each field.
 The table shows the default-set shapes; the extra catalog lookups (`iexact`,
 `contains`, date/time parts, …) follow the same pattern — see the
 [lookup catalog](#lookup-catalog-defaults-vs-the-full-set).
+
+### Forward-FK filters use the destination's row scope { #forward-fk-filter-scope }
+
+When a filter descends through a forward foreign key, its destination type's
+`get_queryset(queryset, info)` hook now limits which target rows can satisfy
+the nested predicate. The hook receives the current request and a queryset on
+the source queryset's database alias. A hidden author cannot make a post match
+`{ author: { name: { exact: "hidden" } } }`, even if the post itself is visible.
+Each forward-FK hop in a longer path is checked separately.
+
+This changes **nested target-field filters**, not direct source FK-ID lookups.
+A declaration of `{"author": ("exact", "in")}` can still match a source row
+whose `author_id` names a hidden author. An omitted or empty nested filter
+remains a no-op, and direct `exact: null` still means a real SQL NULL FK. A
+nested nullable lookup can still match a genuinely absent FK when its ordinary
+predicate matches NULL; a non-null hidden target cannot stand in for that
+absence.
+
+The scope is part of the branch it qualifies, rather than a blanket filter on
+all parent rows. An unrelated `or` branch can still select a parent, and
+`not` complements the scoped match, including a genuinely absent nullable FK
+that did not match the positive predicate. Hook failures become GraphQL errors;
+they do not retry the filter without the scope. No destination rows are loaded
+into Python for this check: the ORM composes the hook's queryset as a
+same-database subquery.
+
+This is not a global relation policy. Forward OneToOne, reverse-FK and M2M
+filters have their own bounded rules below. Custom `@filter_field` bodies,
+ordering, and direct source FK-ID lookups retain separate contracts. Automatic
+OneToOne output reads have their own destination-hook rule. See
+[relation output scope](types.md#relation-scope-hatch) and
+[permission-scoped schemas](permission-scoped-schema.md).
+
+### Forward OneToOne filters use the destination's row scope { #forward-o2o-filter-scope }
+
+A nested filter through a forward OneToOne relation now applies the
+destination type's `get_queryset(queryset, info)` on the current request and
+source database alias. For a nullable `Profile.user` relation declared with
+`filter_fields = {"user__name": ("exact",)}`, a hidden user cannot make its
+visible profile match:
+
+```graphql
+{ profiles(filter: { user: { name: { exact: "hidden" } } }) {
+    results { id }
+    totalCount
+} }
+```
+
+The hook restricts this nested destination-field predicate, not the entire
+profile list. Empty or omitted relation nodes remain no-ops. A genuinely
+absent OneToOne target can still match a nested NULL predicate; a hidden,
+non-null target is not treated as absent. `or` and `not` compose around the
+scoped match, including real NULL rows. Direct source-column ID lookups such
+as `user: { exact: 7 }` retain their previous source-owned behavior even if
+that user is hidden. Each supported hop in a longer filter path is checked.
+
+The ORM keeps the destination hook lazy as a same-database subquery. A hook
+failure or a changed database alias rejects the request rather than retrying
+without scope. Existing reverse OneToOne filtering already invokes its
+destination hook; this filter change does not modify that path. Automatic
+OneToOne **output** reads have the separate rule in the types guide. Custom
+filter bodies, ordering, and unrelated ORM joins remain separate. A relation
+replaced by an explicit resolver or pruned from the active
+schema does not gain a filter path.
+
+### Reverse-FK filters use a visible child witness { #reverse-fk-filter-scope }
+
+A filter through an automatically published reverse foreign key also applies
+the child type's `get_queryset` for the current request. For example,
+`posts(filter: { comments: { label: { exact: "approved" } } })` matches a post
+only when **one visible comment** has that label. A hidden comment cannot make
+its post match even when a visible sibling has a different label. Direct
+reverse-child ID lookups traverse the child table, so they are scoped too;
+unlike direct forward-FK IDs, they are not source-owned columns.
+
+The visibility test and child predicate share one correlated SQL witness. A
+`not` around that branch complements the entire matching-parent set: a visible
+nonmatching sibling cannot cancel a visible matching child. Separate explicit
+`and` branches may still match different visible children, while predicates
+inside one `comments` object must match the same visible child. An absent or
+hidden-only child set retains the ordinary reverse-relation NULL behavior;
+this also holds for a nested nullable forward-FK predicate such as
+`comments: { owner: { name: { exact: null } } }`, even when the owner type has
+its own `get_queryset` hook. Empty relation objects are no-ops. The hook runs
+on the source queryset's database alias, and a failure rejects the request
+rather than retrying without the scope. No destination ID list is loaded into Python or queried once per
+parent.
+
+Filter declarations use Django's ORM reverse query name. The projection guard
+now resolves a default `*_set` output accessor, or a `related_name` distinct
+from `related_query_name`, to the same automatically published child type.
+These query-name paths were formerly refused even when the automatic accessor
+was published. This does **not** reopen a relation replaced by a declared
+resolver such as `DjangoFilterListField`, or one removed from a permission-
+scoped schema; both still lose their filter path. M2M filters have the bounded
+rule below; forward OneToOne has the bounded rule above. Custom filter bodies
+and ordering remain separate contracts.
+
+### Many-to-many filters use a visible target witness { #m2m-filter-scope }
+
+Forward and reverse M2M filters apply the destination type's
+`get_queryset(queryset, info)` to the current request. The target must be
+both linked through the M2M relation and visible under that hook to witness
+the predicate. This includes target-ID lookups, whether declared directly
+as `{"tags": ("exact", "in")}` or nested as `tags__id`. Unlike a direct
+forward-FK ID, an M2M target ID is not a source-owned column.
+
+For example, with `filter_fields = {"tags__label": ("exact",)}`, a post
+whose only tag is hidden by `TagType.get_queryset` does not match:
+
+```graphql
+{ posts(filter: { tags: { label: { exact: "internal" } } }) {
+    results { id }
+    totalCount
+} }
+```
+
+One relation object uses one visible target for all its fields; separate
+explicit `and` branches can use different visible targets. An enclosing
+`not` complements the set of matching parents, not each joined M2M row, so
+a visible nonmatching sibling cannot invert a visible match. An absent or
+hidden-only visible target set retains the ordinary relation-NULL lookup
+meaning. Empty relation objects and omitted filters are no-ops. Longer
+paths scope each supported destination hop independently.
+
+The ORM composes the visible target as a correlated SQL witness on the
+source queryset's database alias. It does not load all target IDs into
+Python or issue one authorization query per parent. Hook exceptions reject
+the request instead of retrying unscoped. Filter declarations use Django's
+ORM query name; an automatically published reverse output accessor may have
+a different name. Replacing that accessor with an explicit resolver or
+pruning it from the active schema does not reopen the filter path.
+
+Automatic M2M output reads have a separate destination-hook rule: hidden
+targets are absent from nested `results` and `totalCount` before pagination.
+This filter rule does **not** authorize custom filter bodies, ordering, or
+access control on the through model. Automatic OneToOne output reads have
+their own destination-hook rule.
+See [relation output scope](types.md#relation-scope-hatch) and
+[relation input scope](permission-scoped-schema.md).
 
 ## Logical operators: `and` / `or` / `not`
 
@@ -319,6 +500,89 @@ query {
 - `or: [a, b]` → `a OR b`
 - `not: a` → `NOT a`
 - sibling keys in the same node are AND-ed with the operators.
+
+For a many-to-many or reverse foreign-key relation, **separate explicit `and`
+branches may match different related rows**. For example, a post with one tag
+labelled `x` and another labelled `y` now matches:
+
+```graphql
+{ posts(filter: { and: [
+  { tags: { label: { exact: "x" } } }
+  { tags: { label: { exact: "y" } } }
+] }) { results { title } } }
+```
+
+Criteria grouped inside **one** relation object still require the **same**
+related row. Use `tags: { label: { exact: "x" }, color: { exact: "blue" } }`
+when one tag must satisfy both. A deeper `and` keeps its outer relation row:
+`comments: { label: { exact: "focus" }, and: [
+{ tags: { label: { exact: "x" } } },
+{ tags: { label: { exact: "y" } } } ] }` requires one `focus` comment with
+two matching tags. Tags on different comments do not qualify. The distinction
+also applies beneath `or` or `not`; scalar and direct to-one predicates, null
+lookups, the generated input schema, and subscription filters are unchanged.
+Clients that depended on separate `and` branches matching one related row
+should group those criteria inside one relation object.
+
+#### Operators inside one to-many relation object
+
+Within one relation object (`tags: { ... }` over a many-to-many or reverse
+foreign key), criteria without a `not` share **one** related row, and every
+`not` is a parent-level test: the parent has **no** related row matching the
+`not` operand (evaluated on a single row, like the ORM's `~Q(tags__...)`).
+The result is the same whether the `not` stands alone, beside other criteria,
+or inside `and` / `or`.
+
+| Inside `tags: { ... }` | Meaning |
+|---|---|
+| `label: x, color: c` (siblings), `and: [x, y]` | One related row satisfies all criteria, so `and: [x, y]` over two different labels matches nothing. |
+| `or: [x, y]` | A related row satisfies x or y. |
+| `not: x` (also `or: [{ not: x }]`, `and: [{ not: x }]`) | No related row matches x. |
+| `label: x, not: y`, `and: [x, { not: y }]` | Some related row matches x **and** no related row matches y. |
+| `or: [z, { not: y }]` | Some related row matches z, **or** no related row matches y. |
+| `not: { and: [x, y] }` | No single related row matches both x and y: the exact complement of `and: [x, y]`. |
+| `not: { or: [x, y] }` | No related row matches x or y. |
+| `not: { not: x }` | Some related row matches x. |
+| *(on the parent)* `not: { tags: { and: [z, x] } }`, `not: { tags: { label: z, or: [x] } }` | A `not` that **encloses** a relation object is the exact complement of that object's match: no single related row satisfies all of its same-row criteria. With no tag that is both `z` and `x`, every post matches. |
+
+An `or` operand that holds a relation key follows the same rule as an `and`
+operand **one level up**, beside a sibling relation key or a negated operand:
+each relation branch matches its own related row. On a post,
+`{ or: [{ tags: x }], tags: z }` matches a post that has an `x` tag **and** a
+(possibly different) `z` tag, exactly like `{ and: [{ tags: x }], tags: z }`;
+and `{ or: [{ tags: x }, { not: { tags: z } }] }` tests "has x" and "has no z"
+independently, and `{ not: { not: { tags: x } }, tags: y }` needs one tag `x` and (possibly another) tag `y`. Keep both criteria inside one relation object (`tags: { ... }`)
+when one tag must satisfy them.
+
+The rule applies at every to-many relation object, including one nested in
+another (`comments: { tags: { not: ... } }`), and a `not` that **encloses** a
+whole relation object (`not: { tags: x }`) is the complement of the parent set
+matched by that object. A `not` under a to-one hop inside the object
+(`owner: { not: ... }`) is part of that row's own predicate.
+
+!!! warning "Behavior change"
+
+    Before this rule, a `not` beside a positive criterion (`label: x,
+    not: y`) was tested on the same related row, so a parent with x and y
+    matched, and `not: { and: [x, y] }` was not the complement of
+    `and: [x, y]`. Both now follow the parent-level rule above.
+
+#### Empty operands are no-ops
+
+An empty Boolean construct imposes **no condition** and returns every row the
+rest of the filter allows. In particular `or: []` is a no-op, **not** "match
+nothing", and `not: {}` is a no-op, not "match everything but nothing". The
+rule is uniform at the top level and inside a relation object:
+
+- `{}`, `and: []`, `or: []`, `not: {}`, `not: { and: [] }` and
+  `not: { or: [] }`
+- `tags: {}`, `tags: { and: [] }`, `tags: { or: [] }` and
+  `tags: { not: {} }`
+- nested forms such as `and: [{ or: [] }]` and `or: [{ and: [] }]`
+- an empty scalar object such as `title: {}`
+
+An empty operand next to a real one contributes nothing: `or: [{}, X]` is
+`X`. Use an explicit `exact: null` or `isnull` lookup when you mean "no value".
 
 ## Filtering across relations
 
@@ -366,6 +630,14 @@ applies `.distinct()` so join fan-out doesn't duplicate rows.
     ```graphql
     { posts(filter: { author: { id: { exact: 5 }, name: { icontains: "ada" } } }) { results { title } } }
     ```
+
+    A related model field may itself be named like a lookup. For example,
+    `{"author__year": ("exact",), "author__exact": ("exact",)}` still uses
+    nested field inputs: `author: { year: { exact: 2024 } }` and
+    `author: { exact: { exact: 7 } }`. A direct relation-PK declaration uses
+    scalar/list values instead, such as `author: { exact: 5 }` when no path
+    through `author` is declared. These are existing input shapes; the
+    related field name does not replace the PK lookup.
 
 !!! info "Nested lookups are unioned with the related type's own declaration"
 

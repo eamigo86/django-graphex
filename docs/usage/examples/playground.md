@@ -29,7 +29,7 @@ You need [uv](https://docs.astral.sh/uv/) and Python 3.12+.
 git clone https://github.com/eamigo86/django-graphex.git
 cd django-graphex/examples/playground
 
-make install     # uv sync — installs the local library (editable) + daphne
+make install     # uv sync --group test — local library (editable) + daphne + test tools
 make migrate     # generate + apply migrations (SQLite)
 make seed        # load demo data (see below)
 make run         # daphne ASGI server (HTTP + WebSocket) on 127.0.0.1:8000
@@ -42,7 +42,7 @@ All the `Makefile` targets:
 
 | Target | What it does |
 |--------|--------------|
-| `make install` | `uv sync` — creates the venv, installs `django-graphex[subscriptions]` from the parent checkout (editable) plus `daphne` |
+| `make install` | `uv sync --group test` — creates the venv, installs `django-graphex[subscriptions]` from the parent checkout (editable), `daphne` and the pytest tools |
 | `make migrate` | `makemigrations blog` + `migrate` (SQLite) |
 | `make seed` | Loads the demo data via `python manage.py seed` |
 | `make run` | Starts `daphne` (ASGI: HTTP **and** WebSocket) at `http://127.0.0.1:8000/` |
@@ -69,10 +69,20 @@ The `--no-migrations` test option is deliberate: playground tests exercise the
 current models and must not depend on whatever generated migration happened to
 exist in a developer checkout.
 
+### Not production-ready
+
+The playground settings are a development fixture. `manage.py check --deploy`
+reports seven warnings on them: `DEBUG = True`, a short hard-coded
+`SECRET_KEY`, no HSTS, no SSL redirect, insecure session and CSRF cookies, and
+no clickjacking middleware. Copy the *patterns* (the `DJANGO_GRAPHEX` block, the
+schema wiring), not the file, into a real project and set those deliberately.
+
 ### WebSocket origin policy
 
 The shipped `ALLOWED_HOSTS` is exactly `127.0.0.1`, `localhost` and
-`testserver`. `AllowedHostsOriginValidator` applies that list to WebSocket
+`testserver`; the last one exists only because Django's test client and
+Channels' test communicator use that host, so drop it from a copy that is not
+run by this test suite. `AllowedHostsOriginValidator` applies that list to WebSocket
 handshakes, so a browser origin such as `evil.example` is rejected while the
 documented localhost and Django test-client origins connect.
 
@@ -99,10 +109,11 @@ so an allow-all Origin policy would enable cross-site WebSocket requests.
 - The superuser **`demo` / `demo12345`** (also linked to the first author)
 
 The counts are deliberate: 12 posts per author is **more than the page size
-of 10**, so nested `posts` lists span real multiple pages and the DB-side
-window-pagination path (`ROW_NUMBER() OVER (PARTITION BY ...)`) is genuinely
-exercised — try `results(offset: 10)` on a nested list. Scale the dataset
-without editing code:
+of 10**, so — **when logged in** — nested `posts` lists span real multiple pages
+and the DB-side window-pagination path (`ROW_NUMBER() OVER (PARTITION BY ...)`)
+is genuinely exercised: try `results(offset: 10)` on a nested list. Logged out,
+`PostType.get_queryset` shows only the 4 published posts per author, which fit
+on one page. Scale the dataset without editing code:
 
 ```bash
 uv run python manage.py seed --authors 25 --posts 15   # explicit counts
@@ -123,12 +134,34 @@ uv run python manage.py seed --scale 2                 # doubles authors + posts
 ### Authenticating (private fields)
 
 Auth is **Django session-based**. Private fields (`me`, `myNotes`, the note
-mutations, `noteSubscription`) require a logged-in user:
+and comment writes, `noteSubscription`) and the private mutations `postUpdate`,
+`postDelete` and `documentUpdate` require a logged-in user. Exactly these
+writes are deliberately open to anonymous callers, so you can compare a gated
+write with an ungated one:
+
+| Open mutation | Why it is open |
+|---|---|
+| `postCreate` | Drives the public `postSubscription` demo without a session |
+| `postWithCommentsCreate` (no `comments`) | Behaves like `postCreate`; with comments the child's `IsOwnerOrReadOnly` gate applies |
+| `createCategory` | Hand-written mutation demo (duplicate names return `ok: false`) |
+| `documentCreate` | The multipart `curl` demo needs no session |
+| `uploadDocument` | The base64 upload demo |
+| `registerUser` | Account registration is public by nature |
+
+The destructive or modifying siblings are mounted under `PrivateMutation`
+(`private_mutation=` on `DjangoGraphQLSchema`), so an anonymous call answers
+`Authentication required.`. To log in:
 
 1. Open <http://127.0.0.1:8000/admin/> and log in as `demo` / `demo12345`.
 2. Return to GraphiQL — it shares the session cookie.
 
-Log out of `/admin` to test the anonymous (public) behaviour again.
+Log out of `/admin` to test the anonymous (public) behaviour again. An account
+made with `registerUser` is not staff and cannot log in anywhere here: the
+admin login accepts staff only and the playground ships no other login view.
+
+The ids in the examples (`id: 1`, `author: 1`) assume a fresh database from
+`make reset`; re-running `make seed` on existing rows creates new ids, so look
+one up first.
 
 !!! tip "Anonymous users see fewer posts — on purpose"
     `PostType.get_queryset` scopes the base queryset per request: anonymous
@@ -137,20 +170,24 @@ Log out of `/admin` to test the anonymous (public) behaviour again.
     [`get_queryset` hook](../permissions.md) working on every top-level field
     type.
 
-    `get_queryset` is **field-level**, and the playground shows both sides of
-    that. Anonymously:
+    The hook also scopes automatic FK and reverse-FK output reads. Anonymously:
 
     | Query | Statuses returned |
     |---|---|
     | `{ posts { results { status } } }` | `PUBLISHED` only |
     | `{ categories { name posts { title status } } }` | `PUBLISHED` only — `CategoryType.posts` is a mounted `DjangoFilterListField`, so the scope runs |
-    | `{ authors { results { posts { results { status } } } } }` | `DRAFT`, `ARCHIVED`, `PUBLISHED` — the auto-expanded relation reads the prefetch cache, so `PostType.get_queryset` never runs |
+    | `{ authors { results { posts { results { status } } } } }` | `PUBLISHED` only — the automatic reverse-FK container applies `PostType.get_queryset` |
 
-    The third row is not a bug; it is the boundary the
-    [scoping hatch](../types.md#relation-scope-hatch) exists to close, and the
-    second row is that hatch mounted. Declaring it costs the relation its
-    nested filter paths — see the table under
+    The mounted field in the second row changes the wire shape to a plain list;
+    it is no longer needed merely to hide drafts. Declaring it costs the
+    relation its nested filter paths — see the table under
     [Filtering](../filtering.md#filter-refusal-shapes).
+
+    The Playground's `PostType` declares a direct `author` FK-ID filter, not
+    `author__name` traversal. That source-owned ID lookup retains its current
+    behavior; nested forward-FK filters in applications that declare them now
+    apply the destination type's request scope. See
+    [forward-FK filter scope](../filtering.md#forward-fk-filter-scope).
 
 ## Schema tour
 
@@ -166,26 +203,26 @@ Everything lives in [`blog/schema.py`](https://github.com/eamigo86/django-graphe
 | **Query optimization** | `AuthorType.post_count = AnnotatedField(GraphQLInt, Count("posts"))` (annotation injected **only when selected**); the `AuthorType.optimize_posts` per-field hook; DB-side window pagination of nested pages — all `OPTIMIZE_*` settings are ON by default | [Query Optimization](../query-optimization.md) |
 | **Typed GFK union** | `AttachmentTargetUnion` (`DjangoUnionType`, `Meta.types = (AccountType, InvoiceType)`) mapped via `AttachmentType.Meta.unions = {"target": AttachmentTargetUnion}` | [Types](../types.md) |
 | **Directives** | `DjangoGraphQLSchema(..., directives=all_directives)` + `GraphQLDirectiveMiddleware` in `DJANGO_GRAPHEX["MIDDLEWARE"]` | [Directives](../../directives.md) |
-| **Model CRUD mutations** | `PostMutation` (`DjangoModelMutation`) → `postCreate/Update/Delete`; `CommentModelType.MutationFields()` and `NoteModelType.MutationFields()` (`DjangoModelType`) → `commentCreate/Update/Delete` and `noteCreate/Update/Delete` | [Mutations](../mutations.md) |
+| **Model CRUD mutations** | `PostMutation` (`DjangoModelMutation`) → `postCreate` (open) and `postUpdate/Delete` (mounted under the `private_mutation` root, so login is required); `CommentModelType.MutationFields()` and `NoteModelType.MutationFields()` (`DjangoModelType`) → `commentCreate/Update/Delete` and `noteCreate/Update/Delete` | [Mutations](../mutations.md) |
 | **Nested writes** | `PostWithCommentsMutation` — `Meta.nested_fields = {"comments": Comment}` creates a `Post` plus its comments in one atomic operation | [Mutations](../mutations.md#nested-fields-support) |
 | **Descriptor-API mutations** | `CreateCategory` / `UploadDocument` — hand-written `Mutation` classes with `class Arguments` (`Field(CategoryInput, required=True)`, `CharField(required=True)`) and payload fields declared with `BooleanField()` / `CharField()` / `Field(CategoryType)` | [Mutations](../mutations.md) |
 | **File uploads, base64** | `UploadDocument` accepts a `Base64FileInput`; `MAX_UPLOAD_SIZE` (5 MB) and `MAX_REQUEST_BODY_SIZE` (20 MB) guard it in `config/settings.py` | [Mutations](../mutations.md#file-upload-support) |
-| **File uploads, multipart** | `DocumentMutation` (`DjangoModelMutation`, `model_operations = ("create", "update")`) → `documentCreate` / `documentUpdate`; a part named `attachedFile` **or** `attached_file` lands on the same `Document.attached_file` column — one column, two documented ways in | [Mutations](../mutations.md#automatic-multipart-uploads) |
+| **File uploads, multipart** | `DocumentMutation` (`DjangoModelMutation`, `model_operations = ("create", "update")`) → `documentCreate` / `documentUpdate`; a part named `attachedFile` **or** `attached_file` lands on the same `Document.attached_file` column. The configured 5 MB `MAX_UPLOAD_SIZE` now applies to every received multipart file, including unmatched parts. | [Mutations](../mutations.md#automatic-multipart-uploads) |
 | **Projection = security boundary** | `AuthorType` hides `bio`, `UserType` hides `password`, `CommentType` / `CommentModelType` hide `internal_note` on read **and** write — each unreadable, unorderable and unfilterable through its type | [Types](../types.md#projection-security-boundary) |
-| **Relation scoping hatch** | to-MANY: `CategoryType.posts = DjangoFilterListField(PostType)`; to-ONE: `AuthorType.user = Field(UserType)` + `resolve_user`. Beside them `AuthorType.posts` stays the auto-expanded shape, so the pair shows what the hatch buys and costs | [Types](../types.md#relation-scope-hatch) |
+| **Relation scoping hatch** | to-MANY: `CategoryType.posts = DjangoFilterListField(PostType)`; to-ONE: `AuthorType.user = Field(UserType)` + `resolve_user`. Beside them `AuthorType.posts` stays the auto-expanded shape, while automatic reverse M2M `TagType.posts` applies `PostType.get_queryset` to its members and count. The pair shows what the hatch buys and costs | [Types](../types.md#relation-scope-hatch) |
 | **Permissions** | `NoteModelType.permission_classes = [IsAuthenticatedOrReadOnly]`; a custom `IsOwnerOrReadOnly(BasePermission)` assigned on `CommentModelType`, which is also the gate the nested `postWithCommentsCreate` runs for each inline comment; per-request scoping via `filter_queryset` (`myNotes` returns only your notes) | [Permissions](../permissions.md) |
 | **Public/private schema split** | `DjangoGraphQLSchema(query=..., private_query=..., subscription=..., private_subscription=...)` + `AuthenticatedFieldsMiddleware` protects the private roots at resolve time | [Security](../security.md) |
-| **Subscriptions** | Public `PostSubscription` / `CommentSubscription` (`payload_mode = "full"`, per-subscriber `filter`); private `NoteModelType.SubscriptionField()` with `subscription_scope` (server-forced "only my notes") and `subscription_index_fields = ("owner",)` | [Subscriptions](../subscriptions.md) |
-| **Query limits** | Global `MAX_QUERY_DEPTH = 6` in settings; per-type `PostType.Meta.max_depth = 4` and `complexity = 2` (most-restrictive wins) | [Query Limits](../query-limits.md) |
+| **Subscriptions** | Public `PostSubscription` / `CommentSubscription` (`payload_mode = "full"`, per-subscriber `filter`; `PostSubscription.subscription_scope` keeps drafts away from anonymous subscribers, since subscriptions do not run `PostType.get_queryset`); private `NoteModelType.SubscriptionField()` with `subscription_scope` (server-forced "only my notes") and `subscription_index_fields = ("owner",)` | [Subscriptions](../subscriptions.md) |
+| **Query limits** | Global `MAX_QUERY_DEPTH = 6` in settings; per-type `PostType.Meta.max_depth = 4` and `complexity = 2` (most-restrictive wins). Cost analysis is **off by default**: `config/settings.py` carries a commented, measured `MAX_QUERY_COST = 10_000_000` (a budget of 200 would refuse even a one-row list query) | [Query Limits](../query-limits.md) |
 
 !!! warning "Safe ordering, live"
     The ordering allowlist is active on all paginated fields. Try these in
     GraphiQL to see the anti-oracle guard reject them:
 
     - `posts { results(ordering: "author__user__password") { title } }` →
-      `Relation-spanning ordering is not permitted`
+      `Invalid ordering field: 'author__user__password'. Relation-spanning ordering is not permitted.`
     - `posts { results(ordering: "nonexistent") { title } }` →
-      `Invalid ordering field`
+      `Invalid ordering field: 'nonexistent'.`
 
 ## Starter queries
 
@@ -210,7 +247,7 @@ work anonymously.
           comments {
             totalCount
             results(first: 2) { authorName text }
-            pageInfo { hasNextPage endCursor }
+            pageInfo(first: 2) { hasNextPage endCursor }
           }
         }
       }
@@ -221,10 +258,14 @@ work anonymously.
       comments {
         totalCount
         results(first: 3) { text }
-        pageInfo { hasNextPage endCursor }
+        pageInfo(first: 3) { hasNextPage endCursor }
       }
     }
     ```
+
+    To continue either cursor list, send its `endCursor` as `cursor` to both
+    `results` and `pageInfo`, with the same `first` value on each. Otherwise
+    cursor metadata can advance beyond rows the results did not show.
 
 === "Custom filter + optimizer"
 
@@ -308,7 +349,7 @@ graphql-core generation.
 |---|---|
 | `{ authors { results { bio } } }` | `Cannot query field 'bio' on type 'AuthorType'. Did you mean 'id'?` |
 | `{ authors { results(ordering: "bio") { name } } }` | `Invalid ordering field: 'bio'.` |
-| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | Rejected: `bio` is not an input field of `AuthorFilterInput`. |
+| `{ authors(filter: { bio: { icontains: "x" } }) { totalCount } }` | `Expected value of type 'AuthorFilterInput' not to include unknown field 'bio'. Did you mean 'id'? Found: { bio: { icontains: "x" } }.` |
 | `{ authors { results(ordering: "name", page: 1) { name } } }` | the control — still sorts, `Author 0`, `Author 1`, `Author 10`, … |
 
 The same rule is told on two columns where it matters more than on a bio:
@@ -317,7 +358,7 @@ The same rule is told on two columns where it matters more than on a bio:
 |---|---|
 | `{ authors { results { user { password } } } }` | `Cannot query field 'password' on type 'UserType'.` — without the exclusion `Author.user` answers the hash to every **authenticated** caller. Anonymous ones are stopped one layer earlier by `resolve_user` (see the hatch table below), so this column has two independent walls |
 | `{ comments { results(first: 1) { internalNote } } }` | `Cannot query field 'internalNote' on type 'CommentType'.` |
-| `mutation { commentCreate(newComment: { post: 1, authorName: "a", text: "t", internalNote: "x" }) { ok } }` | `Field 'internalNote' is not defined by type 'CommentCreateGenericType_p84059c'.` — the same projection on the **write** input |
+| `mutation { commentCreate(newComment: { post: 1, authorName: "a", text: "t", internalNote: "x" }) { ok } }` | `Expected value of type 'CommentCreateGenericType_p84059c' not to include unknown field 'internalNote', found: { post: 1, authorName: "a", text: "t", internalNote: "x" }.` — the same projection on the **write** input |
 
 The to-ONE hatch closes the ordering axis on the key behind it:
 
@@ -326,16 +367,17 @@ The to-ONE hatch closes the ordering axis on the key behind it:
 | `{ authors { results { name user { username } } } }` | `user: null` for an anonymous caller — `resolve_user` scopes it |
 | `{ authors { results(ordering: "userId") { name } } }` | `Invalid ordering field: 'user_id'.` — the term is normalized to the column *before* it is judged, so the message names `user_id`, not what you sent |
 
-!!! warning "One surface in this playground does **not** honour the same projection"
+!!! note "The model-bound subscription needs its own projection"
     `CommentSubscription` is a hand-written `Subscription` bound to
-    `Meta.model = Comment`, so it compiles its event type and its
-    `CommentSubscriptionFilterInput` from the **model** — `internalNote` is
-    selectable and equality-filterable there while `CommentType` hides it. That
-    is the third of the
+    `Meta.model = Comment`, so it would compile its event type and its
+    `CommentSubscriptionFilterInput` from the **model** — `internalNote` would
+    be selectable and equality-filterable there while `CommentType` hides it.
+    That is the third of the
     [open boundaries](../types.md#projection-exception) the rule states, and
     the remedy is one line: repeat `exclude_fields` in the subscription's own
-    `Meta`. The playground leaves it open on purpose and pins it with a test
-    that goes red the day it is closed.
+    `Meta`. The playground does exactly that, so `internalNote` is absent from
+    the subscription's event type and filter input, and a test pins both the
+    closure and the library gap it compensates for.
 
 ## Uploading a file
 
@@ -355,6 +397,13 @@ curl -s http://127.0.0.1:8000/graphql/ \
 {"data":{"documentCreate":{"ok":true,"document":{"id":"1","name":"Notes","attachedFile":"documents/notes.txt"}}}}
 ```
 
+The file column is an allow-list (`.txt`, `.pdf`, `.png`, `.jpg`, `.jpeg`,
+`.gif`), applied by both upload paths: an `.html` or `.svg` upload answers
+`ok: false`. While `DEBUG` is on, uploaded files are served as downloads
+(`Content-Disposition: attachment`, `nosniff`, `Content-Security-Policy:
+sandbox`); in production serve user uploads from a separate domain or CDN, never
+from the application's own origin.
+
 Three variations worth running, because each one teaches a rule:
 
 | Change | What happens |
@@ -362,6 +411,25 @@ Three variations worth running, because each one teaches a rule:
 | rename the part to `attached_file` | same landing column — the part name is matched against **both** the camelCase alias the SDL publishes and the model attribute. The stored path picks up a uniqueness suffix (`documents/notes_ciyKdvA.txt`) only because the first upload already took `documents/notes.txt` |
 | misspell the part (`attachedFyle`) | `ok: true` with `attachedFile: ""` — a part matching no exposed input field is ignored, so a typo looks exactly like success |
 | drop `-H 'X-Requested-With: …'` | **HTTP 403**, `This content type requires the X-Requested-With header. …`, before the body is read |
+
+## `BigInt` and `Decimal` over the wire
+
+Both scalars travel as strings, so a value past 2**53 or a money amount never
+passes through a JSON float. Log in first (the `BigInt` post is a seeded draft)
+and run:
+
+```graphql
+{ postsFlat(ordering: "-viewCount", limit: 1) { id viewCount } }
+```
+
+It answers `"9007199254740993"`. The `Decimal` side needs no login:
+
+```graphql
+{ attachments { results { target { ... on AccountType { balance } } } } }
+```
+
+answers `balance: "1200.50"` for the first account. A test pins both documents
+against the project `README.md`.
 
 ## Two settings that ship on, and are invisible until they bite
 
@@ -411,14 +479,16 @@ to watch them work is the built-in browser client:
 
     ```graphql
     mutation {
-      postCreate(newPost: { title: "Live update", author: 1 }) {
+      postCreate(newPost: { title: "Live update", author: 1, status: PUBLISHED }) {
         ok
         post { id title }
       }
     }
     ```
 
-    The client streams the `next` event with the new post instantly. Both
+    The client streams the `next` event with the new post instantly. The
+    explicit published status is required for an anonymous subscriber;
+    omitting it creates a draft that this stream intentionally hides. Both
     playground subscriptions set `payload_mode = "full"`, so the whole
     serialized instance is deliverable — not just the `id`.
 
@@ -442,7 +512,7 @@ More things to try:
 The playground ships genuine end-to-end tests that drive the same consumer,
 SSE view and schema the server runs — a WS round-trip (subscribe → ORM
 `Post.objects.create()` → `next` frame received) and the equivalent SSE
-round-trip, the multipart upload in all four spellings, the projection boundary
+round-trip, the multipart upload with both spellings of the part name, the projection boundary
 on every axis it can reach, both arms of the relation hatch, and the two
 settings that ship on:
 

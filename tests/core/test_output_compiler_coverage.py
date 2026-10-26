@@ -14,7 +14,7 @@ asserting their ACTUAL behaviour:
 - "_get_range_composite_type" bound resolver: object / dict / null root arms.
 - "_to_graphql_field": scalar resolver dict-path; relation with no related model
   -> {}; choices field with no shared registry falls through to the scalar map.
-- "compile_output_fields": "get_fields" exception fallback to concrete_fields.
+- "compile_output_fields": "get_fields" failure abort with original cause.
 
 Run: .venv/bin/python -m pytest \
     tests/core/test_output_compiler_coverage.py -q --no-cov
@@ -528,32 +528,35 @@ def test_to_one_relation_resolver_reads_dict_and_object() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compile_output_fields_get_fields_exception_fallback() -> None:
-    """When get_fields raises, the compiler falls back to concrete_fields.
+def test_compile_output_fields_get_fields_exception_aborts_with_cause() -> None:
+    """A failed enumeration aborts with the model and original cause.
 
-    Contract: output-field compilation ships broken if it stops tolerating
-    a raising "get_fields" and no longer falls back to "concrete_fields".
+    The fake model has no metadata label, so the diagnostic must still identify
+    its class without masking the original RuntimeError.
 
     Raises:
-        RuntimeError: Raised by the fake "get_fields" stub below to force
-            the fallback path; caught internally by the compiler under test.
+        RuntimeError: Injected by the fake model metadata when its fields are enumerated.
     """
+    from django.core.exceptions import ImproperlyConfigured
+
     from django_graphex.core import output_compiler
 
     char = OcBook._meta.get_field("title")
+    original = RuntimeError("boom — metadata enumeration failed")
 
     class _FakeMeta:
         concrete_fields = [char]
 
         def get_fields(self, include_parents=False):
-            raise RuntimeError("boom — exercise the fallback arm")
+            raise original
 
     class _FakeModel:
         _meta = _FakeMeta()
 
-    fields = output_compiler.compile_output_fields(_FakeModel, StubRegistry())
-    # The concrete field still compiled via the fallback path.
-    assert "title" in fields
+    with pytest.raises(ImproperlyConfigured, match="_FakeModel") as caught:
+        output_compiler.compile_output_fields(_FakeModel, StubRegistry())
+
+    assert caught.value.__cause__ is original
 
 
 # ---------------------------------------------------------------------------

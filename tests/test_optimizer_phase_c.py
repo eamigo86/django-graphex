@@ -400,7 +400,15 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Post
 
-        _reg = {}
+        _reg = Registry()
+        _FakeM2MType = _gtype(
+            "_FakeM2MType",
+            (DjangoObjectType,),
+            {
+                "Meta": type("Meta", (), {"model": Post, "registry": _reg}),
+            },
+        )
+
         _PostListType3 = _gtype(
             "_M2MPostListType",
             (DjangoListObjectType,),
@@ -416,13 +424,8 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 )
             },
         )
-        _FakeM2MType = _gtype(
-            "_FakeM2MType",
-            (DjangoObjectType,),
-            {
-                "posts": DjangoNestedListObjectField(_PostListType3, accessor="posts"),
-                "Meta": type("Meta", (), {"model": Post, "registry": _reg}),
-            },
+        _FakeM2MType._meta.fields["posts"] = DjangoNestedListObjectField(
+            _PostListType3, accessor="posts"
         )
 
         inst = _FakeM2MType._meta.fields["posts"]
@@ -457,7 +460,15 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
         from django_graphex.types import DjangoListObjectType, DjangoObjectType
         from tests.models import Post
 
-        _reg = {}
+        _reg = Registry()
+        _FakeType = _gtype(
+            "_FakeType",
+            (DjangoObjectType,),
+            {
+                "Meta": type("Meta", (), {"model": Post, "registry": _reg}),
+            },
+        )
+
         _PostListType2 = _gtype(
             "_PostListType2",
             (DjangoListObjectType,),
@@ -473,13 +484,8 @@ class TestBuildWindowPrefetchPreChecks(TestCase):
                 )
             },
         )
-        _FakeType = _gtype(
-            "_FakeType",
-            (DjangoObjectType,),
-            {
-                "posts": DjangoNestedListObjectField(_PostListType2, accessor="posts"),
-                "Meta": type("Meta", (), {"model": Post, "registry": _reg}),
-            },
+        _FakeType._meta.fields["posts"] = DjangoNestedListObjectField(
+            _PostListType2, accessor="posts"
         )
 
         inst = _FakeType._meta.fields["posts"]
@@ -1008,11 +1014,26 @@ class TestWalkerPaginationArgExtraction(TestCase):
             (DjangoObjectType,),
             {"Meta": type("Meta", (), {"model": Post, "registry": _g2_reg})},
         )
-        # No pagination -> no GenericPaginationField on results
+        # Explicitly opt out of the new 100-row default to retain this
+        # unbounded/no-window control path.
+        from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
+
         _PostListTypeCustom = _gtype(
             "_G2PostListTypeCustom",
             (DjangoListObjectType,),
-            {"Meta": type("Meta", (), {"model": Post, "registry": _g2_reg})},
+            {
+                "Meta": type(
+                    "Meta",
+                    (),
+                    {
+                        "model": Post,
+                        "registry": _g2_reg,
+                        "pagination": LimitOffsetGraphqlPagination(
+                            default_limit=None, max_limit=None
+                        ),
+                    },
+                )
+            },
         )
         _AuthorTypeCustom = _gtype(
             "_G2AuthorTypeCustom",
@@ -1913,7 +1934,7 @@ class TestC3FallbackRegressions(TestCase):
 
         _REG = Registry()
         # Unbounded: no default_limit, no max_limit → prefetch_window_slice returns None.
-        paginator = LimitOffsetGraphqlPagination()  # DEFAULT_PAGE_SIZE=None → unbounded
+        paginator = LimitOffsetGraphqlPagination(default_limit=None, max_limit=None)
 
         _PostType = _gtype(
             "_UbPostType",

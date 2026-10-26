@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from django.test import override_settings
 from graphql import (
+    GraphQLError,
     GraphQLField,
     GraphQLObjectType,
     GraphQLSchema,
@@ -95,12 +97,10 @@ def test_fragment_fanout_validates_in_bounded_time() -> None:
 
 
 @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_DEPTH": 50, "MAX_QUERY_COST": 10**9})
-def test_cyclic_fragment_still_terminates_and_reports_as_before() -> None:
-    """A self-spreading fragment must still terminate and report as it did before.
+def test_cyclic_fragment_is_rejected_before_cost_expansion() -> None:
+    """A self-spreading fragment raises instead of yielding truncated cost.
 
-    Memoization must not cache a result that was truncated by the cycle guard,
-    and the cycle guard itself must still stop the recursion. Spreading the
-    cyclic fragment twice exercises exactly that interaction.
+    The original four-unit report silently omitted cyclic work.
     """
     query = (
         "{ root { ...F child { ...F } } } fragment F on Node { name child { ...F } }"
@@ -114,8 +114,8 @@ def test_cyclic_fragment_still_terminates_and_reports_as_before() -> None:
         "nesting depth" not in e.message and "exceeds the maximum" not in e.message
         for e in errors
     )
-    # own(root)=1 + [F: own(child)=1] + [child: own=1 + F: own(child)=1] -> 4.
-    assert analyze_cost(schema, parse(query)).total == 4
+    with pytest.raises(GraphQLError, match="Cyclic fragment reference"):
+        analyze_cost(schema, parse(query))
 
 
 def test_repeated_fragment_spread_counts_twice_in_cost() -> None:

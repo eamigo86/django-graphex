@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from django.db.models import Q
+from django.db.models import BooleanField, Case, Q, Value, When
 from graphql import GraphQLError, Undefined
 
 from .lookups import ALL_LOOKUPS
@@ -52,20 +52,29 @@ def _is_pk_lookups(value: Any) -> bool:
     """Return whether a relation's value is a plain-pk lookups mapping.
 
     A relation declared directly (e.g. '"author": ("exact", "in")') yields a
-    value whose keys are lookup names ("exact"/"in"/...), not related-model
-    field names. Such a value is applied as a leaf against the FK column.
+    value whose keys are lookup names ("exact"/"in"/...), with scalar or list
+    values. A nested related field may itself be named "exact" or "range";
+    its lookup value is another mapping and must be traversed instead.
+    An explicitly present "exact" with value None remains a leaf lookup.
 
     Args:
         value: The value mapped under a relation key.
 
     Returns:
-        True when every set key is a known lookup name (and there is at least
-        one), so the relation should be treated as plain-pk lookups.
+        True when every applicable key is a known lookup name with a leaf
+        value (and there is at least one), so the relation is treated as
+        plain-pk lookups.
     """
     if not hasattr(value, "items"):
         return False
-    keys = [key for key, val in value.items() if _is_set(val)]
-    return bool(keys) and all(key in _LOOKUP_NAMES for key in keys)
+    keys = [
+        key
+        for key, val in value.items()
+        if _is_set(val) or (key == "exact" and val is None)
+    ]
+    return bool(keys) and all(
+        key in _LOOKUP_NAMES and not hasattr(value[key], "items") for key in keys
+    )
 
 
 def _is_to_many(model: type[Model], name: str) -> bool:
@@ -112,13 +121,20 @@ def _leaf_q(prefix: str, field: str, lookups: Any) -> Q:
         lookups: The "{lookup: value}" mapping for the field.
 
     Returns:
-        A "Q" combining every set lookup with "&".
+        A "Q" combining every set lookup with "&". Explicit "exact: null"
+        becomes "isnull=True" so JSON fields match SQL NULL rather than JSON
+        null; omitted and other null-valued lookups remain unset.
 
     Raises:
         GraphQLError: If a "range" lookup is not a two-element list.
     """
     q = Q()
     for lookup, value in lookups.items():
+        if lookup == "exact" and value is None:
+            # On JSONField, exact=None matches JSON null, not SQL NULL. The
+            # explicit-null filter contract matches SQL NULL for every field.
+            q &= Q(**{f"{prefix}{field}__isnull": True})
+            continue
         if not _is_set(value):
             continue
         if lookup == "range":
@@ -142,6 +158,7 @@ def to_q(
     prefix: str = "",
     *,
     _combinator: str | None = None,
+    _scope: Any = None,
 ) -> tuple[Q, bool]:
     """Translate a filter node into a "(Q, touched_to_many)" pair.
 
@@ -175,6 +192,7 @@ def to_q(
             combinator whose child node this call is translating, or "None" at
             the top level. When set, an unknown (non-model, non-relation,
             non-combinator) key fails loud instead of being skipped.
+        _scope: Request-bound destination scope, or None for legacy direct use.
 
     Returns:
         A pair of the combined "Q" and whether any to-many relation was
@@ -196,7 +214,9 @@ def to_q(
 
         if key == "and":
             for child in value:
-                child_q, child_many = to_q(child, model, prefix, _combinator="and")
+                child_q, child_many = to_q(
+                    child, model, prefix, _combinator="and", _scope=_scope
+                )
                 result &= child_q
                 touched_to_many = touched_to_many or child_many
             continue
@@ -204,7 +224,9 @@ def to_q(
             combined = Q()
             has_any = False
             for child in value:
-                child_q, child_many = to_q(child, model, prefix, _combinator="or")
+                child_q, child_many = to_q(
+                    child, model, prefix, _combinator="or", _scope=_scope
+                )
                 combined = child_q if not has_any else (combined | child_q)
                 has_any = True
                 touched_to_many = touched_to_many or child_many
@@ -212,7 +234,9 @@ def to_q(
                 result &= combined
             continue
         if key == "not":
-            child_q, child_many = to_q(value, model, prefix, _combinator="not")
+            child_q, child_many = to_q(
+                value, model, prefix, _combinator="not", _scope=_scope
+            )
             result &= ~child_q
             touched_to_many = touched_to_many or child_many
             continue
@@ -226,11 +250,59 @@ def to_q(
             touched_to_many = True
 
         related = _relation_target(model, key)
+        if (
+            related is not None
+            and _is_to_many(model, key)
+            and not _is_pk_lookups(value)
+        ):
+            from .backend import _has_inner_not, many_not_filter
+
+            if _has_inner_not(value, related, True):
+                not_q = many_not_filter(model, key, value, prefix, _scope)
+                if not_q:
+                    result &= not_q
+                    continue
+        if related is not None and _scope is not None:
+            many_q = _scope.many_to_many_filter(model, key, value, prefix)
+            if many_q is not None:
+                result &= many_q
+                continue
+            reverse_q = _scope.reverse_filter(model, key, value, prefix)
+            if reverse_q is not None:
+                result &= reverse_q
+                continue
         if related is not None and not _is_pk_lookups(value):
             # Relation children keep their own combinator scope reset: a relation
             # node is a fresh filter node against the related model.
+            # Determine whether the child has a predicate before consulting the
+            # destination hook. Empty nested inputs are still true no-ops.
             child_q, child_many = to_q(value, related, f"{prefix}{key}__")
-            result &= child_q
+            if not child_q:
+                touched_to_many = touched_to_many or child_many
+                continue
+            relation_scope, child_scope = (
+                _scope.for_relation(model, key, prefix)
+                if _scope is not None
+                else (Q(), None)
+            )
+            if child_scope is not None:
+                child_q, child_many = to_q(
+                    value, related, f"{prefix}{key}__", _scope=child_scope
+                )
+            if relation_scope:
+                # SQL UNKNOWN must behave like a false filter match before an
+                # enclosing NOT complements this branch. Otherwise a real NULL
+                # FK can disappear from NOT even though it never matched.
+                match = relation_scope & child_q
+                result &= Q(
+                    Case(
+                        When(match, then=Value(True)),
+                        default=Value(False),
+                        output_field=BooleanField(),
+                    )
+                )
+            else:
+                result &= child_q
             touched_to_many = touched_to_many or child_many
             continue
 
@@ -255,8 +327,10 @@ def to_q(
             # attribute 'items'`` (#1571).
             continue
 
-        # A scalar field, or a relation declared directly (plain-pk lookups:
-        # ``field__exact`` / ``field__in`` resolve against the related pk).
-        result &= _leaf_q(prefix, key, value)
+        # Anchor direct relation lookups at its PK. Without an explicit PK
+        # component, Django may interpret "relation__exact" or
+        # "relation__range" as related fields with those names.
+        leaf = f"{key}__pk" if related is not None else key
+        result &= _leaf_q(prefix, leaf, value)
 
     return result, touched_to_many

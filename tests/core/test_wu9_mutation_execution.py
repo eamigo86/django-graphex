@@ -22,6 +22,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 if TYPE_CHECKING:
     from django_graphex.mutation import DjangoModelMutation
     from django_graphex.schema import DjangoGraphQLSchema

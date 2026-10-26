@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from functools import singledispatch
 from typing import TYPE_CHECKING, Any, Iterator
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models
 from django.db.models import Choices, JSONField
 from django.utils.encoding import force_str
@@ -99,7 +101,10 @@ def _nested_list_object_field(
         field, "verbose_name", None
     )
     return DjangoNestedListObjectField(
-        list_type, accessor=accessor, description=description or None
+        list_type,
+        accessor=accessor,
+        automatic_relation=True,
+        description=description or None,
     )
 
 
@@ -108,8 +113,12 @@ COMPILED_NAME_PATTERN = re.compile(NAME_PATTERN)
 
 
 def _is_valid_name(name: str) -> bool:
-    """Return whether name is a usable, non-empty GraphQL enum name."""
-    return bool(name) and bool(COMPILED_NAME_PATTERN.match(name))
+    """Return whether name is a usable, non-empty, non-reserved enum name."""
+    return (
+        bool(name)
+        and bool(COMPILED_NAME_PATTERN.match(name))
+        and not name.startswith("__")
+    )
 
 
 def is_multiselect_field(field: Any) -> bool:
@@ -204,26 +213,35 @@ def _normalize_choices(choices: Any) -> Any:
     return choices
 
 
+class _AmbiguousChoicesMemberError(ImproperlyConfigured):
+    """Identify a generated member collision.
+
+    Other configuration errors from custom choices declarations propagate
+    without receiving a misleading collision origin.
+    """
+
+
 def get_choices(
     choices: Any, converted_names: list[str] | None = None
 ) -> Iterator[tuple[str, Any, Any]]:
     """Extract choices from Django field choices recursively.
 
-    The de-duplication state is threaded through the recursion so a label
-    repeated across two option groups ("Other", "None", "Unknown" are routine)
-    gets the same numeric suffix a repeated label inside ONE group would get,
-    instead of collapsing into a single enum member bound to the last value.
-    Names that do not collide are never suffixed, so existing SDL is untouched.
+    Generated member names must be unique across all groups. Positional
+    suffixes are not safe: reordering choices would change which stored value
+    an existing GraphQL literal represents. The shared state spans recursion.
 
     Args:
         choices: Django field choices in any supported form (an iterable of
             pairs, a mapping, a callable, or an enumeration type), possibly
             nested for grouped choices.
         converted_names: Names already emitted by an enclosing call, or None to
-            start a fresh de-duplication scope. Internal to the recursion.
+            start a fresh validation scope. Internal to the recursion.
 
     Yields:
         Tuples of (name, value, description) for each leaf choice.
+
+    Raises:
+        ImproperlyConfigured: Two choices generate the same member name.
     """
     choices = _normalize_choices(choices)
     if converted_names is None:
@@ -233,8 +251,11 @@ def get_choices(
             yield from get_choices(help_text, converted_names)
         else:
             name = choice_enum_name(value, help_text)
-            while name in converted_names:
-                name += f"_{len(converted_names)!s}"
+            if name in converted_names:
+                raise _AmbiguousChoicesMemberError(
+                    f"Ambiguous generated choices enum member {name!r}; "
+                    "adjust the choices to generate distinct member names."
+                )
             converted_names.append(name)
             description = help_text
             yield name, value, description
@@ -278,11 +299,11 @@ def convert_django_field_with_choices(
 def choices_enum_name(field: DjangoField, input_flag: str | None = None) -> str:
     """Return the CANONICAL GraphQL enum name for a choices field.
 
-    Keyed by (app_label, object_name, field_name) so two models that share a
-    class name across different Django apps — and carry the same choices-field
-    name — never collide in the registry (mirrors the (model_class, for_input)
-    keying used for object/input types). When "input_flag" is set the name is
-    suffixed so an input-only enum never clobbers the output slot.
+    Derived from (app_label, object_name, field_name), then normalized to
+    camel case. Distinct model-field paths can normalize to the same name;
+    the choices builder checks their definitions before reusing one registry
+    slot. When "input_flag" is set the name is suffixed so an input-only enum
+    never clobbers the output slot.
 
     This is the SINGLE source of truth for the choices-enum name shared by the
     converter, the native OUTPUT compiler and the native filter-input builder, so
@@ -318,9 +339,9 @@ def build_choices_enum_type(
     """Build (or fetch the cached) graphql-core "GraphQLEnumType" for a choices field.
 
     Canonical builder. Reuses "get_choices" (the 4-tier "choice_enum_name"
-    cascade) for the value names + per-choice descriptions, and compiles via
-    "core.compiler.compile_enum" so the native OUTPUT and FILTER-INPUT paths
-    share ONE instance per (model, field) pair:
+    cascade) for the value names + per-choice descriptions. The enum is built
+    without the schema compiler's process-global name cache; native OUTPUT,
+    generated INPUT and FILTER-INPUT paths share the registry-scoped instance:
 
     * "GraphQLEnumValue.value" carries the RAW python value, so resolution
       returns the stored value.
@@ -343,18 +364,18 @@ def build_choices_enum_type(
     Returns:
         A "GraphQLEnumType" for the field's choices, or None when the field has
         no usable choices.
+
+    Raises:
+        ImproperlyConfigured: A field generates ambiguous member names, or
+            another field in this registry defines the same enum incompatibly.
     """
     from graphql import GraphQLEnumType  # noqa: PLC0415
 
-    from .core.compiler import compile_enum  # noqa: PLC0415
+    from .core.compiler import _new_enum  # noqa: PLC0415
     from .core.ir import EnumSpec  # noqa: PLC0415
 
     name = choices_enum_name(field, input_flag)
     slot_key = f"{_NATIVE_ENUM_SLOT_PREFIX}{name}"
-
-    cached = registry.get_type_for_enum(slot_key)
-    if isinstance(cached, GraphQLEnumType):
-        return cached
 
     choices = getattr(field, "choices", None)
     if not choices:
@@ -362,22 +383,63 @@ def build_choices_enum_type(
 
     values: list[tuple[str, Any]] = []
     descriptions: dict[str, str] = {}
-    for choice_name, value, description in get_choices(choices):
-        values.append((choice_name, value))
-        if description is not None:
-            descriptions[choice_name] = force_str(description)
+    try:
+        for choice_name, value, description in get_choices(choices):
+            values.append((choice_name, value))
+            if description is not None:
+                descriptions[choice_name] = force_str(description)
+    except _AmbiguousChoicesMemberError as error:
+        meta = field.model._meta
+        origin = f"{meta.app_label}.{meta.object_name}.{field.name}"
+        raise ImproperlyConfigured(
+            f"Choices enum {name!r} for {origin}: {error}"
+        ) from error
     if not values:
         return None
 
-    enum_type = compile_enum(
-        EnumSpec(
-            name=name,
-            values=tuple(values),
-            descriptions=descriptions or None,
+    meta = field.model._meta
+    origin = f"{meta.app_label}.{meta.object_name}.{field.name}"
+    # Keep construction, comparison, origin stamping and registration in one
+    # per-registry transaction. Otherwise two real misses can return distinct
+    # same-named types or bypass the incompatible-definition error.
+    # Historical callers may supply a registry-shaped adapter rather than our
+    # Registry. Preserve that duck-typed serial path; only Registry instances
+    # own the native-slot concurrency guarantee.
+    with getattr(registry, "_enum_lock", nullcontext()):
+        cached = registry.get_type_for_enum(slot_key)
+        if isinstance(cached, GraphQLEnumType):
+            raw_values = dict(values)
+            same_values = cached.values.keys() == raw_values.keys()
+            if same_values:
+                for member_name, old in cached.values.items():
+                    raw_value = raw_values[member_name]
+                    if (
+                        type(old.value) is not type(raw_value)
+                        or old.value != raw_value
+                        or old.description != descriptions.get(member_name)
+                        or old.deprecation_reason is not None
+                    ):
+                        same_values = False
+                        break
+            if same_values:
+                return cached
+
+        enum_type = _new_enum(
+            EnumSpec(
+                name=name,
+                values=tuple(values),
+                descriptions=descriptions or None,
+            )
         )
-    )
-    registry.register_enum(slot_key, enum_type)
-    return enum_type
+        if isinstance(cached, GraphQLEnumType):
+            first_origin = cached.extensions.get("gdx_choices_origin", "<unknown>")
+            raise ImproperlyConfigured(
+                f"Choices enum {name!r} has incompatible definitions from "
+                f"{first_origin} and {origin}."
+            )
+        enum_type.extensions["gdx_choices_origin"] = origin
+        registry.register_enum(slot_key, enum_type)
+        return enum_type
 
 
 def field_is_projected(

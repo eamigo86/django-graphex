@@ -26,6 +26,14 @@ automatically (no-ops until `MAX_QUERY_DEPTH` / `MAX_QUERY_COST` are set — see
 [Query depth & cost limits](query-limits.md)) and response caching when
 `CACHE_ACTIVE` is on (see [Settings](settings.md)).
 
+All three views validate their configuration when a view instance is
+constructed. The schema must expose `graphql_schema`, and `graphiql=True`
+cannot be combined with `batch=True`. Either mistake raises the same
+`AssertionError` and message under ordinary and optimized (`python -O`)
+Python. This applies when the instance is constructed; calling `as_view()`
+alone does not promise an eager startup check. It does not imply that every
+library assertion or application configuration is validated under `-O`.
+
 ### Custom execution backend
 
 Pass `executor_class=YourBackend` to a view constructor or `as_view()` to
@@ -50,6 +58,103 @@ classification; this does not add general async-resolver support to the
 synchronous HTTP view. Custom executor classes must accept the native 3.3
 predicate argument when used with this view.
 
+All three built-in HTTP views execute synchronously. If a resolver, middleware,
+or execution backend supplies an awaitable, the view refuses it with HTTP 500
+and a GraphQL JSON error rather than running it in an event loop:
+
+```json
+{
+  "errors": [{
+    "message": "Async execution is not supported by this HTTP view. Use synchronous resolvers and middleware."
+  }]
+}
+```
+
+New unstarted coroutines owned by that execution are closed without running
+their bodies. Change the endpoint's resolvers and middleware to synchronous
+implementations; changing a setting or awaiting the response is not a fix.
+This refusal does not add async HTTP support or change the asynchronous SSE and
+WebSocket subscription transports. A request that needs async execution is a
+server integration error, not an ordinary client validation error.
+
+### Production execution errors
+
+With Django `DEBUG=False`, the default formatter on all three HTTP views, and
+the SSE and WebSocket subscription transports, replaces **unexpected resolver exceptions** with a safe category and an opaque
+`errorId`. For example, a `django.db.DatabaseError` produces:
+
+```json
+{
+  "data": {"failure": null},
+  "errors": [{
+    "message": "Unable to complete the data operation.",
+    "locations": [{"line": 1, "column": 3}],
+    "path": ["failure"],
+    "extensions": {
+      "code": "DATA_ACCESS_ERROR",
+      "errorId": "0123456789abcdef0123456789abcdef"
+    }
+  }]
+}
+```
+
+The ID is a fresh, random 32-character hex value, not a public lookup key.
+Use it to find the matching exception and traceback in the
+`django_graphex.internal_errors` server logger. Restrict access to that logger:
+its traceback can contain sensitive exception text. The library does not add
+request bodies, variables, headers, cookies, or credentials to this log record.
+If a logging handler fails, the HTTP response stays safe, but that particular
+ID may have no matching log record.
+
+The subscription transports use the same classification and masking function.
+An unexpected exception from a `subscribe` resolver, from an event resolver or
+raised while iterating the stream (a channel-layer error, a scope lookup) is framed (`error` frame or `next` payload on WebSocket, a `next` event on SSE)
+with the same message, `code`, `locations`, `path` and `errorId`, and logs one
+ERROR record with the traceback on `django_graphex.internal_errors` whose
+message names the transport (`SSE` or `WebSocket`) instead of `HTTP`. Deliberate
+`GraphQLError`, validation and client-input errors keep their messages, and
+`DEBUG=True` keeps the raw text.
+
+Only `DatabaseError` and subclasses use `DATA_ACCESS_ERROR`; other unexpected
+exceptions use `INTERNAL_SERVER_ERROR` and `An internal error occurred.`
+The categories never include SQL, constraint names, exception text, or
+untrusted exception extensions. If a message is intentionally safe for clients,
+raise `GraphQLError` explicitly rather than a raw `ValueError`. Deliberate
+`GraphQLError`, native validation and request errors, and the generated
+mutation's existing generic/structured errors retain their contracts.
+
+The classification is by phase. A custom scalar whose `parse_value` or
+`parse_literal` raises `ValueError`/`TypeError` while the document is validated
+or the variables are coerced is invalid client input, not an internal error:
+the request gets HTTP 400 with graphql-core's validation message (for example
+`Expected value of type 'MyDate'; found "garbage".` or `Variable '$v' has
+invalid value ...`), without the raw exception text and without an ERROR log
+record. With `DEBUG=True` the full message, cause text included, is kept. A
+`ValueError` raised during execution (resolvers, output serialization) is still
+masked and logged as described above. Only `ValueError`, `TypeError` and
+`GraphQLError` mean invalid input: any other exception a scalar raises while
+coercing (a database error, say) is a server fault and is masked and logged
+too.
+
+GraphQL `locations`, `path`, null propagation, and rollback are unchanged.
+For the current JSON endpoint, a field execution error returns HTTP 200 with
+`errors` and a `data` member, even when a non-null root field makes `data`
+`null`. For example, a failed `{ required }` request can return
+`{"data": null, "errors": [{"message": "Execution stopped.", "path": ["required"]}]}`.
+Syntax, validation, and variable-coercion errors remain HTTP 400 without a
+`data` member. A server fault outside field execution (for example a failing
+`get_root_value` hook) is masked as above and answers HTTP 500 instead of 400.
+Variables nested so deeply that coercing them exhausts the stack answer HTTP 400
+`QUERY_TOO_DEEP` without an ERROR log, and the SSE and WebSocket subscription
+transports frame the same error ("Variables are nested too deeply to be
+coerced."); a `RecursionError` raised by a resolver is still masked and logged. A `query` that is not a string, or `variables` that are not a JSON object, answer
+HTTP 400 (`Must provide query string.` / `Variables must be a JSON object.`)
+without an ERROR log. An HTTP 200 response containing errors is not cached; a
+repeated request runs again. Clients must inspect `errors`, not only status.
+`DEBUG=True`, the shared subscription formatter
+used by WebSocket/SSE, and subclasses that override `format_error` retain
+their previous behavior; review a custom override's own production policy.
+
 ### Custom AST builders
 
 GraphQL-core 3.3 makes parsed AST nodes immutable and requires their fields at
@@ -68,6 +173,18 @@ package release.
 
 `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt` (`BaseGraphQLView`
 is not — mount it behind Django's own CSRF middleware, or exempt it yourself).
+
+!!! warning "`BaseGraphQLView` behind `CsrfViewMiddleware`"
+
+    The middleware runs before the view. When a POST carries no `X-CSRFToken`
+    header it reads `request.POST`, which parses a `multipart/form-data` body and
+    spools its files to disk **before** the view's `MAX_REQUEST_BODY_SIZE` check
+    can refuse it. The cap therefore does not protect a `BaseGraphQLView`
+    mounted behind `CsrfViewMiddleware`. Bound the body ahead of the middleware
+    instead: set a size limit on your reverse proxy, or put a small
+    body-size middleware **before** `CsrfViewMiddleware` in `MIDDLEWARE`.
+    `GraphQLView` and `AuthenticatedGraphQLView` are `csrf_exempt`, so the
+    middleware skips them and the view's own cap runs first.
 On all three, a POST whose content type a browser can send cross-site **without
 a CORS preflight** must carry the `X-Requested-With` header or it is refused
 with HTTP 403 before its body is read. That set is
@@ -80,8 +197,13 @@ same setting. Turn it off with `REQUIRE_CSRF_HEADER=False` — see
 
 ### Response caching and cache identity
 
-With `CACHE_ACTIVE` on, `GraphQLView` caches eligible query responses (never
-mutations, batches, multipart, cookie-bearing queries or a GraphiQL render).
+With `CACHE_ACTIVE` on, `GraphQLView` caches eligible **HTTP 200 GraphQL data
+responses without errors** (never mutations, batches, multipart,
+cookie-bearing queries or a GraphiQL render). Execution errors, including
+top-level `data: null`, and validation failures are returned normally but not
+cached; old cached
+failures are ignored so a repeated request can recover. See
+[successful responses only](caching.md#successful-responses-only).
 Every entry is
 namespaced by a **cache identity** from `cache_key_prefix`:
 
@@ -227,7 +349,8 @@ Semantics:
   immediately (no restart); with it `False` (default) behavior is byte-identical
   to today.
 - **Revoke-safe, cached** — pruned schemas are memoized in-process by the
-  caller's *permission signature* (`perms ∩ schema label-set`), in a bounded LRU
+  caller's *permission signature* (normally `perms ∩ schema label-set`, but all
+  grants when the schema has a native flat GFK fallback), in a bounded LRU
   ([`PERMISSION_SCHEMA_CACHE_MAXSIZE`](settings.md#security), default `64`). The
   signature is recomputed from the user's live permissions each request, so a
   grant or revocation is reflected on their **next** request — never a stale
@@ -290,12 +413,63 @@ nested list) is rejected with **HTTP 400** and
 [`MAX_BATCH_SIZE`](settings.md#http-view-hardening) for the per-request
 operation cap.
 
+For a valid batch, **every entry yields exactly one response entry, in request
+order**. Nothing is skipped or dropped: an entry that fails (a request error such
+as a missing query or malformed `variables`, a syntax or validation error, an
+unknown `operationName`, or a field execution error) gets its own error entry
+and the remaining entries still run. Each entry retains its `id` and `status`.
+For example, if the second entry has no query:
+
+```json
+[
+  {"data": {"add": "saved"}, "id": "first", "status": 200},
+  {"errors": [{"message": "Must provide query string."}], "id": "second", "status": 400},
+  {"data": {"add": "saved"}, "id": "third", "status": 200}
+]
+```
+
+The HTTP status of the response is the highest entry `status`: **200** when
+every entry is 200, **400** as soon as one entry is a request, syntax or
+validation error. A field execution error is a 200 entry with `errors` (and
+`data: null` when it nulls the operation data). Clients must read each entry's
+`status` and `errors` instead of relying on the HTTP status alone.
+
+A successful mutation stays committed whatever happens to its siblings.
+`ATOMIC_MUTATIONS` applies per mutation, **not to the entire batch**. When
+`ATOMIC_REQUESTS` is enabled for a database, each entry also runs in its own
+savepoint inside the request transaction: an entry that reports an error rolls
+back only its own writes, and never marks the request transaction for rollback,
+so earlier and later entries still commit. A non-batched request keeps the
+request-level rollback on any error. Malformed outer bodies, a batch larger than
+`MAX_BATCH_SIZE` and non-object entries are rejected before any operation runs
+and keep a single request-level error object; non-400 transport errors keep
+their existing envelope.
+
+Rollback covers **every database alias** that is inside a transaction opened for
+the request: each alias with `ATOMIC_REQUESTS` enabled is rolled back (or, in a
+batch, its entry savepoint is), and a mutation additionally runs in
+`transaction.atomic()` on the default alias when `ATOMIC_MUTATIONS` is `True`
+and on any alias whose `DATABASES[alias]["ATOMIC_MUTATIONS"]` is `True`. An
+alias outside any atomic block is never touched, so its writes persist, and the
+global setting alone still covers only the default alias.
+
 ## Request body size
 
 With [`MAX_REQUEST_BODY_SIZE`](settings.md#file-uploads) set, `dispatch` refuses
 an oversized POST with **HTTP 413** before the body is parsed. It checks the
 declared `Content-Length` first, then measures the body itself — so a client
-cannot under-declare its length to slip past.
+cannot under-declare its length to slip past. The check runs before Django's
+CSRF check, which would otherwise parse a multipart body for any client holding
+a `csrftoken` cookie, so an oversized upload is refused unparsed.
+
+!!! warning "Not for `BaseGraphQLView` behind `CsrfViewMiddleware`"
+
+    This ordering holds for the CSRF check the view itself decorates with. A
+    `BaseGraphQLView` mounted behind Django's `CsrfViewMiddleware` is checked by
+    the middleware first, and the middleware parses a multipart body (when no
+    `X-CSRFToken` header is sent) before the view's cap runs. Use a proxy body
+    limit, or a body-size middleware placed before `CsrfViewMiddleware`. See
+    [cross-site POST protection](#cross-site-post-protection).
 
 JSON that the decoder cannot parse returns **HTTP 400**, including when the
 decoder raises a recursion error. This is parser-error handling, not a promise
@@ -310,7 +484,22 @@ input is already capped at `Content-Length`) a multipart POST that declares no
 length at all is refused with **HTTP 411** instead. See
 [How the guard reads each content type](settings.md#how-the-guard-reads-each-content-type).
 
+The separate [`MAX_UPLOAD_SIZE`](settings.md#file-uploads) setting checks each
+received multipart file **after parsing**, including unused and repeated file
+parts. A file above that limit returns JSON HTTP 413 before any resolver or
+GraphiQL page succeeds. This per-file check does not replace the earlier
+whole-body guard or impose an ingress/memory limit.
+
 ## Subscriptions
 
 GraphQL subscriptions are served by a dedicated view (over Channels) — see the
 [Subscriptions guide](subscriptions.md).
+
+The HTTP views do not run subscriptions. A subscription operation POSTed to
+`/graphql/` is refused with HTTP 400 and one error whose message is
+`Subscriptions are not supported over HTTP; use the WebSocket or SSE transport.`
+and whose `extensions.code` is `SUBSCRIPTION_NOT_SUPPORTED` (before 4.1 the
+response was HTTP 200 with the subscription field `null` and no error). Only the
+selected operation is judged, so a document that holds a subscription next to a
+query still runs the query. In a batch each subscription item gets its own error
+entry and the other items run; the response status is the highest entry status.

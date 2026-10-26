@@ -36,11 +36,16 @@ from importlib.util import find_spec
 import pytest
 from django.db import models
 
+from tests._schema_isolation import isolated_default_registry_pair
+
 # The module must still collect in the channels-free base-install environment.
-pytestmark = pytest.mark.skipif(
-    find_spec("channels") is None,
-    reason="requires the subscriptions extra",
-)
+pytestmark = [
+    pytest.mark.usefixtures(isolated_default_registry_pair.__name__),
+    pytest.mark.skipif(
+        find_spec("channels") is None,
+        reason="requires the subscriptions extra",
+    ),
+]
 
 
 # --------------------------------------------------------------------------- #

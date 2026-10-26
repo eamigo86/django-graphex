@@ -260,5 +260,5 @@ class Mutation(NativeObjectType):
         )
         # Register identity so ``_collect_root_attrs`` recovers it on a root —
         # parity with the DjangoModelMutation registration (silent-drop guard).
-        _NATIVE_FIELD_IDENTITIES.add(id(gql_field))
+        _NATIVE_FIELD_IDENTITIES[id(gql_field)] = gql_field
         return gql_field

@@ -26,6 +26,9 @@ from typing import TYPE_CHECKING
 from graphql import ExecutionResult, GraphQLError, validate
 from graphql import execution as graphql_execution
 
+from ...security import mark_client_errors, mark_request_errors
+from ...validation import run_validation
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterable, Callable
     from typing import Any
@@ -42,6 +45,46 @@ _EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS = bool(
     _NATIVE_EXECUTOR
     and "hide_suggestions" in signature(_NATIVE_EXECUTOR.build).parameters
 )
+
+
+def _parse_subscription_document(query: Any) -> "DocumentNode":
+    """Parse a subscription document the way the HTTP view does.
+
+    Stack exhaustion becomes a GraphQLError with code "QUERY_TOO_DEEP", and any
+    other non-GraphQL failure (for example a non-string query) becomes a
+    generic one, so no raw exception text reaches a client.
+
+    Args:
+        query: The "query" value sent by the client.
+
+    Returns:
+        The parsed "DocumentNode".
+
+    Raises:
+        GraphQLError: When the document cannot be parsed.
+    """
+    # Imported here: "views" reads DJANGO_GRAPHEX while it is being imported, and
+    # this package must stay importable before Django settings are configured.
+    from ...views import _parse_or_depth_error
+
+    try:
+        return _parse_or_depth_error(query)
+    except GraphQLError:
+        raise
+    except Exception as exc:
+        raise GraphQLError("Invalid GraphQL query.") from exc
+
+
+def _is_too_deep(error: GraphQLError) -> bool:
+    """Return whether a parse error is the stack-depth client error.
+
+    Args:
+        error: The error raised by "_parse_subscription_document".
+
+    Returns:
+        True when its code is "QUERY_TOO_DEEP".
+    """
+    return (error.extensions or {}).get("code") == "QUERY_TOO_DEEP"
 
 
 def _validate_subscription_document(
@@ -67,7 +110,7 @@ def _validate_subscription_document(
     options: dict[str, Any] = {"max_errors": max_errors}
     if _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS:
         options["hide_suggestions"] = hide_suggestions
-    return validate(schema, document, rules, **options)
+    return run_validation(validate, schema, document, rules, **options)
 
 
 async def _start_source_event_stream(
@@ -92,18 +135,25 @@ async def _start_source_event_stream(
         hide_suggestions: Whether native variable errors omit schema hints.
 
     Returns:
-        The source stream or an execution result containing startup errors.
-
-    Raises:
-        TypeError: When client variables are not a dictionary.
+        The source stream or an execution result containing startup errors, which
+        include client variables that are not a dictionary.
     """
     if variable_values is not None and not isinstance(variable_values, dict):
-        raise TypeError(
-            "Variable values must be provided as a dictionary"
-            " with variable names as keys. Perhaps look to see"
-            " if an unparsed JSON string was provided."
+        return ExecutionResult(
+            data=None,
+            errors=mark_client_errors(
+                [
+                    GraphQLError(
+                        "Variable values must be provided as a dictionary"
+                        " with variable names as keys. Perhaps look to see"
+                        " if an unparsed JSON string was provided."
+                    )
+                ]
+            ),
         )
 
+    # "Executor" exists in every supported graphql-core (>=3.3.0, <3.4), so the
+    # fallback branch is reachable only on an unsupported runtime.
     executor_class = getattr(graphql_execution, "Executor", None)
     if executor_class is None:
         result = source_factory(
@@ -121,12 +171,33 @@ async def _start_source_event_stream(
         }
         if _EXECUTOR_SUPPORTS_HIDE_SUGGESTIONS:
             options["hide_suggestions"] = hide_suggestions
-        executor = executor_class.build(schema, document, **options)
+        try:
+            executor = executor_class.build(schema, document, **options)
+        except RecursionError:
+            # Only variable coercion runs here, before any resolver: a bare
+            # RecursionError is the client's over-deep value, answered like the
+            # HTTP view. A resolver's own RecursionError is raised later, by
+            # "source_factory", and stays an internal error.
+            return ExecutionResult(
+                data=None,
+                errors=mark_client_errors(
+                    [
+                        GraphQLError(
+                            "Variables are nested too deeply to be coerced.",
+                            extensions={"code": "QUERY_TOO_DEEP"},
+                        )
+                    ]
+                ),
+            )
         if isinstance(executor, list):
-            return ExecutionResult(data=None, errors=executor)
+            return ExecutionResult(data=None, errors=mark_client_errors(executor))
         result = source_factory(executor)
 
-    return await result if isawaitable(result) else result
+    result = await result if isawaitable(result) else result
+    # Path-less errors come from before any resolver ran: client input.
+    return (
+        mark_request_errors(result) if isinstance(result, ExecutionResult) else result
+    )
 
 
 def operation_selection_error(

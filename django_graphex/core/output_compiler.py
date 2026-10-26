@@ -28,8 +28,10 @@ from __future__ import annotations
 import base64
 import logging
 from datetime import timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from django.core.exceptions import ImproperlyConfigured
 from graphql import (
     GraphQLBoolean,
     GraphQLField,
@@ -38,14 +40,21 @@ from graphql import (
     GraphQLInt,
     GraphQLList,
     GraphQLNonNull,
+    GraphQLResolveInfo,
     GraphQLString,
     get_named_type,
 )
 
 from django_graphex._strconv import to_camel_case as _to_camel_case
+from django_graphex.core._flat_gfk_scope import (
+    EFFECTIVE_GRANTS_EXT,
+    FLAT_GFK_FALLBACK_EXT,
+)
 from django_graphex.core.scalars import (
+    GdxBigInt,
     GdxDate,
     GdxDateTime,
+    GdxDecimal,
     GdxJSON,
     GdxTime,
     GdxUUID,
@@ -105,19 +114,17 @@ def _build_django_to_gql() -> dict:
         # Numeric
         models.IntegerField: GraphQLInt,
         models.SmallIntegerField: GraphQLInt,
-        models.BigIntegerField: GraphQLInt,
+        models.BigIntegerField: GdxBigInt,
         models.PositiveIntegerField: GraphQLInt,
         models.PositiveSmallIntegerField: GraphQLInt,
-        models.PositiveBigIntegerField: GraphQLInt,
+        models.PositiveBigIntegerField: GdxBigInt,
         models.AutoField: GraphQLID,
         models.BigAutoField: GraphQLID,
         models.SmallAutoField: GraphQLID,
         models.FloatField: GraphQLFloat,
-        # graphene-django collapses DecimalField AND DurationField to OUTPUT
-        # ``Float`` (converter.py convert_field_to_float). Match that exactly for
-        # SDL parity — the ``Decimal`` scalar is reserved for the input/filter
-        # path. (See #1508.)
-        models.DecimalField: GraphQLFloat,
+        # Preserve DecimalField precision on the output wire using the same
+        # Decimal scalar already used for generated input and filter values.
+        models.DecimalField: GdxDecimal,
         models.DurationField: GraphQLFloat,
         # Boolean
         models.BooleanField: GraphQLBoolean,
@@ -299,7 +306,10 @@ def _get_gfk_flat_type() -> Any:
             # gdx bridge (D8 invariant): every native object type must carry
             # extensions['gdx'] or ``bridge.assert_gdx_bridge`` hard-fails when a
             # schema containing this type is built.
-            extensions={"gdx": GdxPayload(GdxMeta(name="GenericForeignKeyType"))},
+            extensions={
+                "gdx": GdxPayload(GdxMeta(name="GenericForeignKeyType")),
+                FLAT_GFK_FALLBACK_EXT: True,
+            },
         )
     return _GFK_FLAT_TYPE
 
@@ -310,14 +320,50 @@ def _compile_generic_foreign_key(field: Any) -> dict[str, GraphQLField]:
     The field resolver reads the GFK accessor (e.g. note.content_object) from
     the parent row; a null / unregistered-target content object renders as null
     (the field and all its sub-fields are nullable, matching graphene).
+
+    Args:
+        field: Django generic foreign key to expose on the owner type.
+
+    Returns:
+        The flat output field with a permission-aware target resolver.
     """
     field_name: str = field.name
     camel_name: str = _to_camel_case(field_name)
 
-    def _gfk_resolver(root: Any, _info: Any, *, _name: str = field_name) -> Any:
-        if isinstance(root, dict):
-            return root.get(_name)
-        return getattr(root, _name, None)
+    def _gfk_resolver(
+        root: Any, info: GraphQLResolveInfo | None, *, _name: str = field_name
+    ) -> Any:
+        """Resolve the target, redacting it when denied or hidden by its type.
+
+        Args:
+            root: Owner model or mapping containing the GFK accessor.
+            info: Resolve info carrying the Registry and, in a pruned schema, the
+                effective ACL, or None outside GraphQL execution.
+            _name: The Python GFK accessor name.
+
+        Returns:
+            The permitted target model, or None when unavailable or denied.
+
+        Raises:
+            TypeError: If a registered target hook returns an invalid queryset.
+        """
+        from django_graphex.utils import gfk_target_is_visible, read_gfk_target
+
+        target, scoped = read_gfk_target(root, _name)
+        if target is None:
+            return None
+        extensions = getattr(getattr(info, "schema", None), "extensions", None) or {}
+        granted = extensions.get(EFFECTIVE_GRANTS_EXT)
+        if granted is not None:
+            from django_graphex.core.perm_labels import required_perms_for
+
+            if not required_perms_for(type(target), "retrieve") <= granted:
+                return None
+        if scoped or gfk_target_is_visible(target, info):
+            return target
+        return None
+
+    _gfk_resolver._gqx_automatic_gfk = True  # type: ignore[attr-defined]
 
     return {
         camel_name: GraphQLField(
@@ -535,9 +581,15 @@ def _get_range_composite_type(bound_scalar: Any) -> Any:
         def _resolve(root: Any, _info: Any) -> Any:
             if root is None:
                 return None
-            if isinstance(root, dict):
-                return root.get(attr)
-            return getattr(root, attr, None)
+            value = (
+                root.get(attr) if isinstance(root, dict) else getattr(root, attr, None)
+            )
+            # A DecimalRangeField bound is a Decimal, which the declared Float
+            # scalar cannot serialize; deliver the (possibly rounded) float. A
+            # non-finite Decimal is left alone so the scalar still rejects it.
+            if isinstance(value, Decimal) and value.is_finite():
+                return float(value)
+            return value
 
         return _resolve
 
@@ -702,35 +754,45 @@ def _to_graphql_field(
             )
             return {}
 
-        # SCOPE BOUNDARY (documented, not a defect): this is a plain attribute
-        # read off the already-fetched parent, so it does NOT route through
-        # ``utils.apply_object_type_get_queryset`` — a target type declaring
-        # ``get_queryset`` scopes its own root fields but NOT this relation.
-        # Enforcing it here would mean re-fetching the target per parent row,
-        # trading the ``select_related`` join for one query per row on exactly
-        # the types that opted into scoping. The to-MANY sibling has the same
-        # boundary for the same reason.
-        #
-        # The escape hatch is an explicitly DECLARED field of the same name on
-        # the parent type: ``types._compile_declared_fields`` runs last in the
-        # output thunk and a declared override wins, and only that path wires a
-        # ``resolve_<name>``. This resolver deliberately does NOT look for one
-        # itself — the compiler is per-MODEL and has no source class, so it
-        # would have to recover the parent type per row, and the to-MANY sibling
-        # (``fields.DjangoNestedListObjectField.wrap_resolve``) does not honour
-        # one either. A bare ``resolve_<relation>`` method is therefore inert;
-        # docs/usage/types.md says so, and tests/test_relation_scope_hatch.py
-        # pins both halves.
+        # The to-one output remains nullable. A scoped prefetch stores the visible
+        # destination under a dedicated attribute so an unrelated select_related
+        # or caller-populated relation cache cannot substitute an unscoped row.
         def _default_resolver(
             root: Any,
             _info: Any,
             *,
             _name: str = field_name,
+            _target_gql: Any = resolved_type,
         ) -> Any:
             if isinstance(root, dict):
                 return root.get(_name)
-            return getattr(root, _name, None)
+            from django_graphex.core.compat import _gdx_graphene_type
+            from django_graphex.utils import (
+                apply_object_type_get_queryset,
+                has_object_type_queryset_override,
+            )
 
+            target_type = _gdx_graphene_type(_target_gql)
+            if not has_object_type_queryset_override(target_type):
+                return getattr(root, _name, None)
+
+            scoped_name = f"_gqx_scoped_{_name}"
+            sentinel = object()
+            prefetched = getattr(root, scoped_name, sentinel)
+            if prefetched is not sentinel:
+                return prefetched
+
+            related = getattr(root, _name, None)
+            if related is None:
+                return None
+            alias = getattr(getattr(root, "_state", None), "db", None)
+            queryset = related.__class__._default_manager.db_manager(alias).filter(
+                pk=related.pk
+            )
+            queryset = apply_object_type_get_queryset(queryset, target_type, _info)
+            return related if queryset.exists() else None
+
+        _default_resolver._gqx_automatic_fk = True  # type: ignore[attr-defined]
         gql_field = GraphQLField(
             type_=resolved_type,
             resolve=_default_resolver,
@@ -887,6 +949,9 @@ def compile_output_fields(
 
     Returns:
         Dict of "{camelCase_name: GraphQLField}".
+
+    Raises:
+        ImproperlyConfigured: Django metadata enumeration fails for the model.
     """
     fields: dict[str, GraphQLField] = {}
 
@@ -898,8 +963,11 @@ def compile_output_fields(
     # cannot return two entries under one name.
     try:
         all_fields = model._meta.get_fields()
-    except Exception:
-        all_fields = model._meta.concrete_fields
+    except Exception as exc:
+        model_label = getattr(model._meta, "label", model.__name__)
+        raise ImproperlyConfigured(
+            f"Failed to enumerate fields for model {model_label}"
+        ) from exc
 
     for field in all_fields:
         # Skip reverse relations (they are auto-created by Django for O2O/FK targets)

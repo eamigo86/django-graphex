@@ -15,7 +15,9 @@ native path / runtime still reads:
   * the relation "Dynamic" descriptors (FK / O2O / M2M / reverse rels),
   * the nested-list ("_nested_list_object_field") descriptors.
 
-PARAMOUNT: the compiled native SDL scalar NAMES must stay BYTE-IDENTICAL
+PARAMOUNT: the compiled native SDL scalar NAMES stay stable except the
+individually approved A8 BigInteger -> BigInt change. Other fields remain
+BYTE-IDENTICAL
 ("CustomDate" / "CustomDateTime" / "CustomTime" / "UUID" / "JSONString"
 / "String" for Binary / …). Those names come from "core/scalars.py" via the
 output compiler, NOT from the skipped converter descriptors — so skipping must not
@@ -31,6 +33,10 @@ from functools import lru_cache
 from typing import Any
 
 import pytest
+
+from django_graphex.registry import Registry
+
+_SCALAR_KINDS_REGISTRY = Registry()
 
 # The graphene scalar descriptor types converter builds for scalar field kinds.
 _DEAD_SCALAR_DESC_NAMES = {
@@ -69,6 +75,7 @@ def _register_author_node():
             """Bind the node to "Author" so the scalar model's FK compiles."""
 
             model = Author
+            registry = _SCALAR_KINDS_REGISTRY
 
     return _SkAuthorType
 
@@ -90,6 +97,7 @@ def _scalar_kinds_meta_fields():
     class _SkType(DjangoObjectType):
         class Meta:
             model = ScalarKindsModel
+            registry = _SCALAR_KINDS_REGISTRY
 
     return _SkType
 
@@ -166,6 +174,7 @@ def test_construct_fields_keeps_relation_descriptors_on_native() -> None:
     class _PostType(DjangoObjectType):
         class Meta:
             model = Post
+            registry = Registry()
 
     meta_fields = _PostType._meta.fields
     # FK (author/category) + M2M (tags/co_authors) + reverse FK (comments) are
@@ -179,8 +188,8 @@ def test_construct_fields_keeps_relation_descriptors_on_native() -> None:
 # ---------------------------------------------------------------------------
 # RED 3: SDL byte-parity — every scalar name + FK survives, unchanged
 # ---------------------------------------------------------------------------
-def test_native_scalar_sdl_is_byte_identical_after_skip() -> None:
-    """The native SDL scalar names must be UNCHANGED after the converter skip.
+def test_native_scalar_sdl_preserves_approved_bigint_and_decimal() -> None:
+    """Retain native scalar names except approved BigInt and Decimal changes.
 
     Byte-identical to the captured baseline (built from core/scalars.py via the
     output compiler, NOT from the skipped converter descriptors).
@@ -195,10 +204,10 @@ def test_native_scalar_sdl_is_byte_identical_after_skip() -> None:
         "char: String",
         "text: String",
         "integer: Int",
-        "bigInteger: Int",
+        "bigInteger: BigInt",
         "boolean: Boolean",
         "floating: Float",
-        "decimal: Float",
+        "decimal: Decimal",
         "duration: Float",
         "uuidField: UUID",
         "date: CustomDate",

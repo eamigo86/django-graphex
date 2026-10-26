@@ -640,7 +640,8 @@ class MoreBaseBranchesTest(TestCase):
     def test_execute_internal_exception_is_wrapped(self) -> None:
         """Ship-broken contract: an exception raised by execute() itself
         (not a field-level error) must be caught and wrapped into an
-        ExecutionResult surfaced as a 400.
+        ExecutionResult surfaced as a masked HTTP 500 (a server fault, not a
+        client error).
         """
         # If execute() itself raises (not a field error), it's caught and wrapped
         # in an ExecutionResult (434-435). Patch execute to raise.
@@ -652,8 +653,8 @@ class MoreBaseBranchesTest(TestCase):
         )
         with patch.object(views, "execute", side_effect=RuntimeError("internal")):
             response = view(request)
-        # The wrapped error has no path -> 400.
-        self.assertEqual(response.status_code, 400)
+        # The wrapped error has no path and is internal -> 500.
+        self.assertEqual(response.status_code, 500)
         self.assertIn("errors", json.loads(response.content))
 
     def test_invalid_schema_returns_validation_errors(self) -> None:

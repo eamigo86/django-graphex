@@ -25,6 +25,7 @@ pytest.importorskip("channels")
 
 from graphql import (  # noqa: E402
     GraphQLBoolean,
+    GraphQLError,
     GraphQLField,
     GraphQLObjectType,
     GraphQLSchema,
@@ -57,7 +58,7 @@ def _schema() -> GraphQLSchema:
     )
 
     async def subscribe(root: Any, info: Any) -> Any:
-        raise RuntimeError(_SUBSCRIBE_REACHED)
+        raise GraphQLError(_SUBSCRIBE_REACHED)
 
     return GraphQLSchema(
         query=GraphQLObjectType("Query", {"ok": GraphQLField(GraphQLBoolean)}),

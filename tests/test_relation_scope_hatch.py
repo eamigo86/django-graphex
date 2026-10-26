@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for the escape hatch that scopes an auto-expanded relation.
+"""Tests for explicit relation declarations and their filter-axis contracts.
 
-"docs/usage/types.md" documents a scope boundary: a relation django-graphex
-auto-expands on a parent type does not run the target type's "get_queryset" --
-a forward FK is a plain attribute read off the already-fetched parent, and a
-to-MANY container reads the parent's prefetch cache. The mitigation the guide
-offers has to be one that actually executes: a code sample in a security note
-that silently does nothing is worse than the boundary it claims to close,
-because the reader believes the hole is shut.
+"docs/usage/types.md" documents the automatic FK/reverse-FK destination-scope
+behavior and the separate purpose of explicit relation declarations. A code
+sample for a custom resolver must actually execute: a bare resolve method
+without a declared field remains inert.
 
 Three shapes are pinned here:
 
@@ -18,12 +15,11 @@ Three shapes are pinned here:
   - a to-ONE relation DECLARED on the parent type plus its "resolve_" method
     wins over the auto-derived field, so the scope really runs.
   - a to-MANY relation declared as a "DjangoFilterListField" replaces the
-    auto-expanded container with a field that applies the hook itself.
+    auto-expanded container with a plain-list field that applies the hook.
 
-The last two are the snippets the guide ships, and declaring either one is what
-withdraws that relation from the projection's other axes -- one rule, both
-directions, because both are a resolver of the reader's own standing between the
-client and the rows. The to-ONE arm loses its "_id" column from the ordering
+The last two are the snippets the guide ships for custom behavior or wire shape.
+Declaring either one withdraws that relation from the projection's other axes.
+The to-ONE arm loses its "_id" column from the ordering
 allowlist AND its filter paths; the to-MANY arm owns no column on the parent row,
 so it loses only the filter paths. Both are pinned below.
 """
@@ -129,8 +125,7 @@ _RHATCH = Registry()
 class HatchAuthorType(DjangoObjectType):
     """Author node whose "get_queryset" hides everyone but "visible".
 
-    The scope is what the parent type's declared resolver has to reapply by
-    hand, since the auto-expanded FK read would skip it.
+    The parent type's declared custom resolver reapplies this scope by hand.
     """
 
     class Meta:
@@ -178,7 +173,7 @@ class HatchPostType(DjangoObjectType):
         only_fields = ("id", "title", "author")
 
     def resolve_author(self, info: Any) -> Any:
-        """Apply the target type's scope to the auto-expanded FK read.
+        """Apply the target type's scope to the declared custom FK read.
 
         Args:
             info: The GraphQL resolve info.
@@ -576,9 +571,8 @@ class DeclaredListObjectFieldClosesTheSameWayTests(TestCase):
     A relation can be declared three ways -- "DjangoFilterListField",
     "DjangoFilterPaginateListField", and the container "DjangoListObjectField"
     (which "DjangoNestedListObjectField" subclasses). All three replace the
-    auto-expanded relation and all three carry a resolver, so all three hide the
-    rows a traversal would otherwise join straight past. Closing only two of them
-    made the boundary answer differently for three ways of writing one intent.
+    automatic relation and all three carry a resolver, so all three hide the
+    rows while presenting their declared wire shapes.
     """
 
     def test_a_declared_container_is_no_longer_traversable(self) -> None:

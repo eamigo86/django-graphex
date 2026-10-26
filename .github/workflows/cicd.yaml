@@ -377,11 +377,11 @@ jobs:
       run: uv run python scripts/check_site_anchors.py site --base-path /django-graphex/
 
     - name: Setup Pages for a tagged release
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
       uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 
     - name: Upload tagged documentation artifact
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
       with:
         path: ./site
@@ -413,12 +413,12 @@ jobs:
   publish:
     needs: [ test, base-install, lint-and-security, diff-check, coverage, postgresql, docs-build, playground, release-artifact, get-version ]
     runs-on: ubuntu-latest
-    # Publish only when a version tag is pushed, or when triggered manually.
+    # Only a pushed version tag enters production; manual runs stay in staging.
     if: |
-      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'workflow_dispatch'
     environment:
-      name: ${{ startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
+      name: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging' }}
 
     steps:
     - name: Install uv
@@ -438,7 +438,7 @@ jobs:
       run: cd dist && sha256sum -c SHA256SUMS
 
     - name: Publish to PyPI
-      if: startsWith(github.ref, 'refs/tags/v')
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
       run: uv publish dist/*.whl dist/*.tar.gz --token ${{ secrets.PYPI_TOKEN }}
 
     - name: Publish to TestPyPI
@@ -451,6 +451,7 @@ jobs:
     # Only cut a GitHub Release for a real version tag.
     if: |
       needs.publish.result == 'success' &&
+      github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v')
 
     steps:
@@ -524,7 +525,7 @@ jobs:
     # Deploy the artifact already built and validated before PyPI publication.
     needs: [ publish, docs-build ]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
       pages: write

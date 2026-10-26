@@ -6,10 +6,12 @@ import hashlib
 import warnings
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
+from weakref import WeakValueDictionary
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager
-from graphql import GraphQLBoolean
+from django.db.models.deletion import ProtectedError, RestrictedError
+from graphql import GraphQLBoolean, GraphQLError
 
 from ._strconv import to_camel_case
 from .backends import resolve_backend
@@ -22,6 +24,7 @@ from .core.validators import build_validator_model
 from .errors import ErrorType
 from .nested import (
     NestedFieldsMixin,
+    _redact_generated_integrity_error,
     hosts_for_nested,
     hosts_serving,
     record_nested_input,
@@ -33,9 +36,10 @@ from .types import (
     DjangoObjectType,
     _check_nested_field_keys,
     _check_unknown_options,
+    _validate_output_selectors,
 )
 from .uploads import merge_uploaded_files
-from .utils import get_Object_or_None, not_found_error
+from .utils import get_Object_or_None, not_found_error, scope_to_output_type
 
 if TYPE_CHECKING:
     from django.db.models import QuerySet
@@ -55,14 +59,10 @@ if TYPE_CHECKING:
 # DjangoModelType path too.
 _NATIVE_FIELD_REGISTRY: dict[tuple, Any] = {}
 
-# Identity set of EVERY native mutation GraphQLField ever built (by either the
-# DjangoModelMutation or DjangoModelType path). Used by the native root compiler
-# (``_collect_root_attrs``) to recognise a provably-native mutation field even
-# after its single ``_NATIVE_FIELD_REGISTRY`` slot was overwritten by a sibling
-# subclass for the same model. Membership here (NOT a blanket
-# ``isinstance(value, GraphQLField)`` scan) keeps the gate: an unrelated
-# user-declared raw GraphQLField is never silently mounted onto the native root.
-_NATIVE_FIELD_IDENTITIES: set[int] = set()
+# Keep only live native mutation fields (including fields whose model-keyed
+# registry slot was overwritten). A bare integer marker could outlive its field
+# and classify an unrelated field after Python recycled the identifier.
+_NATIVE_FIELD_IDENTITIES: WeakValueDictionary[int, GraphQLField] = WeakValueDictionary()
 
 #: The wire name of the identity field a generated UPDATE input exposes. It is
 #: the literal ``id`` whatever the model's primary-key column is called, because
@@ -570,6 +570,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
         _check_nested_field_keys(cls.__name__, model, nested_fields)
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields, write_host=True
+        )
 
         description = description or f"DjangoModelMutation for {model.__name__} model"
 
@@ -611,15 +614,6 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             "skip_registry": False,
         }
 
-        output_type = registry.get_type_for_model(model)
-
-        if not output_type:
-            output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
-
-        django_fields = OrderedDict(
-            {output_field_name: NativeMountedField(output_type)}
-        )
-
         model_operations = tuple(op.lower() for op in model_operations)
         unknown = set(model_operations) - {"create", "update", "delete"}
         if unknown:
@@ -644,6 +638,25 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
                     cls.__name__
                 )
             )
+
+        # A rejected mutation must not reserve the model's public output slot.
+        output_type = registry.get_type_for_model(model)
+
+        if not output_type:
+            output_type = factory_type("output", DjangoObjectType, **factory_kwargs)
+
+        # Resolved at schema-build time: when the output type above is a
+        # generated placeholder, a user type declared later for this model takes
+        # over its registry slot and the payload must follow it, not keep the
+        # placeholder (which would publish every column the user type hides).
+        def _payload_output_type(
+            _registry: Any = registry, _model: Any = model, _fallback: Any = output_type
+        ) -> Any:
+            return _registry.get_type_for_model(_model) or _fallback
+
+        django_fields = OrderedDict(
+            {output_field_name: NativeMountedField(_payload_output_type)}
+        )
 
         global_arguments = {}
         for operation in ("create", "delete", "update"):
@@ -819,7 +832,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             if _resolver is None:
                 continue  # pragma: no cover — model_operations already validated
             # classmethods are bound (inspect.ismethod → True), passthrough
-            _resolver = _adapt_self(_resolver, owner=cls)
+            _resolver = _redact_generated_integrity_error(
+                _adapt_self(_resolver, owner=cls)
+            )
             _gql_field = _GraphQLField(
                 _gql_output_type,
                 args=_args,
@@ -852,7 +867,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             }
             cls._native_fields[_op] = _gql_field
             _NATIVE_FIELD_REGISTRY[(model, _op, "native")] = _gql_field
-            _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+            _NATIVE_FIELD_IDENTITIES[id(_gql_field)] = _gql_field
 
     @classmethod
     def get_errors(cls, errors: list[Any]) -> DjangoModelMutation:
@@ -973,18 +988,27 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
 
         Returns:
             A mutation response carrying the deleted object or errors.
+
+        Raises:
+            GraphQLError: If a protected or restricted relation blocks deletion.
         """
         pk = kwargs.get("id")
 
         # SECURITY: resolve the target row through "get_queryset" ->
         # "filter_queryset", never the bare model, so a declared scope hides a
-        # row from a write exactly as it does on "DjangoModelType". A row
+        # row from a write exactly as it does on "DjangoModelType" (and the
+        # registered output type's own "get_queryset", intersected). A row
         # outside the scope answers as missing, so the response cannot be used
         # to probe another tenant's primary keys.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
-            old_obj.delete()
+            try:
+                old_obj.delete()
+            except (ProtectedError, RestrictedError):
+                raise GraphQLError("Deletion blocked by related objects.") from None
             setattr(old_obj, old_obj._meta.pk.attname, pk)
             return cls.perform_mutate(old_obj, info)
         else:
@@ -1026,7 +1050,9 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
         # ``null``/``[]``/``{}`` as a NO-OP (see ``NestedMutationMixin`` in
         # ``nested.py``); that asymmetry is deliberate and documented there.
         # SECURITY: same scoped lookup as ``delete`` -- see the comment there.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
@@ -1097,7 +1123,7 @@ class DjangoModelMutation(NestedFieldsMixin, NativeObjectType):
             deprecation_reason=deprecation_reason,
             extensions=field.extensions,
         )
-        _NATIVE_FIELD_IDENTITIES.add(id(copy))
+        _NATIVE_FIELD_IDENTITIES[id(copy)] = copy
         return copy
 
     @classmethod

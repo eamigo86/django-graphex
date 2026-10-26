@@ -12,15 +12,19 @@ import datetime
 import decimal
 import enum
 import functools
+import inspect
 import ipaddress
 import uuid
 import warnings
-from typing import Any
+from typing import Any, Callable
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.base import File
+from django.core.validators import validate_email
 from django.db import models
 from django.utils.functional import Promise
-from pydantic import Field, create_model
+from pydantic import ConfigDict, Field, create_model, field_serializer, field_validator
+from pydantic.fields import FieldInfo
 from pydantic_core import core_schema
 
 
@@ -63,6 +67,27 @@ class IDScalar:
     def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
         """Return a permissive any core schema (accept string or numeric ids)."""
         return core_schema.any_schema()
+
+
+class BigIntValue:
+    """Distinct model-derived BigInteger annotation retaining Python integers.
+
+    The input compiler maps this marker to the BigInt wire scalar. Pydantic
+    validates the parsed scalar value as an integer before model persistence.
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> Any:
+        """Validate a parsed BigInt as a Python integer.
+
+        Args:
+            source: The marker annotation being compiled.
+            handler: Unused Pydantic schema handler.
+
+        Returns:
+            A strict integer core schema.
+        """
+        return core_schema.int_schema(strict=True)
 
 
 class FileScalar:
@@ -153,6 +178,8 @@ _STR = (
 #: their internal-type string, never imported.
 FIELD_TYPES: dict[str, Any] = {
     **{name: int for name in _INT},
+    "BigIntegerField": BigIntValue,
+    "PositiveBigIntegerField": BigIntValue,
     **{name: str for name in _STR},
     # A ``NullBooleanField`` reports "BooleanField" from ``get_internal_type()``,
     # so it needs no key of its own here (and could never reach one).
@@ -225,7 +252,11 @@ def _python_type(field: models.Field) -> Any:
     if field.choices:
         return _choices_enum(field)
     if isinstance(field, (models.ForeignKey, models.OneToOneField)):
-        return _scalar_type(field.related_model._meta.pk)
+        pk_type = _scalar_type(field.related_model._meta.pk)
+        # Relation inputs retain ID on the wire, whose parsed value is a string.
+        # Keep Pydantic's integer coercion for a BigInteger target key rather
+        # than applying the strict value-column BigInt marker to an ID.
+        return int if pk_type is BigIntValue else pk_type
     return _scalar_type(field)
 
 
@@ -241,6 +272,11 @@ def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
             constraints["max_digits"] = field.max_digits
         if field.decimal_places is not None:
             constraints["decimal_places"] = field.decimal_places
+    if (
+        py_type is BigIntValue
+        and field.get_internal_type() == "PositiveBigIntegerField"
+    ):
+        constraints["ge"] = 0
 
     description = str(field.help_text) if field.help_text else str(field.verbose_name)
 
@@ -267,6 +303,70 @@ def _field_def(field: models.Field, partial: bool) -> tuple[Any, Any]:
             default = field.default
         return (py_type, Field(default=default, description=description, **constraints))
     return (py_type, Field(description=description, **constraints))
+
+
+def _validate_email_syntax(value: str | enum.Enum | None) -> str | enum.Enum | None:
+    """Validate a supplied nonempty email using Django's syntax validator.
+
+    Args:
+        value: Pydantic-coerced EmailField value, including choice Enums and
+            allowed nulls.
+
+    Returns:
+        The original value without normalization.
+
+    Raises:
+        ValueError: The supplied nonempty value has invalid email syntax.
+    """
+    email_value = value.value if isinstance(value, enum.Enum) else value
+    if email_value is not None and email_value != "":
+        try:
+            if not isinstance(email_value, str):
+                raise DjangoValidationError(validate_email.message, code="invalid")
+            validate_email(email_value)
+        except DjangoValidationError as exc:
+            raise ValueError(exc.messages[0]) from None
+    return value
+
+
+def _positive_integer_validator(
+    model_field: models.Field,
+) -> Callable[[int | enum.Enum | None], int | enum.Enum | None]:
+    """Validate a positive integer column without replacing choice Enums.
+
+    Args:
+        model_field: Django field used for integer conversion.
+
+    Returns:
+        A Pydantic after-validator preserving the original input value.
+    """
+
+    def validate(value: int | enum.Enum | None) -> int | enum.Enum | None:
+        """Reject negative stored values before database persistence.
+
+        Args:
+            value: Pydantic-coerced integer, choice Enum, or allowed null.
+
+        Returns:
+            The original value, including its choice Enum identity.
+
+        Raises:
+            ValueError: The value is negative or cannot be converted to an integer.
+        """
+        if value is None:
+            return value
+        stored_value = value.value if isinstance(value, enum.Enum) else value
+        try:
+            numeric_value = model_field.to_python(stored_value)
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            raise ValueError("Input should be a valid integer") from exc
+        if numeric_value is None:
+            return value
+        if numeric_value < 0:
+            raise ValueError("Input should be greater than or equal to 0")
+        return value
+
+    return validate
 
 
 def writable_fields(model: type[models.Model]) -> list[models.Field]:
@@ -329,6 +429,77 @@ _SCHEMA_CACHE: dict[
 ] = {}
 
 
+def _isolated_model_config_name(model: type[models.Model], base: type | None) -> str:
+    """Choose a private Pydantic name for a Django model_config column.
+
+    Args:
+        model: Django model whose writable names must remain distinct.
+        base: Optional inherited Pydantic model with its own field names.
+
+    Returns:
+        A name absent from the Django columns and inherited Pydantic fields.
+    """
+    occupied = {field.name for field in writable_fields(model)}
+    occupied.update(field.name for field in m2m_fields(model))
+    if base is not None:
+        occupied.update(getattr(base, "model_fields", {}))
+    candidate = "gdx_model_config_field"
+    while candidate in occupied:
+        candidate += "_"
+    return candidate
+
+
+def _retarget_model_config_hooks(base: type, internal_name: str) -> type:
+    """Bind inherited original-name field hooks to an isolated generated field.
+
+    The caller's Pydantic base and decorator metadata remain unchanged. Other
+    field bindings, hook modes, serializer usage, and inherited method binding
+    retain their existing behavior.
+
+    Args:
+        base: User-provided or inline-validator Pydantic base.
+        internal_name: Private generated field replacing model_config.
+
+    Returns:
+        A derived base with retargeted hooks, or the original base if none
+        target the isolated field.
+    """
+    decorators = base.__pydantic_decorators__
+    namespace: dict[str, Any] = {"__module__": __name__}
+    for name, decorator in decorators.field_validators.items():
+        info = decorator.info
+        if "model_config" not in info.fields:
+            continue
+        fields = tuple(
+            internal_name if field_name == "model_config" else field_name
+            for field_name in info.fields
+        )
+        namespace[name] = field_validator(
+            *fields,
+            mode=info.mode,
+            check_fields=info.check_fields,
+            json_schema_input_type=info.json_schema_input_type,
+        )(inspect.getattr_static(base, name))
+    for name, decorator in decorators.field_serializers.items():
+        info = decorator.info
+        if "model_config" not in info.fields:
+            continue
+        fields = tuple(
+            internal_name if field_name == "model_config" else field_name
+            for field_name in info.fields
+        )
+        namespace[name] = field_serializer(
+            *fields,
+            mode=info.mode,
+            return_type=info.return_type,
+            when_used=info.when_used,
+            check_fields=info.check_fields,
+        )(inspect.getattr_static(base, name))
+    if len(namespace) == 1:
+        return base
+    return type(f"{base.__name__}ModelConfigHooks", (base,), namespace)
+
+
 def build_model_schema(
     model: type[models.Model],
     *,
@@ -342,6 +513,11 @@ def build_model_schema(
     "(model, partial, base, frozenset(exclude))": identical calls return the
     SAME class object rather than rebuilding it (the class is stateless per
     "validate" call, so sharing it is safe).
+
+    A generated field named model_config is stored under a private Pydantic
+    name but keeps its original validation alias. Only schemas containing a
+    previously unusable model_dump or model_validate field relax Pydantic's
+    protected namespace check; ordinary generated schemas are unchanged.
 
     Args:
         model: The Django model class.
@@ -391,20 +567,83 @@ def build_model_schema(
                 description="Django object unique identification field",
             ),
         )
+    email_names: list[str] = []
+    positive_fields: list[models.Field] = []
     for field in writable_fields(model):
         if field.name in exclude or field.attname in exclude:
             continue
         definitions[field.name] = _field_def(field, partial)
+        if isinstance(field, models.EmailField):
+            email_names.append(field.name)
+        if field.get_internal_type() in (
+            "PositiveIntegerField",
+            "PositiveSmallIntegerField",
+        ):
+            positive_fields.append(field)
     # M2M: a list of pks, always optional (attached after the parent saves).
     for field in m2m_fields(model):
         if field.name in exclude:
             continue
         pk_type = _scalar_type(field.related_model._meta.pk)
+        # A relation ID is not a model-derived BigInteger column input. Keep
+        # the existing Int list contract even for an explicit BigInteger pk.
+        if pk_type is BigIntValue:
+            pk_type = int
         definitions[field.name] = (list[pk_type] | None, Field(default=None))  # type: ignore[valid-type]
+
+    original_names: dict[str, str] = {}
+    if "model_config" in definitions:
+        internal_name = _isolated_model_config_name(model, base)
+        annotation, field_info = definitions["model_config"]
+        isolated_info = FieldInfo.merge_field_infos(
+            field_info, Field(validation_alias="model_config")
+        )
+        definitions = {
+            internal_name if name == "model_config" else name: (
+                (annotation, isolated_info) if name == "model_config" else definition
+            )
+            for name, definition in definitions.items()
+        }
+        original_names[internal_name] = "model_config"
+        if base is not None:
+            base = _retarget_model_config_hooks(base, internal_name)
 
     kwargs: dict[str, Any] = {"__module__": __name__}
     if base is not None:
         kwargs["__base__"] = base
+    if {"model_dump", "model_validate"} & definitions.keys():
+        # Only generated schemas that previously failed construction relax this
+        # Pydantic namespace check. Ordinary model schemas retain their config.
+        kwargs["__config__"] = ConfigDict(protected_namespaces=())
+    validators: dict[str, Any] = {
+        f"_gdx_email_syntax_{index}": field_validator(
+            next(
+                (
+                    internal
+                    for internal, original in original_names.items()
+                    if original == name
+                ),
+                name,
+            ),
+            mode="after",
+        )(_validate_email_syntax)
+        for index, name in enumerate(email_names)
+    }
+    for index, model_field in enumerate(positive_fields):
+        validators[f"_gdx_positive_{index}"] = field_validator(
+            next(
+                (
+                    internal
+                    for internal, original in original_names.items()
+                    if original == model_field.name
+                ),
+                model_field.name,
+            ),
+            mode="after",
+        )(_positive_integer_validator(model_field))
+    if validators:
+        kwargs["__validators__"] = validators
     schema = create_model(f"{model.__name__}Native", **kwargs, **definitions)  # type: ignore[call-overload]
+    schema.__gdx_original_fields__ = original_names
     _SCHEMA_CACHE[cache_key] = schema
     return schema

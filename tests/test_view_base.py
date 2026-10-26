@@ -6,6 +6,8 @@ form bodies, missing-query, GET-mutation rejection, and content-type negotiation
 helpers, all through the concrete "BaseGraphQLView".
 """
 
+import ast
+import inspect
 import json
 from typing import Any
 
@@ -16,7 +18,9 @@ from graphql import GraphQLString
 from django_graphex.core import ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
 from django_graphex.views import (
+    AuthenticatedGraphQLView,
     BaseGraphQLView,
+    GraphQLView,
     HttpError,
     get_accepted_content_types,
     instantiate_middleware,
@@ -223,6 +227,50 @@ def test_view_rejects_graphiql_and_batch_together() -> None:
     """
     with pytest.raises(AssertionError):
         BaseGraphQLView(schema=_schema, graphiql=True, batch=True)
+
+
+@pytest.mark.parametrize(
+    "view_class", (BaseGraphQLView, GraphQLView, AuthenticatedGraphQLView)
+)
+def test_view_constructor_rejects_invalid_schema(
+    view_class: type[BaseGraphQLView],
+) -> None:
+    """Reject missing schema interfaces with the existing public error.
+
+    Args:
+        view_class: The public view class to construct.
+    """
+    with pytest.raises(
+        AssertionError,
+        match="A Schema exposing `graphql_schema` is required to be provided to GraphQLView.",
+    ):
+        view_class(schema=object())
+
+
+@pytest.mark.parametrize(
+    "view_class", (BaseGraphQLView, GraphQLView, AuthenticatedGraphQLView)
+)
+def test_view_constructor_rejects_conflicting_modes(
+    view_class: type[BaseGraphQLView],
+) -> None:
+    """Keep the mutually exclusive mode error across public view classes.
+
+    Args:
+        view_class: The public view class to construct.
+    """
+    with pytest.raises(AssertionError, match="Use either graphiql or batch processing"):
+        view_class(schema=_schema, graphiql=True, batch=True)
+
+
+def test_view_constructor_does_not_use_optimized_away_validation() -> None:
+    """Require durable validation for both public constructor guards.
+
+    Optimized Python removes assertion statements, so public configuration
+    checks must use explicit conditional raises.
+    """
+    source = inspect.getsource(BaseGraphQLView.__init__)
+    constructor = ast.parse(inspect.cleandoc(source)).body[0]
+    assert not any(isinstance(node, ast.Assert) for node in ast.walk(constructor))
 
 
 # --------------------------------------------------------------------------- #

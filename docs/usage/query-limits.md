@@ -4,7 +4,9 @@ GraphQL lets a client shape its own queries, which means a single request can as
 for far more work than you intend — by nesting deeply, or by paging wide.
 `django-graphex` ships two **validation rules** that reject such queries
 **before any resolver runs**: a depth limiter and a cost analyzer. Both are
-enabled by default in the library's `GraphQLView`.
+enabled by default in the library's `GraphQLView`. When a cost budget is set,
+the view also checks the selected operation against coerced request variables
+after document validation and before resolution.
 
 - [`DepthLimitValidationRule`](#query-depth-limiting) — reject abusively *nested*
   queries.
@@ -92,8 +94,9 @@ class MyGraphQLView(BaseGraphQLView):
 Depth limiting doesn't catch a query that is shallow but *wide*:
 `categories(limit: 100) { posts(limit: 100) { comments(limit: 100) { … } } }`
 can materialize a million objects in three levels. Cost analysis estimates the
-work a query asks for **during validation** and rejects it over a budget — and
-can optionally report the cost back to clients. It captures *width × depth × page
+work a query asks for **during validation and, for a selected operation, after
+variable coercion** and rejects it over a budget — and can optionally report the
+cost back to clients. It captures *width × depth × page
 size* in one number:
 
 ```
@@ -121,7 +124,7 @@ DJANGO_GRAPHEX = {
     "EXPOSE_QUERY_COST": False,    # True = add extensions.cost to responses
     "DEFAULT_LIST_MULTIPLIER": 10, # used only when no page size / cap is known
     "MAX_PAGE_SIZE": 100,          # the realistic per-list ceiling (recommended)
-    "DEFAULT_PAGE_SIZE": None,     # fallback when MAX_PAGE_SIZE is unset but a default is configured
+    "DEFAULT_PAGE_SIZE": 100,      # library default; not a hard cap
     # Argument names treated as a list's page size (default below):
     "COST_PAGINATION_ARGS": ("limit", "page_size", "first", "last"),
 }
@@ -129,12 +132,13 @@ DJANGO_GRAPHEX = {
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected. `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
+| `MAX_QUERY_COST` | `None` | Budget; queries over it are rejected by static validation or, for the selected operation, after request-variable coercion and before resolution. `None` is the **only** way to disable the budget; `0` or a negative value raises `ImproperlyConfigured`. |
 | `EXPOSE_QUERY_COST` | `False` | When `True`, responses include `extensions.cost`. |
 | `MAX_PAGE_SIZE` | `None` | Caps every list multiplier (also a pagination setting). |
-| `DEFAULT_PAGE_SIZE` | `None` | Fallback multiplier for an unbounded list when `MAX_PAGE_SIZE` is not set. |
+| `DEFAULT_PAGE_SIZE` | `100` | Fallback multiplier when `MAX_PAGE_SIZE` is not set; also the library's inherited page size, not a hard cap. |
 | `DEFAULT_LIST_MULTIPLIER` | `10` | Last-resort multiplier when neither `MAX_PAGE_SIZE` nor `DEFAULT_PAGE_SIZE` is set; triggers a `RuntimeWarning`. |
-| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. |
+| `COST_DIRECTIVE` | `0` | Cost added per custom directive use on a field. |
+| `COST_PAGINATION_ARGS` | `("limit", "page_size", "first", "last")` | Argument names read as a real list field's page size. Names are compared in snake_case form, so `page_size` also matches the wire name `pageSize`. A custom `page_size_query_param` such as `per_page` must be added here. |
 
 When a list field has no pagination argument, cost analysis uses
 `MAX_PAGE_SIZE`, then `DEFAULT_PAGE_SIZE`, then `DEFAULT_LIST_MULTIPLIER`.
@@ -199,21 +203,39 @@ and the budget, then set `MAX_QUERY_COST` to start enforcing.
 
     The multiplier for a list is its page size. If a list has no page-size
     argument in the query and `MAX_PAGE_SIZE` is `None`, the cost falls back to
-    `DEFAULT_LIST_MULTIPLIER` (a soft guess) and the rule emits a one-shot
-    `RuntimeWarning`. Set `MAX_PAGE_SIZE` so unbounded lists are costed at the
-    ceiling the server actually enforces — this also closes the `limit: $var`
-    bypass, since an unknown variable page size is costed at the cap.
+    `DEFAULT_PAGE_SIZE`, then `DEFAULT_LIST_MULTIPLIER` (a soft guess that
+    emits a one-shot `RuntimeWarning`). Set `MAX_PAGE_SIZE` so unbounded lists
+    are costed at a ceiling the server actually enforces. A bound `limit: $var`
+    is checked against its real, coerced value before a resolver runs even
+    without this cap; the cap remains useful for omitted limits.
 
-!!! warning "Variable defaults are not trusted for enforcement"
+!!! warning "Static validation uses a conservative variable fallback"
 
     A default declared in the document (`query Q($n: Int = 1)`) is written by
-    the same client that sends the real variable values, so the enforcing rule
-    ignores it: a variabled page size is always costed at the cap
-    (`MAX_PAGE_SIZE`, else `DEFAULT_PAGE_SIZE` / `DEFAULT_LIST_MULTIPLIER`).
-    The reporting path (`EXPOSE_QUERY_COST`, or `analyze_cost(...,
-    variable_values=...)`) does receive the request's real variables and uses
-    the declared default when a variable is left unbound, so a reported cost
-    can be lower than the cost the rule enforced.
+    the client, so the static validation rule still ignores it and prices an
+    unresolved variable at `MAX_PAGE_SIZE`, else `DEFAULT_PAGE_SIZE` /
+    `DEFAULT_LIST_MULTIPLIER`. After validation, `GraphQLView` also checks the
+    selected operation with GraphQL-coerced request values and defaults before
+    any resolver runs, including when document validation is cached. A low
+    request value does **not** undo a prior static rejection. A high value that
+    previously passed the fallback check may now return HTTP 400 with
+    `QUERY_TOO_COMPLEX` instead of executing. The public `analyze_cost` API
+    and cost model are unchanged.
+
+    For example, with `MAX_QUERY_COST=120`, `DEFAULT_PAGE_SIZE=100`, and no
+    `MAX_PAGE_SIZE`, a list whose nested cost is `1 + limit` passes static
+    validation for `limit: $n` at 101. Sending `{"n": 150}` now rejects the
+    selected operation at cost 151; sending `{"n": 5}` remains within budget.
+    Explicit `limit: 150` was already rejected by static validation.
+
+    A response-cache hit serves a stored response without executing a resolver;
+    this new bound check runs when the request proceeds to GraphQL execution.
+    A mutation rejected by this bound check has not run a resolver, so it does
+    not invalidate an already-warmed response cache. In a non-atomic batch, an
+    earlier mutation that did execute still invalidates the cache even if a
+    later operation is rejected. Resolver errors after a non-atomic write keep
+    their existing invalidation behavior. This check does not change hot-setting
+    behavior.
 
 !!! note "Per-type only (for now)"
 
@@ -278,6 +300,64 @@ costs `1 + 1×(51 + 0) = 52`.
 - **`variable_values`** — bound variables, so a variabled page size (`limit: $first`)
   is costed exactly instead of falling back to the `MAX_PAGE_SIZE` cap.
 
+### Very deep documents
+
+Independently of `MAX_QUERY_DEPTH`, `DepthLimitValidationRule` always enforces a
+hard ceiling of 100 nested object levels (a private constant). Python's stack
+cannot execute deeper documents: graphql-core completes each level through
+several nested frames, and with real data a request fails with an internal
+error from roughly 130 levels, while its parser only refuses inline documents
+at about 232 levels. Fragments split a deep document into shallow pieces that
+parse fine, so they get the same HTTP 400 `QUERY_TOO_DEEP` as an equally deep
+inline document. The ceiling also applies to subscriptions, which share the
+rule, and a larger `MAX_QUERY_DEPTH` cannot raise it; a smaller one still
+wins.
+
+Both rules walk the document with an explicit stack, so a long chain of
+fragments or deep inline nesting cannot exhaust the Python stack inside them.
+graphql-core itself is still recursive: its parser fails at roughly 250 nested
+selection sets and its `NoFragmentCycles` rule at several hundred chained
+fragments (with the default recursion limit). The view answers those documents
+with an HTTP 400 and `extensions.code` `QUERY_TOO_DEEP` ("Query is nested too
+deeply to be parsed/validated") instead of an HTTP 500, whether or not
+`MAX_QUERY_DEPTH` is set. Only parsing and validation are guarded this way;
+`RecursionError` raised by a resolver is still a server error. Variables nested
+too deeply to coerce get the same code ("Variables are nested too deeply to be
+coerced.") over HTTP, SSE and WebSocket.
+
+### Cyclic fragments and direct callers
+
+The cost and depth rules now inspect the named-fragment reference graph before
+expanding selections. Standard GraphQL validation still reports cyclic
+fragments as request errors before resolvers run; a compact branching cycle
+cannot make either rule repeatedly traverse its expanded paths. Acyclic
+documents, including repeated spreads that each contribute full cost, keep
+their existing estimates and depth verdicts.
+
+**Compatibility change for direct callers:** `analyze_cost()` now raises
+`GraphQLError` when *any* named fragments in the parsed document form a cycle,
+even if the selected operation does not spread that fragment. Previously it
+could return a truncated, misleading `CostReport`. For example,
+`{ root { ...F } } fragment F on Node { child { ...F } }` is cyclic; it no
+longer has a usable cost report. Validate the document first, or catch the
+exception when accepting unvalidated documents:
+
+```python
+from graphql import GraphQLError, parse, validate
+from django_graphex.cost import analyze_cost
+
+document = parse(query_text)
+errors = validate(schema.graphql_schema, document)
+if errors:
+    raise errors[0]  # Includes standard cyclic-fragment errors.
+
+try:
+    report = analyze_cost(schema.graphql_schema, document)
+except GraphQLError:
+    # Needed when calling directly without prior validation.
+    raise
+```
+
 A handy use is a regression test that fails if a query gets more expensive:
 
 ```python
@@ -303,7 +383,7 @@ machine-readable `extensions.code`:
 
 | Code | Raised by |
 |------|-----------|
-| `QUERY_TOO_DEEP` | `DepthLimitValidationRule` |
+| `QUERY_TOO_DEEP` | `DepthLimitValidationRule`, and documents too deep for graphql-core's parser/validator |
 | `QUERY_TOO_COMPLEX` | `CostLimitValidationRule` |
 
 ```json
@@ -365,10 +445,13 @@ report = analyze_cost(schema.graphql_schema, parse(query), variable_values={"fla
 # flag=True → @skip(if:$flag) skips the subtree → lower cost
 ```
 
-!!! note "Output-formatting directives do not affect cost"
+!!! note "Directives and cost"
 
-    Custom application-level directives such as `@date` and `@number` are
-    *output-formatting* directives: they transform the value of an already-fetched
-    field. They have **no effect** on whether a field is fetched, and therefore do
-    **not** affect query cost, depth limits, or the query optimizer's
-    select/prefetch/only planning.
+    Custom directives such as `@date` and `@number` transform the value of an
+    already-fetched field, so they do not change depth or the optimizer's
+    select/prefetch planning. By default they do not add cost either. Set
+    `COST_DIRECTIVE` (default `0`) to charge each custom directive use that
+    amount, multiplied by the enclosing list sizes. `@skip` and `@include` are
+    never charged. Independently of cost, `MAX_DIRECTIVE_OUTPUT_TOTAL` caps the
+    text directives may add to a whole response (see
+    [Settings](settings.md#string-directive-output)).

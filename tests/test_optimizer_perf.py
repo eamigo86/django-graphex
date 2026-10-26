@@ -665,6 +665,7 @@ class OnlyNarrowingFmapCacheTest(TestCase):
 
         from django.test import override_settings
 
+        from django_graphex.paginations import LimitOffsetGraphqlPagination
         from django_graphex.registry import Registry
         from django_graphex.types import (
             DjangoListObjectField,
@@ -680,6 +681,14 @@ class OnlyNarrowingFmapCacheTest(TestCase):
                 model = Post
                 registry = _REG
 
+        class _NPostListType(DjangoListObjectType):
+            class Meta:
+                model = Post
+                registry = _REG
+                pagination = LimitOffsetGraphqlPagination(
+                    default_limit=None, max_limit=None
+                )
+
         class _NAuthorType(DjangoObjectType):
             class Meta:
                 model = Author
@@ -689,6 +698,9 @@ class OnlyNarrowingFmapCacheTest(TestCase):
             class Meta:
                 model = Author
                 registry = _REG
+                pagination = LimitOffsetGraphqlPagination(
+                    default_limit=None, max_limit=None
+                )
 
         schema = DjangoGraphQLSchema(
             query=_gtype(

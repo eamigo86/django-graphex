@@ -2,6 +2,12 @@
 
 This section provides detailed API documentation for mutation classes in `django-graphex`.
 
+When `MAX_QUERY_COST` is configured, `GraphQLView` rejects a selected mutation
+whose GraphQL-coerced request variables exceed the budget before its resolver
+runs. Such a refusal does not invalidate the response cache. An earlier
+executed mutation in the same non-atomic batch still does; see
+[query cost limits](../usage/query-limits.md#query-cost-analysis).
+
 ## DjangoModelMutation
 
 The primary mutation class that provides automatic CRUD operations driven directly by a Django model.
@@ -43,10 +49,10 @@ class CustomerMutation(DjangoModelMutation):
     (`exclude_field` for `exclude_fields`, which used to leave the column it
     named writable) and the option that belongs to the other host: `queryset` is
     read by `DjangoModelType`, never here. Declaring `permission_classes` raises
-    for the same reason — see
+    for the same reason, before the mutation registers a model output type — see
     [Mutations](../usage/mutations.md#permissions-are-djangomodeltype-only).
 
-    The one exception is the handful of keys the graphene `ObjectType` base
+    The one exception is the handful of keys the `ObjectType` base class
     consumes before django-graphex sees them — `name`, `_meta`, `interfaces`,
     `possible_types`, `default_resolver` and `container`. They are accepted, and
     only `name` and `description` do anything useful on a mutation.
@@ -60,6 +66,14 @@ Every `DjangoModelMutation` includes these standard fields:
 | `ok` | `Boolean` | Success indicator |
 | `errors` | `List[ErrorType]` | Validation errors |
 | `{model_name}` | `ObjectType` | The created/updated/deleted object |
+
+Generated inputs validate a supplied, nonempty Django `EmailField` value with
+Django's email syntax validator. Invalid syntax returns the usual `ok: false`
+payload with `errors[].field` naming that field; its GraphQL type remains
+`String` for fields without choices. Choice-backed email fields keep their
+existing Enum input and output SDL; syntax is checked on the stored choice
+value, not its label. Empty, omitted, nullable and defaulted values keep their
+existing rules. See the [native backend guide](../usage/backends.md#native-pydantic-backend).
 
 ### Class Methods
 
@@ -107,6 +121,12 @@ written before the parent and their pk injected; reverse FK/O2O and M2M children
 are written after and linked to it. A reverse child (FK **or** O2O) supplied by
 pk is rejected when it currently belongs to a different parent. Any validation
 failure rolls the whole transaction back.
+With the included Django backend, a nested create routes one populated unsaved
+parent and pins native child writes to that alias. A custom serializer backend
+still receives `instance=None` on create. A divergent M2M through route is
+refused before any write, or before linking after a generated parent ID with
+selected-alias writes rolled back. There is no cross-database atomicity or
+guarantee for a router that changes its answer between checks and linking.
 See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
 
 **Parameters:**
@@ -117,6 +137,15 @@ See [How nested writes work](../usage/mutations.md#how-nested-writes-work).
 - `serializer_kwargs` (`dict | None`): Reserved (unused by the native backend)
 
 **Returns:** `(ok: bool, obj_or_errors)` — the saved object, or a list of `ErrorType`
+
+An unclassified database `IntegrityError` is not returned in this tuple: it
+escapes the helper after its nested transaction rolls back. The generated
+GraphQL field replaces its public message with the generic top-level error;
+calling the backend directly still raises the original exception.
+Other unhandled resolver exceptions on the built-in HTTP views with
+`DEBUG=False` receive the safe category and log-correlated `errorId` described
+in [Production execution errors](../usage/views.md#production-execution-errors).
+This does not change the generated field's generic or structured errors.
 
 ### CRUD Operations
 
@@ -151,7 +180,12 @@ Delete an object by its ID.
 - `info` (`ResolveInfo`): GraphQL resolve info
 - `**kwargs`: Mutation arguments including object ID
 
-**Returns:** Mutation response with deleted object or errors
+**Returns:** Mutation response with deleted object or structured not-found errors.
+
+**Raises:** A blocked `PROTECT` or `RESTRICT` deletion becomes a generic
+GraphQL execution error with the delete field set to `null`, not an
+`ok: false` payload. See [error handling](../usage/mutations.md#error-handling)
+for the response and rollback distinction.
 
 !!! note "Customizing persistence"
 
@@ -451,6 +485,13 @@ The request carries a **`query`** part with the document, an optional
 after the model field — the view reads a multipart body straight out of
 `request.POST`, so there is no `operations` / `map` envelope:
 
+With [`MAX_UPLOAD_SIZE`](../usage/settings.md#file-uploads) configured, every
+received multipart file must fit the per-file byte limit, even if its part
+name matches no input field or repeats another name. The view returns JSON
+HTTP 413 before resolver execution for an oversized file; a file at the limit
+is accepted. `None` leaves multipart files without this per-file cap.
+`MAX_REQUEST_BODY_SIZE` separately limits the full request.
+
 ```python
 requests.post(
     "https://app.example.com/graphql/",
@@ -533,7 +574,7 @@ Standard error type used in mutation responses.
 from django_graphex.errors import ErrorType
 ```
 
-`ErrorType` is a native `ObjectType` (graphene-free) with two fields:
+`ErrorType` is a native `ObjectType` with two fields:
 
 | Field | GraphQL type | Description |
 |-------|-------------|-------------|

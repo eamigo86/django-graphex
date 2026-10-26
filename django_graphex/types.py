@@ -5,11 +5,13 @@ from __future__ import annotations
 import inspect
 import warnings
 from collections import OrderedDict
+from contextlib import nullcontext
 from copy import copy
 from typing import TYPE_CHECKING, Any, ClassVar, Optional, Sequence
 
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Manager, QuerySet
+from django.db.models.deletion import ProtectedError, RestrictedError
 from django.utils.functional import SimpleLazyObject
 from graphql import GraphQLBoolean, GraphQLError
 
@@ -25,11 +27,17 @@ from .core.output_compiler import MASKED_COLUMN_EXT
 from .core.validators import build_validator_model
 from .errors import ErrorType
 from .fields import DjangoListObjectField, DjangoObjectField
+from .filtering.backend import apply_filter_backend
 from .filtering.filter_field import (
     RESERVED_FILTER_ARGS,
     collect_custom_filters,
 )
-from .nested import NestedFieldsMixin, hosts_serving, register_nested_host
+from .nested import (
+    NestedFieldsMixin,
+    _redact_generated_integrity_error,
+    hosts_serving,
+    register_nested_host,
+)
 from .paginations.pagination import (
     BaseDjangoGraphqlPagination,
     projected_ordering_attnames,
@@ -40,13 +48,16 @@ from .settings import graphql_api_settings
 from .uploads import merge_uploaded_files
 from .utils import (
     _apply_optimizations,
+    _get_by_pk_or_none,
     apply_object_type_get_queryset,
     get_model_fields,
     get_Object_or_None,
+    has_object_type_queryset_override,
     is_valid_django_model,
     maybe_queryset,
     not_found_error,
     queryset_factory,
+    scope_to_output_type,
 )
 
 if TYPE_CHECKING:
@@ -210,13 +221,18 @@ def _model_derived_fields(model: type) -> list[Any]:
         model: The Django model to enumerate.
 
     Returns:
-        The derived fields, or the concrete fields when "_meta.get_fields" is
-        unavailable.
+        The derived fields, including inherited and reverse relations.
+
+    Raises:
+        ImproperlyConfigured: Django metadata enumeration fails for the model.
     """
     try:
         return list(model._meta.get_fields())
-    except Exception:  # pragma: no cover — defensive
-        return list(model._meta.concrete_fields)
+    except Exception as exc:
+        model_label = getattr(model._meta, "label", model.__name__)
+        raise ImproperlyConfigured(
+            f"Failed to enumerate fields for model {model_label}"
+        ) from exc
 
 
 def _model_field_names(model: type) -> set[str]:
@@ -240,6 +256,85 @@ def _model_field_names(model: type) -> set[str]:
             except Exception:  # pragma: no cover — defensive
                 pass  # nosec B110 — accessor probing is best-effort
     return names
+
+
+def _validate_output_selectors(
+    cls: type,
+    model: type[Model],
+    only_fields: Any,
+    exclude_fields: Any,
+    write_host: bool = False,
+) -> tuple[Any, Any]:
+    """Validate public output projections before compilation or registration.
+
+    Args:
+        cls: The public output class being configured.
+        model: The Django model projected by the class.
+        only_fields: Names selected for output, or an empty value.
+        exclude_fields: Names omitted from output, or an empty value.
+        write_host: True for a mutation or input host, where the wire identity
+            "id" is a valid selector even on a model keyed on another column.
+
+    Returns:
+        The validated selectors, with one-shot iterators materialized for reuse.
+
+    Raises:
+        ImproperlyConfigured: A selector is a bare string or names no model or
+            declared output field.
+    """
+    from ._strconv import to_camel_case
+
+    allowed = set()
+    for name, model_field in get_model_fields(model):
+        allowed.add(name)
+        if getattr(model_field, "auto_created", False) and not getattr(
+            model_field, "concrete", False
+        ):
+            get_accessor = getattr(model_field, "get_accessor_name", None)
+            if callable(get_accessor):
+                accessor = get_accessor()
+                if (
+                    isinstance(accessor, str)
+                    and accessor
+                    and not accessor.endswith("+")
+                ):
+                    allowed.add(accessor)
+    if write_host:
+        allowed.add("id")
+    for base in cls.__mro__:
+        for name, descriptor in base.__dict__.items():
+            if isinstance(descriptor, (NativeMountedField, NativeField)):
+                allowed.add(name)
+                allowed.add(getattr(descriptor, "name", None) or to_camel_case(name))
+
+    validated = []
+    for option, selector in (
+        ("only_fields", only_fields),
+        ("exclude_fields", exclude_fields),
+    ):
+        if selector is None:
+            validated.append(None)
+            continue
+        if isinstance(selector, (str, bytes)):
+            raise ImproperlyConfigured(
+                f"{cls.__name__}.Meta.{option} must contain field names, "
+                "not a bare string. Use a tuple such as ('field_name',)."
+            )
+        try:
+            names = list(selector)
+        except TypeError as exc:
+            raise ImproperlyConfigured(
+                f"{cls.__name__}.Meta.{option} must be an iterable of field names."
+            ) from exc
+        for name in names:
+            if not isinstance(name, str) or name not in allowed:
+                raise ImproperlyConfigured(
+                    f"{cls.__name__}.Meta.{option} names unknown field {name!r} "
+                    f"on model {model.__name__}. Check the spelling or declare "
+                    "a custom output field before selecting it."
+                )
+        validated.append(tuple(names) if iter(selector) is selector else selector)
+    return validated[0], validated[1]
 
 
 def _is_declared_class_attr(src_cls: type, field_name: str) -> bool:
@@ -283,13 +378,19 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
 
     Args:
         src_cls: The source DjangoObjectType subclass.
+        registries: Schema-local registries used to compile declared fields.
 
     Returns:
-        A {camelCase_name: GraphQLField} dict of declared non-model fields
-        (empty when the class declares none).
+        A wire-name-to-GraphQLField mapping of declared non-model fields,
+        honoring explicit names only for interface implementors and otherwise
+        retaining the existing camelCase wire name.
     """
     from ._strconv import to_camel_case
-    from .core.schema_compiler import _build_filter_list_field, compile_declared_field
+    from .core.schema_compiler import (
+        _build_filter_list_field,
+        _rendered_field_name,
+        compile_declared_field,
+    )
     from .fields import (
         DjangoFilterListField,
         DjangoFilterPaginateListField,
@@ -300,6 +401,15 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
     meta_fields = getattr(meta, "fields", None) or {}
     model = getattr(meta, "model", None)
     model_names = _model_field_names(model) if model is not None else set()
+
+    # Only a field that implements an interface field must match the
+    # interface's explicit wire name; every other field keeps the naming it has
+    # without interfaces, so adding an interface never renames unrelated fields.
+    interface_field_names: set[str] = set()
+    for iface in getattr(meta, "interfaces", ()) or ():
+        interface_field_names.update(
+            getattr(getattr(iface, "_meta", None), "fields", None) or ()
+        )
 
     out: dict[str, Any] = {}
     for field_name, field in meta_fields.items():
@@ -334,7 +444,12 @@ def _compile_declared_fields(src_cls: type, registries: Any = None) -> dict[str,
             src_cls, field_name
         ):
             continue
-        out[to_camel_case(field_name)] = _mark_masked_column(
+        wire_name = (
+            _rendered_field_name(field, field_name)
+            if field_name in interface_field_names
+            else to_camel_case(field_name)
+        )
+        out[wire_name] = _mark_masked_column(
             field_name,
             compile_declared_field(src_cls, field_name, field, registries),
         )
@@ -469,6 +584,7 @@ def _compile_gfk_union_output_fields(
         return {}
 
     from .core.polymorphic_compiler import compile_union_type
+    from .utils import gfk_target_is_visible, read_gfk_target
 
     gfk_names = {
         f.name for f in model._meta.get_fields() if isinstance(f, GenericForeignKey)
@@ -489,9 +605,13 @@ def _compile_gfk_union_output_fields(
         gql_union = compile_union_type(union_cls, registries)
 
         def _gfk_resolver(root: Any, _info: Any, *, _name: str = fk_name) -> Any:
-            if isinstance(root, dict):
-                return root.get(_name)
-            return getattr(root, _name, None)
+            # A hidden member row resolves to null, like an absent target.
+            target, scoped = read_gfk_target(root, _name)
+            if target is None or scoped or gfk_target_is_visible(target, _info):
+                return target
+            return None
+
+        _gfk_resolver._gqx_automatic_gfk = True  # type: ignore[attr-defined]
 
         out[to_camel_case(fk_name)] = GraphQLField(
             gql_union,
@@ -704,16 +824,41 @@ def _compile_reverse_o2o_fields(
 
         # Single nullable object field (graphene renders reverse O2O ALWAYS
         # nullable: required=is_required(field) and input_flag=='create' is
-        # always False for output). The resolver reads the reverse accessor;
-        # Django raises RelatedObjectDoesNotExist when the row has no related
-        # instance — return None in that case (a nullable field).
-        def _resolver(root: Any, _info: Any, *, _name: str = accessor) -> Any:
+        # always False for output). A scoped prefetch stores the visible child
+        # separately from any unscoped relation cache. Without that prefetch,
+        # the resolver checks the reverse accessor against the active hook;
+        # Django raises RelatedObjectDoesNotExist when the row has no child.
+        def _resolver(
+            root: Any,
+            _info: Any,
+            *,
+            _name: str = accessor,
+            _target_gql: Any = compiled,
+        ) -> Any:
             if isinstance(root, dict):
                 return root.get(_name)
+            from .core.compat import _gdx_graphene_type
+
+            target_type = _gdx_graphene_type(_target_gql)
+            if has_object_type_queryset_override(target_type):
+                sentinel = object()
+                prefetched = getattr(root, f"_gqx_scoped_{_name}", sentinel)
+                if prefetched is not sentinel:
+                    return prefetched
             try:
-                return getattr(root, _name, None)
+                related = getattr(root, _name, None)
             except ObjectDoesNotExist:
                 return None
+            if related is None or not has_object_type_queryset_override(target_type):
+                return related
+            alias = getattr(getattr(root, "_state", None), "db", None)
+            queryset = related.__class__._default_manager.db_manager(alias).filter(
+                pk=related.pk
+            )
+            queryset = apply_object_type_get_queryset(queryset, target_type, _info)
+            return related if queryset.exists() else None
+
+        _resolver._gqx_automatic_reverse_o2o = True  # type: ignore[attr-defined]
 
         out[to_camel_case(accessor)] = GraphQLField(
             type_=compiled,
@@ -1128,8 +1273,10 @@ class DjangoObjectType(NativeObjectType):
             registry: Registry to register this type in; defaults to the
                 global registry.
             skip_registry: When True, do not register this type.
-            only_fields: Model field names to include exclusively.
-            exclude_fields: Model field names to exclude.
+            only_fields: Model field names selected for automatic output projection.
+                Declared output names remain accepted but are compiled independently.
+            exclude_fields: Model field names omitted from automatic output projection.
+                Declared output names remain accepted but are not filtered.
             include_fields: Extra model field names to include.
             filter_fields: Field names usable for filtering.
             interfaces: GraphQL interfaces this type implements.
@@ -1144,8 +1291,10 @@ class DjangoObjectType(NativeObjectType):
             **options: Extra options forwarded to the parent implementation.
 
         Raises:
-            ImproperlyConfigured: If the legacy "Meta.gfk_unions" key is declared
-                (renamed to "unions" in v2.0).
+            ImproperlyConfigured: If a field selector is a bare string or names
+                an unknown field, the legacy "Meta.gfk_unions" key is declared
+                (renamed to "unions" in v2.0), or a distinct public output type
+                already registers this model in the same Registry.
         """
         # HARD rename guard (v2.0): ``Meta.gfk_unions`` -> ``Meta.unions`` (mirrors
         # the ``gfk_types`` -> ``types`` rename). A subclass still declaring the old
@@ -1159,17 +1308,27 @@ class DjangoObjectType(NativeObjectType):
 
         _check_unknown_options(cls.__name__, options)
 
-        assert is_valid_django_model(model), (
-            'You need to pass a valid Django Model in {}.Meta, received "{}".'
-        ).format(cls.__name__, model)
+        if not is_valid_django_model(model):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid Django Model in {}.Meta, received "{}".'
+                ).format(cls.__name__, model)
+            )
 
         if not registry:
             registry = get_global_registry()
 
-        assert isinstance(registry, Registry), (
-            "The attribute registry in {} needs to be an instance of "
-            'Registry, received "{}".'
-        ).format(cls.__name__, registry)
+        if not isinstance(registry, Registry):
+            raise ImproperlyConfigured(
+                (
+                    "The attribute registry in {} needs to be an instance of "
+                    'Registry, received "{}".'
+                ).format(cls.__name__, registry)
+            )
+
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields
+        )
 
         # Collect @filter_field-decorated methods and validate reserved names.
         custom_filters = collect_custom_filters(cls)
@@ -1235,19 +1394,18 @@ class DjangoObjectType(NativeObjectType):
         # ----------------------------------------------------------------
         # NATIVE PATH: create EXACTLY ONE GraphQLObjectType per DjangoObjectType,
         # ONCE, here at class definition — identity-stable.  Its relation fields
-        # are LAZY THUNKS that resolve against the SHARED GLOBAL output registry
-        # (django_graphex.core.base.get_shared_output_registry()), NEVER a
-        # per-class local registry.
+        # are LAZY THUNKS that resolve against this class's Registry companion.
+        # The global Registry uses the shared output registry; a custom Registry
+        # uses its own companion, keeping public schemas isolated.
         #
         # Why a single instance + shared-registry thunks: relations CANNOT be
         # resolved at class-definition time (the related type may be defined
-        # later).  By closing the field thunk over the GLOBAL registry, the
-        # relation lookup runs lazily — after compile_all_outputs() has
-        # registered every type's stub — so it resolves to the related type's
-        # real GraphQLObjectType instead of degrading to GraphQLString.
+        # later). The thunk closes over this Registry's output companion and
+        # resolves lazily after its related type has been registered, avoiding
+        # a premature GraphQLString fallback.
         #
         # compile_all_outputs() (called at app-ready) POPULATES/validates these
-        # existing instances against the SAME shared registry.  It NEVER creates
+        # existing instances against their Registry companion. It NEVER creates
         # a second GraphQLObjectType for an already-registered type, so the
         # instance pinned by mutation.py (mutation.py:434/456) at mutation
         # class-def time is the SAME object that ends up in the assembled
@@ -1262,8 +1420,8 @@ class DjangoObjectType(NativeObjectType):
             from graphql import GraphQLObjectType
 
             from django_graphex.core.base import (
-                _gdx_output_registry,
                 _GdxOutputEntry,
+                append_output_entry,
                 is_forking,
             )
             from django_graphex.core.bridge import GdxPayload
@@ -1298,13 +1456,11 @@ class DjangoObjectType(NativeObjectType):
                 include_fields=list(include_fields) if include_fields else None,
             )
             if not _forking:
-                _gdx_output_registry.append(_entry)
+                append_output_entry(_entry)
 
             # OUTPUT registry: the source of truth for this type's relation
-            # thunks. Keyed by MODEL with last-registration-wins semantics,
-            # mirroring the graphene Registry (registry.get_type_for_model(model)).
-            # Relation thunks of OTHER types resolve a FK/M2M to whatever instance
-            # is the canonical (last-registered) type for the related model.
+            # thunks. One registered public output per model is canonical
+            # within each Registry; distinct public views use distinct pairs.
             #
             # Registry-scoped: use the class's OWN registry companion, NOT the
             # process-global shared registry directly. For the GLOBAL registry
@@ -1343,9 +1499,9 @@ class DjangoObjectType(NativeObjectType):
             _excl = list(exclude_fields) if exclude_fields else None
             _incl = list(include_fields) if include_fields else None
 
-            # LAZY field thunk bound to the SHARED registry.  Evaluated on first
-            # `.fields` access; by app-ready (compile_all_outputs) every model's
-            # canonical instance is in the shared registry so relation lookups
+            # LAZY field thunk bound to this Registry's output companion.
+            # Evaluated on first `.fields` access; by app-ready every model's
+            # canonical instance is in its companion so relation lookups
             # resolve to the real related GraphQLObjectType (not GraphQLString).
             #
             # item-b (B5): built via the SHARED ``_make_output_thunk_for`` factory
@@ -1395,20 +1551,19 @@ class DjangoObjectType(NativeObjectType):
                 extensions={"gdx": _gdx_payload},
             )
 
-            # Last-wins: make THIS class's instance the canonical one for the
-            # model so relation thunks resolve to it — consistent with the
-            # graphene Registry's (model, None) last-registration-wins rule and
-            # with registry.register(cls) above.  When skip_registry=True the
-            # class is NOT canonical in the graphene Registry, so do not let it
-            # claim the shared slot either.
+            # The accepted public class's instance is canonical for this model
+            # in its Registry. Registry.register(cls) above rejects a distinct
+            # second public class before this companion slot can be overwritten;
+            # re-registering the identical class remains valid. A skip_registry
+            # class is not public in that Registry, so it cannot claim the slot.
             #
             # item-b (B5): during a FORKED build, the GLOBAL shared output
             # registry must NOT be touched (an auto-created pair type would
             # overwrite the global model slot, leaking into default-pair schemas).
             # The forked type is registered in its PAIR output registry by
             # ``compile_outputs_into`` / ``fork_output_class`` instead. Outside a
-            # fork this is byte-identical (the global last-wins write a custom- or
-            # global-registry type relies on for default-pair relation resolution).
+            # fork, this writes only the accepted type to its Registry companion
+            # for default-pair relation resolution.
             #
             # Registry-scoped stamping: ``_shared_registry`` is the class's OWN
             # registry companion (``registry.output_registry()``). For the GLOBAL
@@ -1489,6 +1644,9 @@ class DjangoObjectType(NativeObjectType):
         Returns:
             The matching model instance, or None if it does not exist or the
             "get_queryset" scope excludes it.
+
+        Raises:
+            GraphQLError: If the ID fails the model primary key's conversion.
         """
         # SECURITY: the primary key comes straight from the caller, so this
         # lookup goes through the same "get_queryset" choke point every other
@@ -1498,7 +1656,7 @@ class DjangoObjectType(NativeObjectType):
             scoped = apply_object_type_get_queryset(
                 cls._meta.model._default_manager.all(), cls, info
             )
-            return scoped.get(pk=id)
+            return _get_by_pk_or_none(scoped, id)
         except cls._meta.model.DoesNotExist:
             return None
 
@@ -1656,10 +1814,11 @@ class DjangoUnionType(NativeObjectType):
             registry = get_global_registry()
 
         member_types = tuple(types)
-        assert member_types, (
-            "{} must declare Meta.types with at least one "
-            "DjangoObjectType member.".format(cls.__name__)
-        )
+        if not member_types:
+            raise ImproperlyConfigured(
+                "{} must declare Meta.types with at least one "
+                "DjangoObjectType member.".format(cls.__name__)
+            )
 
         cls._dgx_member_models = tuple(t._meta.model for t in member_types)
         cls._dgx_registry = registry
@@ -1709,10 +1868,9 @@ class DjangoInterfaceType(NativeObjectType):
     set.
 
     S6d re-parents this off graphene "Interface" onto the native graphene-free
-    "ObjectType" base. Like "DjangoUnionType" it is REGISTRY-ONLY: there is
-    NO compiled native "GraphQLInterfaceType" today -- concrete object types
-    name it via "Meta.interfaces" and the interface itself is a name +
-    "resolve_type" registry record. The native ObjectType base supplies the
+    "ObjectType" base. The native compiler creates a GraphQLInterfaceType
+    from its registry record; concrete object types name it via
+    "Meta.interfaces". The native ObjectType base supplies the
     ModelMetaclass identity (#1452), the graphene-free MUTABLE "_meta" (with
     the "name" the terminal sets), and the field-descriptor collection so
     declared interface fields (e.g. "name = graphene.String()") still land in
@@ -2214,23 +2372,36 @@ class DjangoInputObjectType(NativeInputType):
         """
         _check_unknown_options(cls.__name__, options)
 
-        assert is_valid_django_model(model), (
-            'You need to pass a valid Django Model in {}.Meta, received "{}".'
-        ).format(cls.__name__, model)
+        if not is_valid_django_model(model):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid Django Model in {}.Meta, received "{}".'
+                ).format(cls.__name__, model)
+            )
 
         if not registry:
             registry = get_global_registry()
 
-        assert isinstance(registry, Registry), (
-            "The attribute registry in {} needs to be an instance of "
-            'Registry, received "{}".'
-        ).format(cls.__name__, registry)
+        if not isinstance(registry, Registry):
+            raise ImproperlyConfigured(
+                (
+                    "The attribute registry in {} needs to be an instance of "
+                    'Registry, received "{}".'
+                ).format(cls.__name__, registry)
+            )
 
-        assert input_for.lower() in ("create", "delete", "update"), (
-            'You need to pass a valid input_for value in {}.Meta, received "{}".'
-        ).format(cls.__name__, input_for)
+        if input_for.lower() not in ("create", "delete", "update"):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid input_for value in {}.Meta, received "{}".'
+                ).format(cls.__name__, input_for)
+            )
 
         input_for = input_for.lower()
+
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields, write_host=True
+        )
 
         # ----------------------------------------------------------------
         # NATIVE PATH (S6c: UNCONDITIONAL). DjangoInputObjectType is parented on
@@ -2464,17 +2635,27 @@ class DjangoListObjectType(NativeObjectType):
         """
         _check_unknown_options(cls.__name__, options)
 
-        assert is_valid_django_model(model), (
-            'You need to pass a valid Django Model in {}.Meta, received "{}".'
-        ).format(cls.__name__, model)
+        if not is_valid_django_model(model):
+            raise ImproperlyConfigured(
+                (
+                    'You need to pass a valid Django Model in {}.Meta, received "{}".'
+                ).format(cls.__name__, model)
+            )
 
         if not registry:
             registry = get_global_registry()
 
-        assert isinstance(queryset, QuerySet) or queryset is None, (
-            "The attribute queryset in {} needs to be an instance of "
-            'Django model queryset, received "{}".'
-        ).format(cls.__name__, queryset)
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields
+        )
+
+        if not (isinstance(queryset, QuerySet) or queryset is None):
+            raise ImproperlyConfigured(
+                (
+                    "The attribute queryset in {} needs to be an instance of "
+                    'Django model queryset, received "{}".'
+                ).format(cls.__name__, queryset)
+            )
 
         results_field_name = results_field_name or "results"
 
@@ -2577,9 +2758,12 @@ class DjangoListObjectType(NativeObjectType):
         else:
             global_paginator = graphql_api_settings.DEFAULT_PAGINATION_CLASS
             if global_paginator:
-                assert issubclass(global_paginator, BaseDjangoGraphqlPagination), (
-                    'You need to pass a valid DjangoGraphqlPagination class in {}.Meta, received "{}".'
-                ).format(cls.__name__, global_paginator)
+                if not issubclass(global_paginator, BaseDjangoGraphqlPagination):
+                    raise ImproperlyConfigured(
+                        (
+                            'You need to pass a valid DjangoGraphqlPagination class in {}.Meta, received "{}".'
+                        ).format(cls.__name__, global_paginator)
+                    )
 
                 paginator = global_paginator()
 
@@ -2648,8 +2832,8 @@ class DjangoListObjectType(NativeObjectType):
             from graphql import GraphQLObjectType
 
             from django_graphex.core.base import (
-                _gdx_output_registry,
                 _GdxOutputEntry,
+                append_output_entry,
                 is_forking,
             )
             from django_graphex.core.bridge import GdxPayload
@@ -2720,7 +2904,7 @@ class DjangoListObjectType(NativeObjectType):
                 complexity=complexity,
             )
             if not is_forking():
-                _gdx_output_registry.append(_list_entry)
+                append_output_entry(_list_entry)
 
             # S6b: ``_meta`` is now a MUTABLE ``NativeObjectTypeOptions`` (no
             # freeze), so this is a PLAIN assignment — matching the DjangoObjectType
@@ -2771,31 +2955,37 @@ def get_or_create_list_object_type(
     if registry is None:
         registry = get_global_registry()
 
-    existing = registry.get_list_type_for_model(model)
-    if existing is not None:
-        return existing
+    # Built-in registries serialize the entire miss-to-registration transaction.
+    # A factory-created class registers itself before factory_type returns, so
+    # the getter and setter use the same reentrant lock. Registry-shaped adapters
+    # retain their historical serial behavior without a new lock requirement.
+    lock = registry._list_lock if isinstance(registry, Registry) else nullcontext()
+    with lock:
+        existing = registry.get_list_type_for_model(model)
+        if existing is not None:
+            return existing
 
-    paginator_cls = graphql_api_settings.DEFAULT_PAGINATION_CLASS
-    if paginator_cls is not None:
-        pagination = paginator_cls()
-    else:
-        from .paginations.pagination import LimitOffsetGraphqlPagination
+        paginator_cls = graphql_api_settings.DEFAULT_PAGINATION_CLASS
+        if paginator_cls is not None:
+            pagination = paginator_cls()
+        else:
+            from .paginations.pagination import LimitOffsetGraphqlPagination
 
-        pagination = LimitOffsetGraphqlPagination()
+            pagination = LimitOffsetGraphqlPagination()
 
-    # Inherit the node type's filter config so nested lists stay filterable.
-    node = registry.get_type_for_model(model)
-    filter_fields = getattr(node._meta, "filter_fields", None) if node else None
+        # Inherit the node type's filter config so nested lists stay filterable.
+        node = registry.get_type_for_model(model)
+        filter_fields = getattr(node._meta, "filter_fields", None) if node else None
 
-    # factory_type builds a DjangoListObjectType subclass which self-registers.
-    return factory_type(
-        "list",
-        DjangoListObjectType,
-        model=model,
-        pagination=pagination,
-        registry=registry,
-        filter_fields=filter_fields,
-    )
+        # factory_type builds a DjangoListObjectType subclass which self-registers.
+        return factory_type(
+            "list",
+            DjangoListObjectType,
+            model=model,
+            pagination=pagination,
+            registry=registry,
+            filter_fields=filter_fields,
+        )
 
 
 class DjangoModelType(NestedFieldsMixin, NativeObjectType):
@@ -2947,6 +3137,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         backend = resolve_backend(model, pydantic_model=pydantic_model)
         model = backend.get_model()
         _check_nested_field_keys(cls.__name__, model, nested_fields)
+        only_fields, exclude_fields = _validate_output_selectors(
+            cls, model, only_fields, exclude_fields, write_host=True
+        )
 
         description = description or f"DjangoModelType for {model.__name__} model"
 
@@ -3554,19 +3747,30 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             A success response with the deleted object, or an error response
             when no matching object exists or it falls outside the scoped
             queryset.
+
+        Raises:
+            GraphQLError: If authorization is denied or a protected or
+                restricted relation blocks deletion.
+            ImproperlyConfigured: If the permission hook is awaitable.
         """
         cls.authorize(info, "delete", data=kwargs)
         pk = kwargs.get("id")
 
         # SECURITY: resolve the target row through the SAME scoped queryset the
         # read path uses ("get_queryset" -> "filter_queryset"), never the bare
-        # model. A row outside the caller's scope must be "not found" for a
+        # model, intersected with the registered output type's own scope. A row
+        # outside the caller's scope must be "not found" for a
         # write exactly as it already is for a read, so the response cannot be
         # used to probe another tenant's primary keys.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
-            old_obj.delete()
+            try:
+                old_obj.delete()
+            except (ProtectedError, RestrictedError):
+                raise GraphQLError("Deletion blocked by related objects.") from None
             setattr(old_obj, old_obj._meta.pk.attname, pk)
             return cls.perform_mutate(old_obj, info)
         else:
@@ -3600,7 +3804,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         # returns a clean "not found" error rather than a 500.
         pk = data.pop("id", None)
         # SECURITY: same scoped lookup as "delete" -- see the comment there.
-        scoped = cls.get_queryset(cls._meta.model._default_manager, info, **kwargs)
+        scoped = scope_to_output_type(
+            cls.get_queryset(cls._meta.model._default_manager, info, **kwargs), info
+        )
         old_obj = get_Object_or_None(scoped, pk=pk)
         if old_obj:
             ok, obj = cls.save_with_nested(
@@ -3628,7 +3834,10 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
             **kwargs: Resolver arguments including the object "id".
 
         Returns:
-            The matching model instance, or None if it does not exist.
+            The matching model instance, or None for a well-formed missing ID.
+
+        Raises:
+            GraphQLError: If the ID fails the model primary key's conversion.
         """
         cls.authorize(info, "retrieve")
         pk = kwargs.pop("id", None)
@@ -3636,7 +3845,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         base = cls.get_queryset(manager, info, **kwargs)
         try:
             qs = queryset_factory(base, root, info, **kwargs)
-            return qs.get(pk=pk)
+            return _get_by_pk_or_none(qs, pk)
         except manager.model.DoesNotExist:
             return None
 
@@ -3673,7 +3882,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         qs = queryset_factory(base, root, info, **kwargs)
 
         filter_value = kwargs.get("filter")
-        qs = filter_backend.apply(qs, filter_value)
+        qs = apply_filter_backend(filter_backend, qs, filter_value, info)
 
         # Apply custom @filter_field methods in declaration order.
         custom_filters = getattr(cls, "_dgx_custom_filters", None) or []
@@ -3853,7 +4062,9 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         _gql_field = _GQLField(
             _gql_output_type,
             args=_args,
-            resolve=_adapt_self(_resolver_map[operation], owner=cls),
+            resolve=_redact_generated_integrity_error(
+                _adapt_self(_resolver_map[operation], owner=cls)
+            ),
             description=getattr(cls._meta, "description", None)
             or f"Native {operation} mutation for {model.__name__}",
         )
@@ -3883,7 +4094,7 @@ class DjangoModelType(NestedFieldsMixin, NativeObjectType):
         }
         _cache[operation] = _gql_field
         _NATIVE_FIELD_REGISTRY[_reg_key] = _gql_field
-        _NATIVE_FIELD_IDENTITIES.add(id(_gql_field))
+        _NATIVE_FIELD_IDENTITIES[id(_gql_field)] = _gql_field
         return _gql_field
 
     @staticmethod

@@ -1,6 +1,6 @@
 """Tests for core/scalars.py.
 
-Covers the 7 custom scalar singletons and the GDX_SCALAR_MAP registry.
+Covers the 8 custom scalar singletons and the GDX_SCALAR_MAP registry.
 
 No Django settings required. No django_db markers.
 Run with: pytest tests/core/test_scalars.py -x --no-cov
@@ -59,6 +59,7 @@ def test_scalars_has_no_django_graphene_imports() -> None:
 from django_graphex.core.scalars import (  # noqa: E402
     GDX_SCALAR_MAP,
     CustomDateFormat,
+    GdxBigInt,
     GdxDate,
     GdxDateTime,
     GdxDecimal,
@@ -79,9 +80,10 @@ class TestGdxScalarMap:
     Covers key coverage, singleton identity, and graphene-name parity.
     """
 
-    def test_has_7_custom_scalars(self) -> None:
-        """Ships broken if GDX_SCALAR_MAP stops exposing all 8 custom-scalar
-        keys (7 singletons, with JSON double-keyed under a legacy alias).
+    def test_has_8_custom_scalars(self) -> None:
+        """Expose all nine keys for eight custom singleton scalars.
+
+        The JSON singleton retains its legacy alias.
         """
         # Map keys are the GraphQL scalar NAMES as graphene renders them (the
         # Python symbols keep the Gdx prefix; only .name + map keys match
@@ -90,6 +92,7 @@ class TestGdxScalarMap:
         # (both alias the single ``GdxJSON`` singleton) so graphene-class
         # forwarding still resolves.
         custom_names = {
+            "BigInt",
             "CustomDate",
             "CustomDateTime",
             "CustomTime",
@@ -119,10 +122,11 @@ class TestGdxScalarMap:
         assert GDX_SCALAR_MAP["String"] is GraphQLString
 
     def test_total_size(self) -> None:
-        """Ships broken if GDX_SCALAR_MAP's key count drifts from 13 (7 custom
-        singletons under 8 keys, since JSON has a legacy alias, plus 5 builtins).
+        """Keep 14 keys for custom scalars, the JSON alias, and builtins.
+
+        BigInt adds one approved custom scalar key.
         """
-        assert len(GDX_SCALAR_MAP) == 13
+        assert len(GDX_SCALAR_MAP) == 14
 
     def test_singleton_identity(self) -> None:
         """Ships broken if the map stops referencing the module-level
@@ -132,6 +136,7 @@ class TestGdxScalarMap:
         assert GDX_SCALAR_MAP["CustomDateTime"] is GdxDateTime
         assert GDX_SCALAR_MAP["CustomTime"] is GdxTime
         assert GDX_SCALAR_MAP["Decimal"] is GdxDecimal
+        assert GDX_SCALAR_MAP["BigInt"] is GdxBigInt
         assert GDX_SCALAR_MAP["UUID"] is GdxUUID
         assert GDX_SCALAR_MAP["JSONString"] is GdxJSONString
         # The RAW-JSON scalar is reachable under BOTH the canonical ``JSON`` key

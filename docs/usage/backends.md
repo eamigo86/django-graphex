@@ -39,11 +39,49 @@ can't see — **foreign-key existence**, **field-level `unique`**, `unique_toget
 and `Meta.constraints` `UniqueConstraint` entries — and supports partial updates
 and nested writes (atomic, relation-aware).
 
+For a model `EmailField`, generated create/update inputs also run Django's email
+**syntax** validator on a supplied, nonempty value. An invalid address returns
+`ok: false` with an `errors` entry for the email field; neither the parent nor
+a nested child is saved. An `EmailField` without choices keeps its GraphQL `String` input; a field
+with choices keeps its existing Enum SDL, and validation checks the stored
+choice value rather than its display label. Keep application-specific email
+rules in your declared `validate_<field>()` hook or `Meta.pydantic_model`.
+
+### Model field validation
+
+After Pydantic validation, create and update (including nested child writes)
+run Django's field-level validation (`Field.clean`) on every field **present in
+the payload**: type coercion, `choices`, `null`, `blank` and the field's
+validators (`max_length`, `MinValueValidator`, `MaxValueValidator`,
+`RegexValidator`, custom `validators=[...]`). Failures return the normal
+`ok: false` response with one `errors[]` entry per field carrying all of
+Django's messages; nothing is written, and a nested child's field is prefixed
+with the nested field name (`items.score`).
+
+What does **not** run: fields the client did not send (defaults and stored
+values on a partial update are left alone), `Model.clean()`,
+`validate_unique()` and `validate_constraints()` (uniqueness is checked as
+described below), fields with `editable=False`, and an explicit `null` on a
+`null=True` column. A relation field runs only its validators, with no query
+to check the target (existence is reported by the foreign-key check). A value
+the developer lists in `choices` is accepted even if it is empty. Validators
+that query the database are the developer's choice and cost.
+
+Generated inputs for `PositiveIntegerField` and `PositiveSmallIntegerField`
+reject supplied negative values before a database write. They return the
+existing structured mutation error on the field (`ok: false`), rather than a
+database constraint error. Zero and positive values remain valid; the GraphQL
+input remains `Int`, with its existing upper bound. Choice-backed fields retain
+their existing Enum input and validate the stored numeric choice without
+replacing the Enum value. Omitted values, allowed nulls, defaults, partial
+updates, and `PositiveBigIntegerField` are unchanged. This is field-local input
+validation; the model field validators above also run on the supplied value.
+
 ### Uniqueness validation
 
-The backend checks all three Django uniqueness mechanisms before saving, so
-violations surface as a structured `ErrorType` in the mutation response rather than
-propagating as an `IntegrityError` HTTP 500:
+The backend checks the supported Django uniqueness mechanisms on write failure,
+so attributable violations surface as a structured `ErrorType` in the mutation
+response rather than as a top-level GraphQL error:
 
 | Mechanism | Where errors land |
 |---|---|
@@ -55,8 +93,12 @@ propagating as an `IntegrityError` HTTP 500:
 **Conditional and expression-based constraints** (`condition=Q(...)` or
 `expressions=[...]`) are **not** pre-checked: replicating their predicate
 server-side is not reliable, so they remain DB-enforced. If a conditional
-constraint is violated the database will raise an `IntegrityError`, which the
-backend does not currently catch.
+constraint is violated the database can raise an `IntegrityError` that the
+backend cannot attribute to a field. Generated mutation fields replace its SQL
+detail with the top-level GraphQL message
+`A database constraint prevented this operation.`; the backend's direct
+`save_object` call still raises the original exception. This does not add
+`full_clean()`, predicate scans, or structured errors for those constraints.
 
 ### Nested writes
 
@@ -114,6 +156,25 @@ class UserType(DjangoModelType):
 
 Under the hood these compile to Pydantic `field_validator` / `model_validator`, so
 they also work on `DjangoModelMutation` and **compose** with `Meta.pydantic_model`.
+
+### Django columns named like Pydantic internals
+
+Generated create/update inputs accept Django columns named `model_dump`,
+`model_validate`, or `model_config`. Their GraphQL names remain `modelDump`,
+`modelValidate`, and `modelConfig`; validation errors and saved model attributes
+use the original Django names. The generated validation schema isolates
+`model_config` under a private Pydantic field name so it does not replace
+Pydantic's configuration. Inline `validate_model_config` and object-level
+`validate` hooks still receive the original Django name. Inherited
+`Meta.pydantic_model` field validators and serializers declared for
+`model_config` also run on the isolated field; the caller's base model and
+its decorator metadata are not modified.
+
+Only generated schemas with `model_dump` or `model_validate` relax Pydantic's
+protected-name check. Pydantic may warn that these fields shadow its model
+methods; other models keep their existing configuration. Prefer ordinary
+column names for new models, but existing database columns do not need a
+GraphQL or database rename.
 
 ### Custom validation: `Meta.pydantic_model`
 
@@ -175,9 +236,14 @@ argument are **not** pre-checked by the backend. Replicating these predicates
 server-side is unreliable (they may reference database functions or
 non-deterministic expressions), so the backend skips them deliberately.
 
-**What breaks:** if a conditional unique constraint is violated, the database
-raises an `IntegrityError` that is **not** caught by the backend. This propagates
-as an HTTP 500 instead of a structured `{ ok: false, errors: [...] }` response.
+**Failure contract:** when a conditional unique constraint is violated, the
+database raises an `IntegrityError` that the backend cannot map to a field. A
+generated create/update/delete field reports the generic top-level GraphQL
+execution error above (normally HTTP 200 with that field set to `null`), not
+an `ok: false` payload; nested writes roll back. The direct backend API still
+raises the original `IntegrityError`. Expression-based constraints remain
+database-enforced and use the same generated-field boundary if they raise an
+unmapped `IntegrityError`; no expression-specific predicate check is added.
 
 **Workaround:** add a `validate_<field>()` or `validate()` method that queries
 for the conflict and raises `ValueError` before the backend reaches the DB

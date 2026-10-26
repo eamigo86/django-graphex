@@ -83,6 +83,15 @@ returns `None` on the native build path — override
 ## LimitOffsetGraphqlPagination
 
 Pagination implementation using limit and offset parameters.
+Bounded model-backed results retain the effective primary ordering and append an
+ascending primary-key tie-break when the key is not already an ordering term.
+Effective server queryset reversal and legacy extra-order precedence are retained.
+Explicit primary-key direction is preserved; client ordering validation runs
+before the internal key is added. Plain nullable concrete-column terms place
+NULL last ascending and first descending on queryset, nested window, and
+materialized-list paths; explicit ORM expressions retain their own NULL flags.
+See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results)
+and [NULL ordering](../usage/pagination.md#null-ordering-across-paginator-types).
 
 ```python
 class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination)
@@ -92,7 +101,7 @@ class LimitOffsetGraphqlPagination(BaseDjangoGraphqlPagination)
 
 ```python
 LimitOffsetGraphqlPagination(
-    default_limit=None,   # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    default_limit=100,    # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     max_limit=None,       # from DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
     ordering="",
     limit_query_param="limit",
@@ -246,6 +255,12 @@ query GetPosts($limit: Int, $offset: Int, $ordering: String) {
 
 ## PageGraphqlPagination
 
+Model-backed pages use the same ascending primary-key tie-break as limit/offset
+pages, after preserving configured, queryset, or client ordering. An explicit
+primary-key term keeps its direction. See [stable ordering](../usage/pagination.md#stable-ordering-for-offset-and-page-results).
+The same automatic nullable-column placement and explicit-ORM-expression
+boundary described for limit/offset pagination applies to page results.
+
 Pagination implementation using page number and page size parameters.
 
 ```python
@@ -256,7 +271,7 @@ class PageGraphqlPagination(BaseDjangoGraphqlPagination)
 
 ```python
 PageGraphqlPagination(
-    page_size=None,            # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    page_size=100,             # from DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     page_size_query_param=None,
     max_page_size=None,        # from DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
     ordering="",
@@ -321,16 +336,28 @@ Convert page pagination parameters to GraphQL field arguments.
 
 Paginate queryset using page number and page size parameters.
 
+The generated argument remains nullable `page: Int = 1`. Both omission and
+explicit `page: null` (literal or nullable `Int` variable) select page 1 for
+queryset-backed and nested lists. Previously, explicit null surfaced a raw
+comparison error; clients requiring null rejection must validate it before
+sending the request. Zero remains invalid and negative pages retain their
+existing count-relative behavior.
+
 **Parameters:**
 - `qs` (`QuerySet`): Django queryset to paginate
 - `**kwargs`: Query parameters including `page`, `pageSize` (optional), and `ordering`
 
-**Returns:** Paginated `QuerySet`
+**Returns:** Paginated `QuerySet` or in-memory list, depending on the input
+collection.
 
 **Raises:**
 - `GraphQLError("Page value for PageGraphqlPagination must be a non-zero value")` — `page=0`.
 - `GraphQLError` — zero or negative `pageSize` (`"Invalid page size: {value}. Page size must be a positive integer."`).
   A `pageSize` above `max_page_size` is silently clamped, not an error.
+- `GraphQLError("Unable to calculate pagination count")` — the database `COUNT`
+  needed by a negative page fails. The paginator does not load the full queryset
+  as a fallback; positive pages and separately selected `totalCount` retain
+  their existing behavior.
 
 ### Example Usage
 
@@ -466,7 +493,7 @@ CursorGraphqlPagination(
     ordering="-created",
     cursor_query_param="cursor",
     first_query_param="first",
-    page_size=None,       # defaults to DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
+    page_size=100,        # defaults to DJANGO_GRAPHEX["DEFAULT_PAGE_SIZE"]
     max_page_size=None,   # defaults to DJANGO_GRAPHEX["MAX_PAGE_SIZE"]
 )
 ```
@@ -641,8 +668,10 @@ DJANGO_GRAPHEX = {
 
     `MAX_PAGE_SIZE` caps how many items a list can return, and
     [query cost analysis](../usage/query-limits.md#query-cost-analysis) reuses it as
-    the per-list multiplier ceiling. Setting it makes cost estimates accurate and
-    closes the `limit: $var` bypass — recommended when `MAX_QUERY_COST` is on.
+    the per-list multiplier ceiling. With `MAX_QUERY_COST` set, a variable limit
+    is also checked against its GraphQL-coerced request value before resolution,
+    even without a maximum. Set `MAX_PAGE_SIZE` to bound omitted or unbounded
+    list sizes; it remains recommended rather than required for this check.
 
 #### The maximum is an effective ceiling
 
@@ -653,15 +682,31 @@ clamped at the maximum:
 
 | `default` | `max` | client sends | rows returned |
 |---|---|---|---|
-| – | – | – | **all** (unbounded — no pagination configured) |
-| – | `100` | – | `100` (falls back to the max) |
-| `25` | `100` | – | `25` |
+| `None` | `100` | omitted | `100` (falls back to the max) |
+| `25` | `100` | omitted | `25` |
 | `25` | `100` | `500` | `100` (clamped) |
 
-So a list can never exceed its maximum, even unpaginated. With **no** default and
-**no** maximum (the out-of-the-box defaults), behavior is unchanged — the full
-queryset is returned. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` /
-`max_page_size`) to bound it.
+A configured maximum always bounds the result. The shipped default is `100`
+with **no** maximum: omitting a size argument returns the first 100 rows, but
+an explicit larger request is allowed where the paginator exposes a size
+argument. Set `MAX_PAGE_SIZE` (or a per-type `max_limit` / `max_page_size`) for
+a hard ceiling.
+
+#### When every size source is None
+
+This case requires an explicitly unset paginator default and maximum, with no
+client size argument. Omitting a constructor size instead inherits the
+configured startup `DEFAULT_PAGE_SIZE` (100 in the shipped settings). Page
+exposes a client page-size argument only when
+`page_size_query_param` is configured.
+
+| Paginator | default | max | client sends | result |
+|---|---|---|---|---|
+| LimitOffset | `None` | `None` | omitted | all rows (respecting configured ordering) |
+| Page | `None` | `None` | omitted | `results: null` |
+| Cursor | `None` | `None` | omitted | 20 rows (final fallback) |
+
+These are existing paginator-specific outcomes, not a universal unbounded mode.
 
 Clamping is **silent**: a request above the maximum does not raise an error —
 the effective size is `min(requested, max)`, matching the convention of Django

@@ -20,7 +20,14 @@ Run:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from graphql import GraphQLSchema
+
+    from django_graphex.paginations.pagination import LimitOffsetGraphqlPagination
 
 
 def _make_django_type(name: str, base: type, meta_attrs: dict, **extra) -> type:
@@ -46,12 +53,35 @@ def _make_django_type(name: str, base: type, meta_attrs: dict, **extra) -> type:
 # ---------------------------------------------------------------------------
 
 
-def _build_native_nested_schema(pagination=None):
+def _build_native_nested_schema(
+    pagination: LimitOffsetGraphqlPagination | None = None,
+) -> GraphQLSchema:
     """Compile a native GraphQLSchema: authors -> posts (nested paginated list).
 
-    Returns a graphql.GraphQLSchema assembled by compile_native_root
-    (NOT graphene.Schema). The posts field is a
-    DjangoNestedListObjectField over the reverse FK Author.posts.
+    The posts field is a DjangoNestedListObjectField over Author.posts.
+
+    Args:
+        pagination: Optional paginator for the nested Post list.
+
+    Returns:
+        A graphql-core schema assembled by compile_native_root.
+    """
+    from tests._schema_isolation import isolated_default_pair
+
+    with isolated_default_pair():
+        return _build_native_nested_schema_in_isolation(pagination)
+
+
+def _build_native_nested_schema_in_isolation(
+    pagination: LimitOffsetGraphqlPagination | None = None,
+) -> GraphQLSchema:
+    """Build one nested schema against its scoped default registry pair.
+
+    Args:
+        pagination: Optional paginator for the nested Post list.
+
+    Returns:
+        The native schema whose output classes live in the scoped pair.
     """
     from graphql import GraphQLSchema
 

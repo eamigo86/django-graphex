@@ -21,6 +21,10 @@ from __future__ import annotations
 
 import pytest
 
+from tests._schema_isolation import isolated_default_registry_pair
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 # ---------------------------------------------------------------------------
 # (a) + (b) + (c): list type has graphql_output_type with gdx + required fields
 # ---------------------------------------------------------------------------

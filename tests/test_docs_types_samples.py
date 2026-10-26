@@ -230,7 +230,10 @@ def test_sample_builds_behind_the_pages_own_node_type(line: int, source: str) ->
         line: The line the failing sample starts on, for the test id.
         source: The sample body.
     """
-    _run([_canonical_node()[1], source])
+    # A second node declaration is an independent alternative, not another
+    # public type to register for User in the canonical sample's registry.
+    # Containers really do reuse that node, so keep pairing those samples.
+    _run([source] if _NODE_RE.search(source) else [_canonical_node()[1], source])
 
 
 def test_restating_the_nodes_own_projection_on_a_container_is_accepted() -> None:

@@ -83,7 +83,14 @@ from graphql import (
 from django_graphex._strconv import to_camel_case
 from django_graphex.registry import get_global_registry
 
-from .lookups import default_lookups_for
+from .lookups import DATE_LOOKUPS, DATETIME_LOOKUPS, default_lookups_for
+
+_DATE_PART_LOOKUPS = frozenset({"year", "month", "day", "week_day"}).intersection(
+    DATE_LOOKUPS
+)
+_DATETIME_PART_LOOKUPS = frozenset(
+    {"year", "month", "day", "week_day", "hour", "minute", "second"}
+).intersection(DATETIME_LOOKUPS)
 
 if TYPE_CHECKING:
     from django_graphex.core.base import SchemaRegistries
@@ -179,6 +186,7 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
     the native backend is inactive.
     """
     from django_graphex.core.scalars import (
+        GdxBigInt,
         GdxDecimal,
         GdxFilterDate,
         GdxFilterDateTime,
@@ -193,10 +201,10 @@ def _scalar_by_internal() -> dict[str, GraphQLScalarType]:
         "SmallAutoField": GraphQLID,
         "IntegerField": GraphQLInt,
         "SmallIntegerField": GraphQLInt,
-        "BigIntegerField": GraphQLInt,
+        "BigIntegerField": GdxBigInt,
         "PositiveIntegerField": GraphQLInt,
         "PositiveSmallIntegerField": GraphQLInt,
-        "PositiveBigIntegerField": GraphQLInt,
+        "PositiveBigIntegerField": GdxBigInt,
         "CharField": GraphQLString,
         "TextField": GraphQLString,
         "EmailField": GraphQLString,
@@ -363,8 +371,15 @@ def _lookups_input_type(
     else:
         scalar = _field_scalar(field)
 
+    if isinstance(field, models.DateTimeField):
+        int_lookups = _DATETIME_PART_LOOKUPS
+    elif isinstance(field, models.DateField):
+        int_lookups = _DATE_PART_LOOKUPS
+    else:
+        int_lookups = frozenset()
+
     name = to_camel_case(f"{model._meta.object_name}_{field_name}_Lookups")
-    return _build_lookups_type(name, scalar, lookups)
+    return _build_lookups_type(name, scalar, lookups, int_lookups=int_lookups)
 
 
 def _pk_lookups_input_type(
@@ -392,7 +407,11 @@ def _pk_lookups_input_type(
 
 
 def _build_lookups_type(
-    name: str, scalar: Any, lookups: tuple[str, ...]
+    name: str,
+    scalar: Any,
+    lookups: tuple[str, ...],
+    *,
+    int_lookups: frozenset[str] = frozenset(),
 ) -> GraphQLInputObjectType:
     """Assemble a "<...>Lookups" input type from a scalar and lookup names.
 
@@ -400,6 +419,7 @@ def _build_lookups_type(
         name: The GraphQL type name.
         scalar: The graphql-core scalar (or enum) for the field's value.
         lookups: The lookup names to expose.
+        int_lookups: Existing numeric date/datetime parts to expose as Int.
 
     Returns:
         A "GraphQLInputObjectType" whose fields each carry "out_name".
@@ -412,6 +432,8 @@ def _build_lookups_type(
                 out[lookup] = GraphQLInputField(GraphQLBoolean, out_name=lookup)
             elif lookup in ("in", "range"):
                 out[lookup] = GraphQLInputField(GraphQLList(scalar), out_name=lookup)
+            elif lookup in int_lookups:
+                out[lookup] = GraphQLInputField(GraphQLInt, out_name=lookup)
             else:
                 out[lookup] = GraphQLInputField(scalar, out_name=lookup)
         return out
@@ -759,12 +781,22 @@ def _traversed_type(node_type: Any, name: str) -> Any:
         The compiled type the relation resolves to, or "None" when the type
         does not publish that relation.
     """
+    from django.db.models import ManyToManyRel, ManyToOneRel
+
+    from django_graphex.core.compat import _gdx_graphene_type
     from django_graphex.core.output_compiler import MASKED_COLUMN_EXT
 
     fields = getattr(node_type, "fields", None)
     if not isinstance(fields, dict):
         return None
     relation = fields.get(to_camel_case(name))
+    if relation is None:
+        output_type = _gdx_graphene_type(node_type)
+        model = getattr(getattr(output_type, "_meta", None), "model", None)
+        if model is not None:
+            field = model._meta.get_field(name)
+            if isinstance(field, (ManyToOneRel, ManyToManyRel)):
+                relation = fields.get(to_camel_case(field.get_accessor_name()))
     if relation is None or (getattr(relation, "extensions", None) or {}).get(
         MASKED_COLUMN_EXT
     ):
@@ -1201,7 +1233,15 @@ def _assert_filter_surface_published(
                 # -- the walk stops at the first non-relation segment.
                 field = owner._meta.get_field(segment)
                 last = index == len(hops) - 1
-                if last and getattr(field, "concrete", False):
+                # Django 5.2 marks a ManyToManyField concrete even though it
+                # stores no scalar column on this model. Django 6.0 does not.
+                # In either version, a direct M2M lookup traverses to the
+                # published target and checks that target's primary key.
+                if (
+                    last
+                    and getattr(field, "concrete", False)
+                    and not getattr(field, "many_to_many", False)
+                ):
                     if not publishes_column_value(current, field):
                         raise ImproperlyConfigured(
                             _refusal(model, path, segment, current, declarer)
@@ -1703,11 +1743,12 @@ def _assert_filter_type_complete(gql_input_type: GraphQLInputObjectType) -> None
         AssertionError: If the type's ".fields" evaluates to an empty dict.
     """
     fields = dict(gql_input_type.fields)  # forces the thunk to evaluate
-    assert fields, (
-        f"native filter input {gql_input_type.name!r} resolved to EMPTY .fields "
-        "— a thunk likely captured an incomplete (circular) type before its "
-        "fields were populated. Check the cache-before-thunk ordering."
-    )
+    if not fields:
+        raise AssertionError(
+            f"native filter input {gql_input_type.name!r} resolved to EMPTY .fields "
+            "— a thunk likely captured an incomplete (circular) type before its "
+            "fields were populated. Check the cache-before-thunk ordering."
+        )
 
 
 def _assert_filter_input_out_names(gql_input_type: GraphQLInputObjectType) -> None:
@@ -1740,12 +1781,13 @@ def _assert_filter_input_out_names(gql_input_type: GraphQLInputObjectType) -> No
     missing = [
         name for name, field in fields.items() if not getattr(field, "out_name", None)
     ]
-    assert not missing, (
-        f"native filter input {gql_input_type.name!r} has field(s) WITHOUT a snake "
-        f"out_name: {missing}. Every filter-input field MUST carry an out_name or "
-        "to_q receives the camelCase wire key and silently builds an EMPTY Q. A "
-        "custom extension likely mutated the compiled .fields and stripped it."
-    )
+    if missing:
+        raise AssertionError(
+            f"native filter input {gql_input_type.name!r} has field(s) WITHOUT a snake "
+            f"out_name: {missing}. Every filter-input field MUST carry an out_name or "
+            "to_q receives the camelCase wire key and silently builds an EMPTY Q. A "
+            "custom extension likely mutated the compiled .fields and stripped it."
+        )
 
 
 def _custom_filter_gql_type(meta: dict[str, Any]) -> Any:

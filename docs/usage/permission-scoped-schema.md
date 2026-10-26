@@ -392,6 +392,74 @@ a caller needs `billing.view_account` **and** `billing.view_invoice`.
     If the members are meant to be reachable independently, expose them as their
     own fields: each one is then gated by its own model's permission.
 
+#### Flat GFK targets are checked at resolution
+
+Without `Meta.unions`, a `GenericForeignKey` uses the flat
+`GenericForeignKeyType` with `appLabel`, `modelName`, and `id`. In a
+**permission-pruned** schema the field stays in the SDL, but its *whole target*
+is `null` unless the caller has the actual target model's standard read
+permission. A registered target `DjangoObjectType.get_queryset` must also
+admit that row. For example, the same query can return either response:
+
+```graphql
+{ comment { target { appLabel modelName id } } }
+```
+
+```json
+{"data": {"comment": {"target": null}}}
+```
+
+```json
+{"data": {"comment": {"target": {"appLabel": "billing", "modelName": "Account", "id": "7"}}}}
+```
+
+The JSON examples assume `CLEAN_RESPONSE=False` (the default). Enabling
+`CLEAN_RESPONSE` removes null and empty response values but retains zero and
+false; it does not change the
+resolver's denied-target result or the permission decision.
+
+The second response requires `billing.view_account` (pruned schemas) and, when
+an `Account` output type is registered in the **request schema's Registry**,
+admission by its row hook (every schema). For example:
+
+```python
+from django.db.models import QuerySet
+from graphql import GraphQLResolveInfo
+from django_graphex.types import DjangoObjectType
+
+class AccountType(DjangoObjectType):
+    class Meta:
+        model = Account
+
+    @classmethod
+    def get_queryset(
+        cls, queryset: QuerySet, info: GraphQLResolveInfo
+    ) -> QuerySet:
+        return queryset.filter(tenant_id=info.context.user.tenant_id)
+```
+
+No registered target type or an inherited no-op hook adds no row-scope lookup
+after the GFK resolves. An overridden hook must return a synchronous
+`QuerySet` for the same concrete model; JOIN duplicates and ordered slices
+retain their membership meaning. An invalid hook result raises a GraphQL
+field error instead of exposing target metadata. A resolver without the batched
+scoped prefetch can add one database query per resolved target. A missing target also returns `null`.
+
+**Migration:** If callers previously read flat target IDs with only the
+owner's permission, grant the target model's read permission and check any
+registered target row hook's tenant policy. The same SDL now returns `null`
+for denied targets; do not interpret that as proof the target row is absent.
+This does not enable row-level security for other relations or arbitrary ORM
+joins. Public forward-FK, reverse-FK, and M2M filters have bounded
+destination-hook rules; see [forward-FK filter scope](filtering.md#forward-fk-filter-scope),
+[forward OneToOne filter scope](filtering.md#forward-o2o-filter-scope),
+[reverse-FK filter scope](filtering.md#reverse-fk-filter-scope), and
+[M2M filter scope](filtering.md#m2m-filter-scope).
+The registered target hook is not specific to pruned schemas: an unpruned
+schema and a typed GFK union also resolve a target excluded by its output
+type's `get_queryset` to `null`. Only the model read permission check is
+specific to the pruned flat field.
+
 ### `ordering` follows the pruned schema, not the full one
 
 A pruned relation takes its **column** with it. `Post.author` is what makes
@@ -422,6 +490,17 @@ loses `filter: { author: { name: { icontains: … } } }` exactly as they lose
 
 The full schema is untouched; each pruned variant carries its own clone of the
 input, so a full-permission caller keeps the whole filter surface.
+
+Generated mutation FK/M2M **ID links** have a separate row-level check: when
+the destination public type overrides `get_queryset`, a hidden ID is refused
+like a nonexistent one before the parent is written. Automatic FK/reverse-FK
+and OneToOne output reads, automatic declared/reverse M2M output lists and
+counts, plus forward-FK/forward-OneToOne/reverse-FK/M2M filters, now have
+their own bounded scope rules, but other relation joins and explicit resolvers
+are not globally scoped. A reverse filter
+declared by its ORM query name remains unavailable when its published output
+accessor is removed or replaced by an explicit resolver. See
+[mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
 
 !!! warning "The `@filter_field` body is still yours to scope"
 
@@ -689,6 +768,13 @@ pruned schema reaches them through their `schema_provider` — a callable
 bundled `pruned_schema_for` helper, which honors the **same**
 `PERMISSION_SCOPED_SCHEMA` flag (read per connection; an active superuser gets
 the full schema; with the flag off it returns the full schema unchanged):
+Both async transports execute this synchronous provider in a thread-sensitive
+worker. Resolving an SSE lazy user does not warm its permissions; the worker
+also keeps `get_all_permissions()` and its initial database query off the
+event loop. The WebSocket provider remains cached once per socket, and SSE
+resolves it once per request. A custom provider should return a schema
+synchronously rather than a coroutine; request context variables propagate
+to the worker, but event-loop thread-local state is not a portable contract.
 
 === "WebSocket (asgi.py)"
 
@@ -761,9 +847,13 @@ the full schema; with the flag off it returns the full schema unchanged):
     - **A labeled schema** — the pruner needs the `DjangoGraphQLSchema` labels,
       same as the HTTP endpoint.
     - **A real user on the connection** — SSE reads `request.user`; WebSocket
-      reads `scope["user"]`, so the WS routing MUST be wrapped in Channels'
-      `AuthMiddlewareStack` (or an equivalent that populates `scope["user"]`).
-      Otherwise the provider sees `AnonymousUser`.
+      reads `scope["user"]`. For session authentication, wrap WS routing in
+      Channels' `AuthMiddlewareStack` (or an equivalent). Alternatively, pass
+      an async `on_connect(scope, payload)` callback to
+      `subscription_ws_consumer`; its authenticated return value replaces the
+      scope user before ACK and schema resolution. An invalid callback result
+      never falls back to a different session user. Without either source of
+      identity, the provider sees `AnonymousUser`.
 
 !!! note "Per-socket resolution and staleness"
 
@@ -784,17 +874,24 @@ a request that reaches the full schema (custom provider, flag off) is denied a
 
 !!! info "How pruned schemas are built, cached and invalidated"
 
-    - **One schema per permission-set, not per user.** Each caller's live
-      permissions are projected onto the schema's label-set and hashed into a
-      *permission signature* (SHA-256 of the sorted relevant perms). Callers who
-      differ only in irrelevant perms share one signature — and one pruned
-      schema.
+    - **One schema per permission-set, not per user.** Normally each caller's
+      live permissions are projected onto the schema's label-set and hashed
+      into a *permission signature* (SHA-256 of sorted relevant perms). Callers
+      who differ only in irrelevant perms share one pruned schema. A schema
+      with a native flat GFK fallback instead keys on **all** grants: its
+      target model may be unregistered and absent from the static label-set.
+      This can create more bounded LRU variants, but avoids sharing a target
+      decision across incompatible grants.
     - **Lazy, bounded LRU.** A pruned variant is built on the **first** request
       for its signature (concurrent first-requests build it exactly once) and
       cached in-process in an LRU bounded by
       [`PERMISSION_SCHEMA_CACHE_MAXSIZE`](settings.md#security) (default `64`,
       sized so a realistic role-driven working set of ~50 signatures fits; a
       full cache stays well under 1 MiB).
+    - **Warm hits stay available during another build.** A cached signature
+      can be reused while a different cold signature is being pruned. Cold
+      builds remain serialized, and clearing the cache waits for an active
+      build; this does not enable parallel schema construction.
     - **Revocation applies on the next request.** The signature is recomputed
       from `user.get_all_permissions()` on every request — never keyed by user
       id, never stored in an external cache — so a grant or revoke changes the
@@ -806,8 +903,14 @@ a request that reaches the full schema (custom provider, flag off) is denied a
       [`CACHE_ACTIVE`](caching.md) on, the caller's permission signature is
       folded into the response-cache key, so two callers sharing a cache
       identity but holding different relevant perms can never read each other's
-      cached bodies. (Superusers and flag-off requests contribute an empty
-      segment — keys stay byte-identical to the unpruned setup.)
+      cached bodies. It uses the same all-grants exception for flat GFKs, so
+      a grant or revoke changes both cache keys on the next request. The
+      schema-variant cache stores immutable effective grants, not a target
+      row decision. The [HTTP response cache](caching.md) retains the resulting
+      allowed or null target payload until its existing expiry or invalidation;
+      a registered target row hook runs for each fresh GraphQL execution, not
+      on an HTTP cache hit. (Superusers and flag-off requests contribute an
+      empty segment — keys stay byte-identical to the unpruned setup.)
 
 ## See also
 

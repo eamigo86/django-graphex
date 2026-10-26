@@ -12,10 +12,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from django.test import TestCase
+from django.test.utils import isolate_apps
 
 from django_graphex.nested import NestedFieldsMixin
 from django_graphex.types import DjangoModelType
-from tests.models import Author, Category, Post
+from tests.models import Author, Post
 
 
 def _info() -> SimpleNamespace:
@@ -159,25 +160,35 @@ def test_relation_kind_reverse_one_for_reverse_o2o() -> None:
     """
     from django.db import models
 
-    class _CatProfileNE(models.Model):
-        """Throwaway model declaring a reverse one-to-one onto "Category"."""
+    with isolate_apps("tests"):
 
-        owner = models.OneToOneField(
-            Category, related_name="cat_profile_ne", on_delete=models.CASCADE
-        )
+        class _CategoryNE(models.Model):
+            """Throwaway relation target isolated from the shared Category model."""
 
-        class Meta:
-            """Register the throwaway model under the "tests" app label."""
+            class Meta:
+                """Bind the temporary target to the isolated tests registry."""
 
-            app_label = "tests"
+                app_label = "tests"
 
-    class _CatHost(NestedFieldsMixin):
-        """Bare "NestedFieldsMixin" host bound to "Category" for this test."""
+        class _CatProfileNE(models.Model):
+            """Throwaway model declaring a reverse one-to-one on the local target."""
 
-        _meta = SimpleNamespace(model=Category)
+            owner = models.OneToOneField(
+                _CategoryNE, related_name="cat_profile_ne", on_delete=models.CASCADE
+            )
 
-    kind, rel = _CatHost._relation_kind("cat_profile_ne")
-    assert kind == "reverse_one"
+            class Meta:
+                """Bind the temporary child to the isolated tests registry."""
+
+                app_label = "tests"
+
+        class _CatHost(NestedFieldsMixin):
+            """Bare mixin host bound to the isolated Category-like target."""
+
+            _meta = SimpleNamespace(model=_CategoryNE)
+
+        kind, rel = _CatHost._relation_kind("cat_profile_ne")
+        assert kind == "reverse_one"
 
 
 # --------------------------------------------------------------------------- #

@@ -13,8 +13,8 @@ Covers two defects in "core/input_compiler.py" (base "model_fields" loop):
 2. DEFAULTS — the Pydantic v2 field default must reach "GraphQLInputField
    .default_value" so the SDL renders "= <value>": a concrete default ("1"),
    "False" ("= false"), explicit "None" ("= null"), and a
-   "default_factory" (evaluated ONCE at compile time). A field with no default
-   renders with no "= ..." marker (graphql-core "Undefined").
+   "default_factory" (evaluated per coerced input object, not in SDL). A field
+   with no default renders with no "= ..." marker (graphql-core "Undefined").
 
 These are SDL-level ("print_type") + behavior-level (executing a GraphQL
 argument through "graphql_sync") tests. No Django settings required — the
@@ -299,12 +299,11 @@ def test_no_default_renders_without_marker() -> None:
     assert "note: String =" not in sdl, sdl
 
 
-def test_default_factory_evaluated_once_and_present() -> None:
-    """Protect single-evaluation of a default_factory list default.
+def test_default_factory_runs_per_coerced_object_without_sdl_default() -> None:
+    """Keep factory results out of SDL and create distinct input defaults.
 
-    If this regresses, a default_factory could be invoked repeatedly (once
-    per SDL print or schema access) instead of exactly once at compile time,
-    which would break factories with side effects or non-idempotent output.
+    An input-field factory must not run during schema construction or share
+    its resulting list across independently coerced objects.
     """
 
     calls = {"n": 0}
@@ -317,11 +316,16 @@ def test_default_factory_evaluated_once_and_present() -> None:
         tags: list[str] = Field(default_factory=_factory)
 
     result = compile_input_type(M, name="FactoryDefaultInput", emit_defaults=True)
-    # Force the thunk to build fields (defaults are read at build time).
+    # Schema construction and SDL printing must not invoke the factory.
     sdl = print_type(result)
-    assert 'tags: [String!] = ["seed"]' in sdl, sdl
-    # Single-evaluation constraint: the factory ran exactly once at compile time.
-    assert calls["n"] == 1, f"default_factory must be evaluated ONCE, ran {calls['n']}x"
+    assert "tags: [String!]\n" in sdl, sdl
+    assert "tags: [String!] =" not in sdl, sdl
+    assert calls["n"] == 0
+    first = result.out_type({})
+    second = result.out_type({})
+    assert first == second == {"tags": ["seed"]}
+    assert first["tags"] is not second["tags"]
+    assert calls["n"] == 2
 
 
 def test_validated_data_default_factory_compiles() -> None:

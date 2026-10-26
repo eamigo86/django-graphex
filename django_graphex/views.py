@@ -1,8 +1,8 @@
 """GraphQL views: a vendored base view plus the enhanced and authenticated views.
 
-- "BaseGraphQLView" — a self-contained fork of graphene-django's "GraphQLView"
-  (GET/POST, batch, variable parsing, schema/document validation, atomic
-  mutations) so the package does not depend on the unmaintained "graphene-django".
+- "BaseGraphQLView" — the self-contained base view, forked from graphene-django's
+  "GraphQLView" (GET/POST, batch, variable parsing, schema/document validation,
+  atomic mutations) so the package has no runtime dependency on it.
   GraphiQL is served from a self-contained CDN page by default, overridable with a
   custom Django template via "graphiql_template" (for offline / strict-CSP setups).
 - "GraphQLView" — adds response caching, query depth/cost validation rules and the
@@ -16,6 +16,7 @@ Reads the project's "DJANGO_GRAPHEX" Django setting ("SCHEMA", "MIDDLEWARE",
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -25,13 +26,18 @@ import sys
 import threading
 import weakref
 from collections import OrderedDict
+from collections.abc import Iterator
 from functools import wraps
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from django.core.cache import caches
 from django.core.exceptions import ImproperlyConfigured
-from django.db import connection, transaction
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    connections,
+    transaction,
+)
 from django.http import HttpResponse, HttpResponseNotAllowed
 from django.http.response import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import render
@@ -40,6 +46,7 @@ from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.generic import View
 from graphql import (
     ExecutionResult,
+    GraphQLError,
     OperationType,
     execute,
     get_operation_ast,
@@ -48,17 +55,81 @@ from graphql import (
 )
 from graphql import execution as graphql_execution
 from graphql.execution.middleware import MiddlewareManager
-from graphql.pyutils import is_iterable
+from graphql.pyutils import is_awaitable, is_iterable
 from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
+from ._execution_state import request_budget_scope
+from .core._flat_gfk_scope import signature_grants
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
 from .permissions import IsAuthenticated
-from .security import format_graphql_error, introspection_disabled
+from .security import (
+    CLIENT_ERROR_ATTR,
+    error_logger,
+    format_client_error,
+    format_graphql_error,
+    internal_error_cause,
+    introspection_disabled,
+    is_client_input,
+    mark_client_errors,
+    mark_request_errors,
+    scrub_cause_text,
+)
 from .settings import graphql_api_settings
 from .utils import clean_dict
-from .validation import DepthLimitValidationRule
+from .validation import DepthLimitValidationRule, StackDepthError, run_validation
+
+_UNSUPPORTED_ASYNC_MESSAGE = (
+    "Async execution is not supported by this HTTP view. "
+    "Use synchronous resolvers and middleware."
+)
+
+
+_CLIENT_ERROR_ATTR = CLIENT_ERROR_ATTR
+_mark_client_errors = mark_client_errors
+_mark_request_errors = mark_request_errors
+_is_client_input = is_client_input
+_scrub_cause_text = scrub_cause_text
+_error_logger = error_logger
+
+
+def _internal_error_cause(error: Any) -> BaseException | None:
+    """Find an unexpected cause behind GraphQL wrappers, if one exists.
+
+    Args:
+        error: The error passed to the HTTP formatter.
+
+    Returns:
+        The unexpected cause, or None for an intentionally public error
+        (including an HttpError).
+    """
+    if isinstance(error, HttpError):
+        return None
+    return internal_error_cause(error)
+
+
+def _request_error_status(errors: Any) -> int:
+    """Return the HTTP status for an execution result's path-less errors.
+
+    Path-less errors come from before execution (parse, validate, coercion),
+    where the client is at fault, and from server faults outside field
+    execution (a failing hook). The second kind is an internal error.
+
+    Args:
+        errors: The execution result's errors.
+
+    Returns:
+        500 when a path-less error is an internal one, otherwise 400.
+    """
+    for error in errors:
+        if getattr(error, "path", None):
+            continue
+        cause = _internal_error_cause(error)
+        if cause is not None and not _is_client_input(error, cause):
+            return 500
+    return 400
+
 
 _EXECUTION_BACKEND_KEYWORD = (
     "executor_class"
@@ -164,8 +235,8 @@ def csrf_header_missing(request: Any, content_type: str) -> bool:
     )
 
 
-#: Self-contained GraphiQL page (CDN). Avoids depending on graphene-django's
-#: bundled template + static assets. Override per view with ``graphiql_template``.
+#: Self-contained GraphiQL page (CDN). Avoids depending on bundled
+#: template and static assets. Override per view with ``graphiql_template``.
 #:
 #: CDN asset versions are PINNED to specific patch versions and protected by
 #: Subresource Integrity (SRI) hashes (sha384) so a CDN compromise or
@@ -247,6 +318,145 @@ class HttpError(Exception):
         super().__init__(message, *args, **kwargs)
 
 
+class _UnsupportedAsyncExecution(HttpError):
+    """Identify only the synchronous HTTP view's deliberate async refusal."""
+
+
+def _execute_synchronously(schema: Any, document: Any, options: dict[str, Any]) -> Any:
+    """Execute without retaining unstarted coroutines from this request.
+
+    graphql-core records awaitable values through the supplied predicate as it
+    constructs nested wrappers. Closing only its top-level return would leave
+    the resolver and inner wrappers unawaited, so retain and close the owned
+    coroutines in reverse order without running any of their bodies.
+
+    Args:
+        schema: Schema used for the already-validated operation.
+        document: Parsed GraphQL operation.
+        options: Execution arguments for graphql-core.
+
+    Returns:
+        A completed synchronous execution result.
+
+    Raises:
+        _UnsupportedAsyncExecution: When execution needs an awaitable value.
+    """
+    owned: dict[int, Any] = {}
+
+    def track_awaitable(value: Any) -> bool:
+        """Track only unstarted coroutines observed by this execution.
+
+        Args:
+            value: A graphql-core execution value.
+
+        Returns:
+            Whether the value is awaitable under graphql-core's own predicate.
+        """
+        awaitable = is_awaitable(value)
+        if awaitable and inspect.iscoroutine(value):
+            if inspect.getcoroutinestate(value) == inspect.CORO_CREATED:
+                owned[id(value)] = value
+        return awaitable
+
+    def observe_middleware(entry: Any) -> Any:
+        """Observe newly created coroutines at one middleware boundary.
+
+        Args:
+            entry: A native function or object middleware entry.
+
+        Returns:
+            A request-local wrapper, or an entry native execution ignores.
+        """
+        callback = (
+            entry if inspect.isfunction(entry) else getattr(entry, "resolve", None)
+        )
+        if not callback:
+            return entry
+
+        def observed(next_: Any, root: Any, info: Any, **kwargs: Any) -> Any:
+            """Retain new next results before middleware hides them.
+
+            Args:
+                next_: Next resolver or middleware callable.
+                root: GraphQL root value.
+                info: GraphQL field information.
+                **kwargs: GraphQL field arguments.
+
+            Returns:
+                The original middleware result.
+            """
+
+            def observed_next(*args: Any, **next_kwargs: Any) -> Any:
+                """Track a direct async next call without claiming borrowed work.
+
+                Args:
+                    *args: Positional arguments for the next callable.
+                    **next_kwargs: Keyword arguments for the next callable.
+
+                Returns:
+                    The next callable's unmodified value.
+                """
+                value = next_(*args, **next_kwargs)
+                if inspect.iscoroutinefunction(next_):
+                    track_awaitable(value)
+                return value
+
+            value = callback(observed_next, root, info, **kwargs)
+            if inspect.iscoroutine(value) and value.cr_frame is not None:
+                # A direct async middleware call creates its own coroutine. A
+                # synchronous wrapper is owned only when it captures a value
+                # already observed as newly created by this execution.
+                captured = value.cr_frame.f_locals.values()
+                if inspect.iscoroutinefunction(callback) or any(
+                    id(child) in owned and owned[id(child)] is child
+                    for child in captured
+                ):
+                    track_awaitable(value)
+            return value
+
+        return observed
+
+    middleware = options.get("middleware")
+    if type(middleware) is MiddlewareManager:
+        options["middleware"] = MiddlewareManager(
+            *(observe_middleware(entry) for entry in middleware.middlewares)
+        )
+    elif isinstance(middleware, (tuple, list)):
+        options["middleware"] = [observe_middleware(entry) for entry in middleware]
+
+    options["is_awaitable"] = track_awaitable
+    try:
+        result = execute(schema, document, **options)
+    except Exception:
+        for coroutine in reversed(tuple(owned.values())):
+            if inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+                coroutine.close()
+        if owned:
+            raise _UnsupportedAsyncExecution(
+                HttpResponse(status=500),
+                message=_UNSUPPORTED_ASYNC_MESSAGE,
+            ) from None
+        raise
+
+    if inspect.iscoroutine(result) and result.cr_frame is not None:
+        # graphql-core's outer execute() wrapper captures the coroutine
+        # returned by Executor.execute_operation as a local named result;
+        # that inner wrapper is not passed through is_awaitable again.
+        inner = result.cr_frame.f_locals.get("result")
+        if inspect.iscoroutine(inner):
+            track_awaitable(inner)
+
+    if track_awaitable(result) or owned:
+        for coroutine in reversed(tuple(owned.values())):
+            if inspect.getcoroutinestate(coroutine) == inspect.CORO_CREATED:
+                coroutine.close()
+        raise _UnsupportedAsyncExecution(
+            HttpResponse(status=500),
+            message=_UNSUPPORTED_ASYNC_MESSAGE,
+        )
+    return result
+
+
 def get_accepted_content_types(request: Any) -> list[str]:
     """Return the request's accepted content types, most-preferred first.
 
@@ -301,12 +511,61 @@ def instantiate_middleware(middlewares: Any) -> Any:
 def set_rollback() -> None:
     """Roll back the current request transaction when atomic requests are on.
 
-    A no-op unless the connection has "ATOMIC_REQUESTS" enabled and is inside an
-    atomic block; otherwise the request's transaction is marked for rollback.
+    Every database alias with "ATOMIC_REQUESTS" enabled that is inside an atomic
+    block is marked for rollback; aliases outside an atomic block are untouched.
     """
-    atomic_requests = connection.settings_dict.get("ATOMIC_REQUESTS", False)
-    if atomic_requests and connection.in_atomic_block:
-        transaction.set_rollback(True)
+    for alias in _request_atomic_aliases():
+        transaction.set_rollback(True, using=alias)
+
+
+def _request_atomic_aliases() -> list[str]:
+    """Return the aliases whose request transaction is currently open.
+
+    Returns:
+        Aliases with "ATOMIC_REQUESTS" enabled that are inside an atomic block.
+    """
+    return [
+        alias
+        for alias in connections
+        if connections[alias].settings_dict.get("ATOMIC_REQUESTS", False)
+        and connections[alias].in_atomic_block
+    ]
+
+
+def _atomic_mutation_aliases() -> list[str]:
+    """Return the aliases a mutation operation must run inside "atomic" on.
+
+    The default alias is included when the global "ATOMIC_MUTATIONS" setting or
+    its own "ATOMIC_MUTATIONS" database option is true; every other alias only
+    through its own "DATABASES[alias]['ATOMIC_MUTATIONS']" option.
+
+    Returns:
+        Aliases to wrap, in connection order.
+    """
+    global_on = graphql_api_settings.ATOMIC_MUTATIONS is True
+    return [
+        alias
+        for alias in connections
+        if connections[alias].settings_dict.get("ATOMIC_MUTATIONS", False) is True
+        or (global_on and alias == DEFAULT_DB_ALIAS)
+    ]
+
+
+@contextlib.contextmanager
+def _item_savepoints() -> Iterator[None]:
+    """Open a savepoint on each connection that wraps the request in a transaction.
+
+    Used per batch item: an error marks only the item's savepoint for rollback,
+    never the request transaction, so earlier and later items still commit.
+    Without "ATOMIC_REQUESTS" there is no request transaction and this is a no-op.
+
+    Yields:
+        Control to the batch item.
+    """
+    with contextlib.ExitStack() as stack:
+        for alias in _request_atomic_aliases():
+            stack.enter_context(transaction.atomic(using=alias, savepoint=True))
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +589,10 @@ def set_rollback() -> None:
 #     LRU-capped (PERMISSION_SCHEMA_CACHE_MAXSIZE ≤ 64), so total memory is
 #     bounded by maxsize * (schemas ≤ 64).
 #
+# Both caches also bound the AST tokens they retain (see "_retained_tokens"): an
+# AST is up to ~270x its text, so entry count and text length alone do not
+# bound memory.
+#
 # Thread-safety: an OrderedDict is not safe under concurrent mutation, so every
 # read/write path takes a lock. The critical sections only touch the dict (no
 # I/O), so contention is negligible.
@@ -338,8 +601,52 @@ def set_rollback() -> None:
 #: Lock guarding the parse LRU.
 _PARSE_CACHE_LOCK = threading.Lock()
 
-#: Global parse LRU: query string -> DocumentNode (bounded by the setting).
-_PARSE_CACHE: OrderedDict[str, Any] = OrderedDict()
+
+class _TokenLRU(OrderedDict):
+    """LRU that also totals the AST tokens its entries retain."""
+
+    def __init__(self) -> None:
+        """Start empty with no retained tokens."""
+        super().__init__()
+        self._sizes: dict[Any, int] = {}
+        self.tokens = 0
+
+    def admit(
+        self,
+        key: Any,
+        value: Any,
+        tokens: int,
+        maxsize: int,
+        budget: int | None,
+    ) -> None:
+        """Store an entry, then evict least recently used ones to fit the bounds.
+
+        Args:
+            key: The cache key.
+            value: The value to retain.
+            tokens: The AST tokens the entry retains.
+            maxsize: The most entries the LRU may hold.
+            budget: The most tokens the LRU may retain, or None for no bound.
+        """
+        if key in self:
+            self.tokens -= self._sizes.pop(key)
+        self[key] = value
+        self.move_to_end(key)
+        self._sizes[key] = tokens
+        self.tokens += tokens
+        while len(self) > maxsize or (budget is not None and self.tokens > budget):
+            oldest, _ = self.popitem(last=False)
+            self.tokens -= self._sizes.pop(oldest)
+
+    def clear(self) -> None:
+        """Drop every entry and reset the token total."""
+        super().clear()
+        self._sizes.clear()
+        self.tokens = 0
+
+
+#: Global parse LRU: query string -> DocumentNode (bounded by the settings).
+_PARSE_CACHE: _TokenLRU = _TokenLRU()
 
 #: Lock guarding the per-schema validation sub-caches (both the WeakKeyDictionary
 #: and the inner OrderedDicts).
@@ -348,7 +655,7 @@ _VALIDATE_CACHE_LOCK = threading.Lock()
 #: schema OBJECT -> inner LRU keyed by query, rules, error cap, runtime limits,
 #: and suggestion visibility ->
 #: tuple[GraphQLError, ...]. WeakKeyDictionary so a GC'd schema drops its verdicts.
-_VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, OrderedDict[tuple, tuple]]" = (
+_VALIDATE_CACHE: "weakref.WeakKeyDictionary[Any, _TokenLRU]" = (
     weakref.WeakKeyDictionary()
 )
 
@@ -369,6 +676,56 @@ def _document_cache_maxsize() -> int:
     return sys.maxsize if configured is None else int(configured)
 
 
+def _document_cacheable(query: str) -> bool:
+    """Return whether a query may enter the document caches.
+
+    A query longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH" is parsed and
+    validated without being retained. The parsed size is checked later by
+    "_retained_tokens", because an AST is hundreds of times larger than its text.
+
+    Args:
+        query: The raw GraphQL query string.
+
+    Returns:
+        False when the query is longer than the per-entry bound.
+    """
+    limit = graphql_api_settings.DOCUMENT_CACHE_MAX_QUERY_LENGTH
+    return limit is None or len(query) <= limit
+
+
+def _token_budget() -> int | None:
+    """Return the AST tokens each document cache may retain in total.
+
+    Returns:
+        "DOCUMENT_CACHE_MAX_QUERY_LENGTH", or None when that bound is removed.
+    """
+    return graphql_api_settings.DOCUMENT_CACHE_MAX_QUERY_LENGTH
+
+
+def _retained_tokens(document: Any) -> int | None:
+    """Return the tokens a document would retain, or None when it is too large.
+
+    One entry may hold at most an eighth of the token budget, so a document of
+    ordinary density (about six characters per token) is limited only by its
+    length, while a dense one such as "{ a a a ... }" is not retained.
+
+    Args:
+        document: The parsed "DocumentNode".
+
+    Returns:
+        The token count, or None when the document must not be cached.
+    """
+    budget = _token_budget()
+    if budget is None or document.loc is None:
+        return 0
+    count = 0
+    token, end = document.loc.start_token, document.loc.end_token
+    while token is not end:
+        token = token.next
+        count += 1
+    return count if count <= budget // 8 else None
+
+
 def _dynamic_limits_key() -> tuple:
     """Return the runtime limit inputs folded into the validation cache key.
 
@@ -384,7 +741,7 @@ def _dynamic_limits_key() -> tuple:
     * "MAX_QUERY_DEPTH" — the depth budget.
     * "MAX_QUERY_COST" — the cost budget.
     * "MAX_PAGE_SIZE", "DEFAULT_PAGE_SIZE", "DEFAULT_LIST_MULTIPLIER",
-      "COST_PAGINATION_ARGS" — inputs to the cost estimate itself (variables are
+      "COST_PAGINATION_ARGS", "COST_DIRECTIVE" — inputs to the cost estimate itself (variables are
       unbound during validation, so page sizes come from these), which changes
       the "total" compared against "MAX_QUERY_COST".
 
@@ -400,6 +757,7 @@ def _dynamic_limits_key() -> tuple:
         graphql_api_settings.DEFAULT_PAGE_SIZE,
         graphql_api_settings.DEFAULT_LIST_MULTIPLIER,
         tuple(graphql_api_settings.COST_PAGINATION_ARGS or ()),
+        graphql_api_settings.COST_DIRECTIVE,
     )
 
 
@@ -427,10 +785,36 @@ def _rules_key(rules: Any) -> Any:
     )
 
 
+def _parse_or_depth_error(query: str) -> Any:
+    """Parse a query, answering parser stack exhaustion as a client error.
+
+    graphql-core's parser recurses once per selection-set level, so roughly
+    250 levels of inline nesting exhaust the default Python stack. The client
+    sent that document, so it is a depth error rather than an internal one.
+
+    Args:
+        query: The raw GraphQL query string.
+
+    Returns:
+        The parsed "DocumentNode".
+
+    Raises:
+        GraphQLError: With code "QUERY_TOO_DEEP" when the parser ran out of stack.
+    """
+    try:
+        return parse(query)
+    except RecursionError as exc:
+        raise GraphQLError(
+            "Query is nested too deeply to be parsed.",
+            extensions={"code": "QUERY_TOO_DEEP"},
+        ) from exc
+
+
 def cached_parse(query: str) -> Any:
     """Return the parsed "DocumentNode" for the query, memoized in a bounded LRU.
 
-    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) this is a plain
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0), or the query or
+    its AST exceeds the "DOCUMENT_CACHE_MAX_QUERY_LENGTH" bounds, this is a plain
     "parse(query)". A parse error propagates to the caller exactly as an
     uncached "parse" would — failures are NOT cached.
 
@@ -444,8 +828,8 @@ def cached_parse(query: str) -> Any:
         The parsed "DocumentNode".
     """
     maxsize = _document_cache_maxsize()
-    if maxsize <= 0:
-        return parse(query)
+    if maxsize <= 0 or not _document_cacheable(query):
+        return _parse_or_depth_error(query)
 
     with _PARSE_CACHE_LOCK:
         cached = _PARSE_CACHE.get(query)
@@ -455,13 +839,13 @@ def cached_parse(query: str) -> Any:
 
     # Parse OUTSIDE the lock (tokenizing can be relatively expensive); a benign
     # duplicate parse under concurrency just overwrites with an equivalent AST.
-    document = parse(query)
+    document = _parse_or_depth_error(query)
+    tokens = _retained_tokens(document)
+    if tokens is None:
+        return document
 
     with _PARSE_CACHE_LOCK:
-        _PARSE_CACHE[query] = document
-        _PARSE_CACHE.move_to_end(query)
-        while len(_PARSE_CACHE) > maxsize:
-            _PARSE_CACHE.popitem(last=False)
+        _PARSE_CACHE.admit(query, document, tokens, maxsize, _token_budget())
     return document
 
 
@@ -483,8 +867,9 @@ def cached_validate(
     tuple means "valid". The SAME "GraphQLError" objects are reused across cache
     hits, so "error.formatted" serializes identically to a fresh run.
 
-    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) this is a plain
-    "validate(...)" returning a fresh tuple.
+    When the cache is disabled ("DOCUMENT_CACHE_MAXSIZE" == 0) or the query is
+    longer than "DOCUMENT_CACHE_MAX_QUERY_LENGTH" this is a plain "validate(...)"
+    returning a fresh tuple.
 
     Args:
         schema: The "GraphQLSchema" validated against (identity of the verdict).
@@ -505,9 +890,11 @@ def cached_validate(
         else {}
     )
     maxsize = _document_cache_maxsize()
-    if maxsize <= 0:
+    if maxsize <= 0 or not _document_cacheable(query):
         return tuple(
-            validate(schema, document, rules, max_errors, **validation_options)
+            run_validation(
+                validate, schema, document, rules, max_errors, **validation_options
+            )
         )
 
     # Rules identity: a CONTENT token (the dotted name of every rule, in order),
@@ -524,8 +911,9 @@ def cached_validate(
     # limit would survive a limit tightening and silently bypass the guard until
     # eviction/restart. `_dynamic_limits_key` folds in every setting that can flip
     # a verdict (kept cheap: plain ints/None and a small tuple).
+    # The query text is keyed by its digest so a cached verdict never pins the text.
     key = (
-        query,
+        hashlib.sha256(query.encode("utf-8", "surrogatepass")).hexdigest(),
         _rules_key(rules),
         max_errors,
         _dynamic_limits_key(),
@@ -541,17 +929,24 @@ def cached_validate(
                 return cached
 
     # Validate OUTSIDE the lock; store the result as a tuple.
-    errors = tuple(validate(schema, document, rules, max_errors, **validation_options))
+    errors = tuple(
+        run_validation(
+            validate, schema, document, rules, max_errors, **validation_options
+        )
+    )
+    if any(isinstance(error, StackDepthError) for error in errors):
+        # The verdict reflects this caller's stack depth, not the document.
+        return errors
+    tokens = _retained_tokens(document)
+    if tokens is None:
+        return errors
 
     with _VALIDATE_CACHE_LOCK:
         sub = _VALIDATE_CACHE.get(schema)
         if sub is None:
-            sub = OrderedDict()
+            sub = _TokenLRU()
             _VALIDATE_CACHE[schema] = sub
-        sub[key] = errors
-        sub.move_to_end(key)
-        while len(sub) > maxsize:
-            sub.popitem(last=False)
+        sub.admit(key, errors, tokens, maxsize, _token_budget())
     return errors
 
 
@@ -569,13 +964,13 @@ def clear_document_caches() -> None:
 
 
 class BaseGraphQLView(View):
-    """Django view that executes GraphQL queries (forked, graphene-django-free).
+    """Django view that executes GraphQL queries.
 
-    A self-contained fork of graphene-django's "GraphQLView" covering GET/POST,
-    batch requests, variable parsing, schema/document validation and atomic
-    mutations, with GraphiQL served from a built-in CDN page. Reads its defaults
-    from the "DJANGO_GRAPHEX" setting. Subclasses layer on caching, cost rules
-    and endpoint-level authorization.
+    A self-contained view (forked from graphene-django's "GraphQLView") covering
+    GET/POST, batch requests, variable parsing, schema/document validation and
+    atomic mutations, with GraphiQL served from a built-in CDN page. Reads its
+    defaults from the "DJANGO_GRAPHEX" setting. Subclasses layer on caching, cost
+    rules and endpoint-level authorization.
     """
 
     graphiql = False
@@ -682,11 +1077,13 @@ class BaseGraphQLView(View):
         # graphql-core ``GraphQLSchema``). We therefore duck-type on that
         # attribute: a native ``DjangoGraphQLSchema`` exposes ``graphql_schema``
         # and must be accepted, and any schema object exposing it works too.
-        assert hasattr(self.schema, "graphql_schema"), (
-            "A Schema exposing `graphql_schema` is required to be provided to "
-            "GraphQLView."
-        )
-        assert not all((graphiql, batch)), "Use either graphiql or batch processing"
+        if not hasattr(self.schema, "graphql_schema"):
+            raise AssertionError(
+                "A Schema exposing `graphql_schema` is required to be provided to "
+                "GraphQLView."
+            )
+        if all((graphiql, batch)):
+            raise AssertionError("Use either graphiql or batch processing")
         self.validation_rules = validation_rules or self.validation_rules
 
     def get_root_value(self, request: Any) -> Any:
@@ -784,20 +1181,17 @@ class BaseGraphQLView(View):
             content_type="application/json",
         )
 
-    @method_decorator(ensure_csrf_cookie)
-    def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
-        """Handle a GraphQL GET/POST request (and GraphiQL/batch).
-
-        The cross-site POST guard runs BEFORE this method, in "as_view" — see
-        "csrf_header_guard" for why it cannot live here.
+    def _enforce_request_body_size(self, request: Any) -> None:
+        """Reject an oversized POST before parsing or accessing document caches.
 
         Body-size guard: when "MAX_REQUEST_BODY_SIZE" is configured (not None)
         and the request body length exceeds the limit, the request is rejected
-        with HTTP 413 (Content Too Large) BEFORE the JSON body is parsed. This is
-        the primary memory-safety cap for base64 file uploads: the entire base64
-        payload sits in the JSON body, so rejecting before "parse_body" prevents
-        it from ever being allocated. The per-field decoded-size pre-check in
-        "decode_base64_file" is a secondary guard.
+        with HTTP 413 (Content Too Large) BEFORE the JSON body is parsed or the
+        CSRF check can read it. This is the primary memory-safety cap for base64
+        file uploads: the entire base64 payload sits in the JSON body, so
+        rejecting before "parse_body" prevents it from ever being allocated. The
+        per-field decoded-size pre-check in "decode_base64_file" is a secondary
+        guard.
 
         The guard uses a two-stage strategy:
 
@@ -815,14 +1209,12 @@ class BaseGraphQLView(View):
           it, "len(request.body)". The body has to be in memory to be parsed
           anyway, so the read costs nothing extra.
         * "multipart/form-data" is measured WITHOUT reading it, by seeking
-          "request._stream" to its end and straight back. Reading it would break
-          the request (the CSRF check "@ensure_csrf_cookie" performs has already
-          drained the stream through "request.POST" whenever the client holds a
-          "csrftoken" cookie) and would drag a streamed upload under Django's
-          "DATA_UPLOAD_MAX_MEMORY_SIZE". A seek does neither: nothing is
-          allocated and the parser still receives a pristine stream. This is the
-          same measurement Django's own "HttpRequest.body" performs on a seekable
-          stream, done one level up so it can answer 413 instead of 400.
+          "request._stream" to its end and straight back. Reading it would drag
+          a streamed upload under Django's "DATA_UPLOAD_MAX_MEMORY_SIZE". A seek
+          allocates nothing and the parser still receives a pristine stream.
+          This is the same measurement Django's own "HttpRequest.body" performs
+          on a seekable stream, done one level up so it can answer 413 instead
+          of 400.
 
         A multipart stream that is not seekable is a WSGI "LimitedStream", which
         is already capped at "CONTENT_LENGTH": an under-declared length truncates
@@ -838,16 +1230,227 @@ class BaseGraphQLView(View):
 
         Args:
             request: The incoming HTTP request.
+
+        Raises:
+            HttpError: If the existing configured body cap is exceeded, or an
+                unmeasurable multipart stream has no declared length.
+        """
+        # Body-size guard: reject before JSON parsing when
+        # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
+        #
+        # Security note: Content-Length is a CLIENT-SUPPLIED header and
+        # MUST NOT be trusted to pass the guard.  A spoofed low value
+        # would let an oversized body bypass the check entirely.
+        #
+        # Two-stage strategy:
+        #   1. Fast-reject: if Content-Length is present AND already
+        #      exceeds the cap, reject immediately without reading the
+        #      body (avoids buffering an honest large upload).
+        #   2. Authoritative check: measure the body itself and verify it
+        #      is ≤ max_body.  This catches spoofed-low / absent / garbage
+        #      Content-Length values.  Multipart is measured by seeking
+        #      rather than by reading — see below.
+        #
+        # Accessing request.body here is safe: dispatch runs before
+        # parse_body, so the stream has not been consumed yet.  Django
+        # caches the result in request._body on first access.  If the
+        # body is so large that Django itself raises RequestDataTooBig /
+        # SuspiciousOperation (DATA_UPLOAD_MAX_MEMORY_SIZE), that
+        # exception surfaces as Django's own 400 response — we do not
+        # mask it, but we also do not let the guard 500 on it.
+        max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
+        if max_body is not None and request.method.lower() == "post":
+            from django.http import HttpResponse as _HR
+
+            content_type = self.get_content_type(request)
+
+            # --- Stage 1: fast-reject on honest oversized Content-Length ---
+            content_length_str = request.META.get("CONTENT_LENGTH", "")
+            try:
+                declared_length = int(content_length_str)
+            except (ValueError, TypeError):
+                declared_length = None
+
+            if declared_length is not None and declared_length > max_body:
+                raise HttpError(
+                    _HR(status=413),
+                    message=(
+                        f"Request body ({declared_length} bytes) exceeds the "
+                        f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                        "Split the request or increase the limit."
+                    ),
+                )
+
+            # --- Stage 2: authoritative check on the actual body length ---
+            # Stage 1 compared the cap against a number the CLIENT chose, so
+            # on its own it bounds nothing: a body declaring less than it
+            # carries sails straight through it. Stage 2 is what makes the
+            # cap mean something, and it must therefore run for every content
+            # type — multipart included, which is where the bypass lived.
+            if content_type == "multipart/form-data":
+                # Measure the stream instead of reading it. This guard runs
+                # before "@ensure_csrf_cookie" (see "dispatch"), so the stream
+                # is still pristine here and must stay that way for the parser.
+                # Reading request.body would drag multipart under
+                # DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default), which
+                # streaming multipart otherwise escapes, and double the peak
+                # memory of an upload that would have gone to disk.
+                #
+                # A seek costs none of that. Under ASGI "_stream" is the
+                # SpooledTemporaryFile "ASGIHandler.read_body" already
+                # filled, so its true size is one seek away: nothing is
+                # allocated, "_read_started" is never set, and the parser
+                # still sees a pristine stream. The position is saved and
+                # restored rather than assumed to be zero, because a caller
+                # (a test client, a wrapping middleware) may have advanced it.
+                stream = getattr(request, "_stream", None)
+                measured_length = None
+                if stream is not None and stream.seekable():
+                    position = stream.tell()
+                    measured_length = stream.seek(0, os.SEEK_END)
+                    stream.seek(position)
+
+                if measured_length is not None and measured_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({measured_length} bytes) exceeds "
+                            f"the MAX_REQUEST_BODY_SIZE limit of {max_body} "
+                            "bytes. Split the request or increase the limit."
+                        ),
+                    )
+
+                # Not seekable means a WSGI LimitedStream, which Django has
+                # already capped at CONTENT_LENGTH — an under-declared length
+                # truncates the body it lies about instead of smuggling it,
+                # and stage 1 refused every declared length above the cap. So
+                # the only unbounded case left is an ABSENT length, which
+                # WSGIRequest turns into a limit of zero: the request was
+                # doomed anyway, but it died as an opaque "must provide query
+                # string" 400. 411 says what actually went wrong. It is not
+                # 413 because the size is unknown, not known-too-big.
+                if measured_length is None and declared_length is None:
+                    raise HttpError(
+                        _HR(status=411),
+                        message=(
+                            "A multipart/form-data request must declare a "
+                            "Content-Length while MAX_REQUEST_BODY_SIZE is "
+                            "set, because this server cannot measure its "
+                            "body. Send a declared length instead of a "
+                            "chunked body."
+                        ),
+                    )
+            else:
+                # If reading the body raises Django's RequestDataTooBig /
+                # SuspiciousOperation, that propagates as Django's own
+                # response (we neither mask it nor 500 on it).
+                actual_length = len(request.body)
+                if actual_length > max_body:
+                    raise HttpError(
+                        _HR(status=413),
+                        message=(
+                            f"Request body ({actual_length} bytes) exceeds the "
+                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
+                            "Split the request or increase the limit."
+                        ),
+                    )
+
+    def _enforce_multipart_file_size(self, request: Any) -> None:
+        """Reject any received multipart file above the configured size cap.
+
+        Args:
+            request: The parsed HTTP request.
+
+        Raises:
+            HttpError: If a received file exceeds the configured cap.
+        """
+        max_size = graphql_api_settings.MAX_UPLOAD_SIZE
+        if max_size is None or self.get_content_type(request) != "multipart/form-data":
+            return
+
+        for _, files in request.FILES.lists():
+            for uploaded_file in files:
+                if uploaded_file.size > max_size:
+                    raise HttpError(
+                        HttpResponse(status=413),
+                        message=(
+                            "Multipart file exceeds the MAX_UPLOAD_SIZE limit "
+                            f"of {max_size} bytes."
+                        ),
+                    )
+
+    def dispatch(self, request: Any, *args: Any, **kwargs: Any) -> HttpResponse:
+        """Refuse an oversized POST, then handle the request with the CSRF cookie.
+
+        The body cap runs HERE, ahead of "@ensure_csrf_cookie" on the inner
+        handler: that decorator runs Django's CSRF check, which reads
+        "request.POST" whenever the client holds a "csrftoken" cookie. For
+        multipart that parses the body and spools its files to disk, so a cap
+        checked inside the decorated handler came too late for every
+        cookie-bearing client. Subclass checks (authentication, cache) still run
+        before this method, so their precedence is unchanged.
+
+        Args:
+            request: The incoming HTTP request.
+            *args: Extra positional arguments forwarded from the URL resolver.
+            **kwargs: Extra keyword arguments forwarded from the URL resolver.
+
+        Returns:
+            The HTTP response.
+        """
+        try:
+            self._enforce_request_body_size(request)
+        except HttpError as e:
+            return self._http_error_response(request, e)
+        # Every item of a batch draws from one directive output budget.
+        with request_budget_scope():
+            return self._dispatch_with_csrf_cookie(request, *args, **kwargs)
+
+    def _http_error_response(self, request: Any, error: HttpError) -> HttpResponse:
+        """Serialize an HttpError into the GraphQL error envelope.
+
+        Args:
+            request: The incoming HTTP request.
+            error: The error to serialize.
+
+        Returns:
+            The error's response carrying the JSON envelope.
+        """
+        response = error.response
+        response["Content-Type"] = "application/json"
+        response.content = self.json_encode(
+            request, {"errors": [self.format_error(error, request)]}
+        )
+        return response
+
+    @method_decorator(ensure_csrf_cookie)
+    def _dispatch_with_csrf_cookie(
+        self, request: Any, *args: Any, **kwargs: Any
+    ) -> HttpResponse:
+        """Handle a GraphQL GET/POST request (and GraphiQL/batch).
+
+        The cross-site POST guard runs BEFORE this method, in "as_view" — see
+        "csrf_header_guard" for why it cannot live here.
+
+        The body-size cap ("MAX_REQUEST_BODY_SIZE") has already been enforced by
+        "dispatch" through "_enforce_request_body_size", so an oversized body
+        never reaches this method, the CSRF check or the parser.
+
+        Args:
+            request: The incoming HTTP request.
             *args: Extra positional arguments forwarded from the URL resolver.
             **kwargs: Extra keyword arguments forwarded from the URL resolver.
 
         Returns:
             The HTTP response (JSON payload, GraphiQL page, or an error
-            response).
+            response). A valid batch returns an array with exactly one entry per
+            request entry, in order; an entry that fails gets its own error
+            entry and later entries still run. The status is the highest entry
+            status.
 
         Raises:
-            HttpError: When the method is unsupported, the body exceeds
-                "MAX_REQUEST_BODY_SIZE", or a batch endpoint receives a body that
+            HttpError: When the method is unsupported, a multipart file exceeds
+                "MAX_UPLOAD_SIZE", or a batch endpoint receives a body that
                 is not a list (any content type); caught internally and
                 serialized into the GraphQL error envelope before the response is
                 returned.
@@ -860,135 +1463,11 @@ class BaseGraphQLView(View):
                     )
                 )
 
-            # Body-size guard: reject before JSON parsing when
-            # MAX_REQUEST_BODY_SIZE is configured and the body exceeds it.
-            #
-            # Security note: Content-Length is a CLIENT-SUPPLIED header and
-            # MUST NOT be trusted to pass the guard.  A spoofed low value
-            # would let an oversized body bypass the check entirely.
-            #
-            # Two-stage strategy:
-            #   1. Fast-reject: if Content-Length is present AND already
-            #      exceeds the cap, reject immediately without reading the
-            #      body (avoids buffering an honest large upload).
-            #   2. Authoritative check: measure the body itself and verify it
-            #      is ≤ max_body.  This catches spoofed-low / absent / garbage
-            #      Content-Length values.  Multipart is measured by seeking
-            #      rather than by reading — see below.
-            #
-            # Accessing request.body here is safe: dispatch runs before
-            # parse_body, so the stream has not been consumed yet.  Django
-            # caches the result in request._body on first access.  If the
-            # body is so large that Django itself raises RequestDataTooBig /
-            # SuspiciousOperation (DATA_UPLOAD_MAX_MEMORY_SIZE), that
-            # exception surfaces as Django's own 400 response — we do not
-            # mask it, but we also do not let the guard 500 on it.
-            max_body = graphql_api_settings.MAX_REQUEST_BODY_SIZE
-            if max_body is not None and request.method.lower() == "post":
-                from django.http import HttpResponse as _HR
-
-                content_type = self.get_content_type(request)
-
-                # --- Stage 1: fast-reject on honest oversized Content-Length ---
-                content_length_str = request.META.get("CONTENT_LENGTH", "")
-                try:
-                    declared_length = int(content_length_str)
-                except (ValueError, TypeError):
-                    declared_length = None
-
-                if declared_length is not None and declared_length > max_body:
-                    raise HttpError(
-                        _HR(status=413),
-                        message=(
-                            f"Request body ({declared_length} bytes) exceeds the "
-                            f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
-                            "Split the request or increase the limit."
-                        ),
-                    )
-
-                # --- Stage 2: authoritative check on the actual body length ---
-                # Stage 1 compared the cap against a number the CLIENT chose, so
-                # on its own it bounds nothing: a body declaring less than it
-                # carries sails straight through it. Stage 2 is what makes the
-                # cap mean something, and it must therefore run for every content
-                # type — multipart included, which is where the bypass lived.
-                if content_type == "multipart/form-data":
-                    # Measure the stream instead of reading it. Reading
-                    # request.body here would be WRONG: "dispatch" carries
-                    # @ensure_csrf_cookie, whose process_view runs the full CSRF
-                    # token check whenever a csrftoken cookie is present, and
-                    # that check reads request.POST. For multipart that drains
-                    # the stream before we get here, so request.body raises
-                    # RawPostDataException (HTTP 500) — and this endpoint plants
-                    # the cookie on every response, so only a client's FIRST
-                    # multipart POST ever survived. Reading also drags multipart
-                    # under DATA_UPLOAD_MAX_MEMORY_SIZE (2.5 MB by default),
-                    # which streaming multipart otherwise escapes, and doubles
-                    # peak memory for an upload that would have gone to disk.
-                    #
-                    # A seek costs none of that. Under ASGI "_stream" is the
-                    # SpooledTemporaryFile "ASGIHandler.read_body" already
-                    # filled, so its true size is one seek away: nothing is
-                    # allocated, "_read_started" is never set, and the parser
-                    # still sees a pristine stream. The position is saved and
-                    # restored rather than assumed to be zero, because the CSRF
-                    # check above may already have consumed it.
-                    stream = getattr(request, "_stream", None)
-                    measured_length = None
-                    if stream is not None and stream.seekable():
-                        position = stream.tell()
-                        measured_length = stream.seek(0, os.SEEK_END)
-                        stream.seek(position)
-
-                    if measured_length is not None and measured_length > max_body:
-                        raise HttpError(
-                            _HR(status=413),
-                            message=(
-                                f"Request body ({measured_length} bytes) exceeds "
-                                f"the MAX_REQUEST_BODY_SIZE limit of {max_body} "
-                                "bytes. Split the request or increase the limit."
-                            ),
-                        )
-
-                    # Not seekable means a WSGI LimitedStream, which Django has
-                    # already capped at CONTENT_LENGTH — an under-declared length
-                    # truncates the body it lies about instead of smuggling it,
-                    # and stage 1 refused every declared length above the cap. So
-                    # the only unbounded case left is an ABSENT length, which
-                    # WSGIRequest turns into a limit of zero: the request was
-                    # doomed anyway, but it died as an opaque "must provide query
-                    # string" 400. 411 says what actually went wrong. It is not
-                    # 413 because the size is unknown, not known-too-big.
-                    if measured_length is None and declared_length is None:
-                        raise HttpError(
-                            _HR(status=411),
-                            message=(
-                                "A multipart/form-data request must declare a "
-                                "Content-Length while MAX_REQUEST_BODY_SIZE is "
-                                "set, because this server cannot measure its "
-                                "body. Send a declared length instead of a "
-                                "chunked body."
-                            ),
-                        )
-                else:
-                    # If reading the body raises Django's RequestDataTooBig /
-                    # SuspiciousOperation, that propagates as Django's own
-                    # response (we neither mask it nor 500 on it).
-                    actual_length = len(request.body)
-                    if actual_length > max_body:
-                        raise HttpError(
-                            _HR(status=413),
-                            message=(
-                                f"Request body ({actual_length} bytes) exceeds the "
-                                f"MAX_REQUEST_BODY_SIZE limit of {max_body} bytes. "
-                                "Split the request or increase the limit."
-                            ),
-                        )
-
             data = self.parse_body(request)
             show_graphiql = self.graphiql and self.can_display_graphiql(request, data)
 
             if show_graphiql:
+                self._enforce_multipart_file_size(request)
                 return self.render_graphiql(request)
 
             if self.batch:
@@ -1021,22 +1500,35 @@ class BaseGraphQLView(View):
                             "disable the limit."
                         ),
                     )
-                responses = [self.get_response(request, entry) for entry in data]
+                self._enforce_multipart_file_size(request)
+                responses = []
+                for entry in data:
+                    # Each item gets its own savepoint and a clean error flag, so
+                    # one item's failure never rolls back or poisons the others.
+                    setattr(request, MUTATION_ERRORS_FLAG, False)
+                    try:
+                        with _item_savepoints():
+                            responses.append(self.get_response(request, entry))
+                    except HttpError as error:
+                        if error.response.status_code != 400:
+                            raise
+                        response = {
+                            "errors": [self.format_error(error, request)],
+                            "id": request.GET.get("id") or entry.get("id"),
+                            "status": 400,
+                        }
+                        responses.append((self.json_encode(request, response), 400))
                 result = "[{}]".format(",".join(r[0] for r in responses))
                 status_code = responses and max(responses, key=lambda r: r[1])[1] or 200
             else:
+                self._enforce_multipart_file_size(request)
                 result, status_code = self.get_response(request, data, show_graphiql)
 
             return HttpResponse(
                 status=status_code, content=result, content_type="application/json"
             )
         except HttpError as e:
-            response = e.response
-            response["Content-Type"] = "application/json"
-            response.content = self.json_encode(
-                request, {"errors": [self.format_error(e, request)]}
-            )
-            return response
+            return self._http_error_response(request, e)
 
     def get_response(
         self, request: Any, data: Any, show_graphiql: bool = False
@@ -1074,7 +1566,7 @@ class BaseGraphQLView(View):
             if execution_result.errors and any(
                 not getattr(e, "path", None) for e in execution_result.errors
             ):
-                status_code = 400
+                status_code = _request_error_status(execution_result.errors)
             else:
                 response["data"] = execution_result.data
 
@@ -1247,6 +1739,22 @@ class BaseGraphQLView(View):
         """
         return ""
 
+    def _execution_backend_class(
+        self, schema: Any, document: Any, operation_name: str | None, request: Any
+    ) -> Any:
+        """Select the execution backend for one validated request.
+
+        Args:
+            schema: The schema used to validate and execute the document.
+            document: The parsed document to execute.
+            operation_name: The selected operation, if named.
+            request: The request carrying mutation execution state.
+
+        Returns:
+            The configured backend, or None for graphql-core's default.
+        """
+        return self.executor_class
+
     def execute_graphql_request(
         self,
         request: Any,
@@ -1293,7 +1801,7 @@ class BaseGraphQLView(View):
             try:
                 document = cached_parse(query)
             except Exception as e:
-                return ExecutionResult(errors=[e])
+                return ExecutionResult(errors=_mark_client_errors([e]))
 
         operation_ast = get_operation_ast(document, operation_name)
 
@@ -1313,6 +1821,24 @@ class BaseGraphQLView(View):
                 )
             )
 
+        if (
+            operation_ast is not None
+            and operation_ast.operation == OperationType.SUBSCRIPTION
+        ):
+            # A subscription needs a long-lived transport; over plain HTTP it
+            # would resolve to null with no hint.
+            return ExecutionResult(
+                errors=_mark_client_errors(
+                    [
+                        GraphQLError(
+                            "Subscriptions are not supported over HTTP; use the "
+                            "WebSocket or SSE transport.",
+                            extensions={"code": "SUBSCRIPTION_NOT_SUPPORTED"},
+                        )
+                    ]
+                )
+            )
+
         middleware = self.get_middleware(request)
         hide_suggestions = introspection_disabled(middleware)
         validation_errors = cached_validate(
@@ -1324,20 +1850,26 @@ class BaseGraphQLView(View):
             hide_suggestions=hide_suggestions,
         )
         if validation_errors:
-            return ExecutionResult(data=None, errors=list(validation_errors))
+            return ExecutionResult(
+                data=None, errors=_mark_client_errors(list(validation_errors))
+            )
 
+        context = self.get_context(request)
         try:
             execute_options = {
                 "root_value": self.get_root_value(request),
-                "context_value": self.get_context(request),
+                "context_value": context,
                 "variable_values": variables,
                 "operation_name": operation_name,
                 "middleware": middleware,
             }
             if _EXECUTE_SUPPORTS_HIDE_SUGGESTIONS:
                 execute_options["hide_suggestions"] = hide_suggestions
-            if self.executor_class is not None:
-                execute_options[_EXECUTION_BACKEND_KEYWORD] = self.executor_class
+            backend_class = self._execution_backend_class(
+                schema, document, operation_name, request
+            )
+            if backend_class is not None:
+                execute_options[_EXECUTION_BACKEND_KEYWORD] = backend_class
             if _EXECUTION_BACKEND_KEYWORD == "executor_class":
                 execute_options["is_async_iterable"] = _is_async_only_iterable
 
@@ -1345,15 +1877,20 @@ class BaseGraphQLView(View):
                 operation_ast is not None
                 and operation_ast.operation == OperationType.MUTATION
             )
-            if is_mutation and (
-                graphql_api_settings.ATOMIC_MUTATIONS is True
-                or connection.settings_dict.get("ATOMIC_MUTATIONS", False) is True
-            ):
-                with transaction.atomic():
-                    result = execute(schema, document, **execute_options)
-                    rolled_back = getattr(request, MUTATION_ERRORS_FLAG, False) is True
+            atomic_aliases = _atomic_mutation_aliases() if is_mutation else []
+            if atomic_aliases:
+                with contextlib.ExitStack() as stack:
+                    for alias in atomic_aliases:
+                        stack.enter_context(transaction.atomic(using=alias))
+                    result = _mark_request_errors(
+                        _execute_synchronously(schema, document, execute_options)
+                    )
+                    rolled_back = getattr(
+                        request, MUTATION_ERRORS_FLAG, False
+                    ) is True or bool(result.errors)
                     if rolled_back:
-                        transaction.set_rollback(True)
+                        for alias in atomic_aliases:
+                            transaction.set_rollback(True, using=alias)
                 if not rolled_back:
                     setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
                 return result
@@ -1361,10 +1898,29 @@ class BaseGraphQLView(View):
             # Non-atomic execution may have committed work before a later
             # resolver reports an error, so mark it immediately before handing
             # control to graphql-core.  Atomic execution is marked only after
-            # its transaction exits without an explicit rollback above.
+            # its transaction exits without a rollback above.
             if is_mutation:
                 setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, True)
-            return execute(schema, document, **execute_options)
+            return _mark_request_errors(
+                _execute_synchronously(schema, document, execute_options)
+            )
+        except _UnsupportedAsyncExecution:
+            raise
+        except RecursionError:
+            # A RecursionError a resolver raises is wrapped by graphql-core with
+            # a field path and never reaches here. A bare one escaped before any
+            # field ran, which is variable coercion of a deeply nested value: the
+            # client's input, answered like an over-deep document.
+            return ExecutionResult(
+                errors=_mark_client_errors(
+                    [
+                        GraphQLError(
+                            "Variables are nested too deeply to be coerced.",
+                            extensions={"code": "QUERY_TOO_DEEP"},
+                        )
+                    ]
+                )
+            )
         except Exception as e:
             return ExecutionResult(errors=[e])
 
@@ -1424,30 +1980,38 @@ class BaseGraphQLView(View):
             A "(query, variables, operation_name, id)" tuple.
 
         Raises:
-            HttpError: When the "variables" value is a string that is not valid
-                JSON.
+            HttpError: When "query" is present but not a string, when the
+                "variables" value is a string that is not valid JSON, or when
+                "variables" is not a JSON object.
         """
         query = request.GET.get("query") or data.get("query")
         variables = request.GET.get("variables") or data.get("variables")
         id = request.GET.get("id") or data.get("id")
 
+        if query and not isinstance(query, str):
+            raise HttpError(HttpResponseBadRequest("Must provide query string."))
         if variables and isinstance(variables, str):
             try:
                 variables = json.loads(variables)
             except Exception:
                 raise HttpError(HttpResponseBadRequest("Variables are invalid JSON."))
+        if variables not in (None, "") and not isinstance(variables, dict):
+            raise HttpError(HttpResponseBadRequest("Variables must be a JSON object."))
 
         operation_name = request.GET.get("operationName") or data.get("operationName")
         if operation_name == "null":
             operation_name = None
         return query, variables, operation_name, id
 
-    def format_error(self, error: Any, request: Any = None) -> dict:
+    def format_error(self, error: Any, request: Any = None) -> dict[str, Any]:
         """Format an error for the response "errors" list.
 
         Delegates to "security.format_graphql_error", the single formatter the
         HTTP view and both subscription transports share, so the "Did you
-        mean ...?" schema oracle is closed on every surface at once.
+        mean ...?" schema oracle is closed on every surface at once. In
+        production HTTP only, unexpected execution exceptions get an allowlisted
+        message and code plus an opaque ID correlated with an internal traceback.
+        Deliberate GraphQLError, validation, and HTTP request errors stay public.
 
         The chain comes from "get_middleware(request)" — the same hook
         execution asks — so a subclass that resolves its middleware per request
@@ -1462,7 +2026,9 @@ class BaseGraphQLView(View):
         Returns:
             The error mapping suitable for the response "errors" list.
         """
-        return format_graphql_error(error, self.get_middleware(request))
+        if isinstance(error, HttpError):
+            return format_graphql_error(error, self.get_middleware(request))
+        return format_client_error(error, self.get_middleware(request), "HTTP")
 
     @staticmethod
     def get_content_type(request: Any) -> str:
@@ -1512,13 +2078,86 @@ _GLOBAL_CACHE_VERSION_IDENTITY = "global"
 class GraphQLView(BaseGraphQLView):
     """Enhanced GraphQL view: response caching + depth/cost rules + cost payload.
 
-    Extends the base view with per-request response caching (partitioned by
-    caller identity), the depth-limit and cost-limit validation rules, and an
-    optional "extensions.cost" payload. Each addition is inert until its
-    corresponding "DJANGO_GRAPHEX" setting is configured.
+    Extends the base view with per-request caching of successful GraphQL HTTP
+    responses (partitioned by caller identity), depth/cost validation rules,
+    and an optional "extensions.cost" payload. Each addition is inert until
+    its corresponding "DJANGO_GRAPHEX" setting is configured.
     """
 
     validation_rules = DEFAULT_VALIDATION_RULES
+
+    def _execution_backend_class(
+        self, schema: Any, document: Any, operation_name: str | None, request: Any
+    ) -> Any:
+        """Check bound request cost after native coercion but before resolution.
+
+        The validation rule remains the conservative, document-only first
+        check. Wrapping executor construction runs on validation-cache hits and
+        reuses its selected operation and coerced variables, so custom scalar
+        parsing and input factories still run only once.
+
+        Args:
+            schema: The request's validated GraphQL schema.
+            document: The validated document to execute.
+            operation_name: The selected operation, if named.
+            request: The request carrying mutation execution state.
+
+        Returns:
+            The configured executor when cost limiting is off, otherwise a
+            request-local executor class that rejects an over-budget operation.
+        """
+        backend = super()._execution_backend_class(
+            schema, document, operation_name, request
+        )
+        if (
+            not graphql_api_settings.MAX_QUERY_COST
+            or _EXECUTION_BACKEND_KEYWORD != "executor_class"
+        ):
+            return backend
+
+        # execute() uses IncrementalExecutor by default on graphql-core 3.3.
+        # Load it only for that runtime so the module remains importable by
+        # older-runtime tooling. Preserve a caller-supplied subclass.
+        from graphql.execution.incremental.incremental_executor import (
+            IncrementalExecutor,
+        )
+
+        parent_class = backend or IncrementalExecutor
+        previously_executed = bool(
+            getattr(request, _CACHE_MUTATION_EXECUTED_FLAG, False)
+        )
+
+        class CostCheckedExecutor(parent_class):
+            @classmethod
+            def build(cls, *args: Any, **kwargs: Any) -> Any:
+                """Return native coercion errors or refuse the selected cost."""
+                executor = super().build(*args, **kwargs)
+                if isinstance(executor, list):
+                    return executor
+
+                report = analyze_cost(
+                    schema,
+                    document,
+                    operation_name,
+                    executor.variable_values.coerced,
+                )
+                if report.max_cost and report.total > report.max_cost:
+                    # The non-atomic path marks execution before calling the
+                    # backend. A refusal here runs no resolver; retain only
+                    # the marker of an earlier executed batch operation.
+                    setattr(request, _CACHE_MUTATION_EXECUTED_FLAG, previously_executed)
+                    return [
+                        GraphQLError(
+                            "Query cost {total} exceeds the maximum of {limit}.".format(
+                                total=report.total, limit=report.max_cost
+                            ),
+                            executor.operation,
+                            extensions={"code": "QUERY_TOO_COMPLEX"},
+                        )
+                    ]
+                return executor
+
+        return CostCheckedExecutor
 
     def get_operation_ast(self, request: HttpRequest) -> Any:
         """Get the AST of the GraphQL operation from the request.
@@ -1577,15 +2216,14 @@ class GraphQLView(BaseGraphQLView):
 
     @staticmethod
     def fetch_cache_key(request: HttpRequest) -> str:
-        """Return a hashed cache key built from the request body and GET params.
+        """Return a SHA-256 cache key from framed body and GET components.
 
-        For POST requests the GraphQL payload lives in "request.body", which is
-        hashed directly. For GET requests "request.body" is always empty, so the
-        query, variables, and operationName query-string parameters are
-        incorporated into the hash instead. Without this, every distinct GET
-        query for the same identity would produce the empty-body hash and share a
-        single cache slot — causing a different query's cached response to be
-        returned.
+        The raw body of every request, including GET requests, and the query,
+        variables, operationName, and pretty parameters are tagged and
+        length-framed before hashing. Framing prevents adjacent components from
+        collapsing into one cache slot. Missing and empty GET parameters still
+        contribute the same empty value. A truthy "pretty" parameter adds a fifth
+        tagged part because "json_encode" formats the cached body by it.
 
         Subclasses may override this staticmethod to derive the body hash
         differently (e.g. normalising whitespace or extracting the operation
@@ -1601,16 +2239,24 @@ class GraphQLView(BaseGraphQLView):
             key.
         """
         m = hashlib.sha256()
-        m.update(request.body)
-        # For GET requests, request.body is b'' — incorporate the GraphQL
-        # query-string parameters so different GET queries get distinct keys.
+        m.update(b"django-graphex-cache-key-v1\0")
         get_query = request.GET.get("query") or ""
         get_variables = request.GET.get("variables") or ""
         get_operation = request.GET.get("operationName") or ""
-        if get_query or get_variables or get_operation:
-            m.update(get_query.encode())
-            m.update(get_variables.encode())
-            m.update(get_operation.encode())
+        parts = [
+            (b"body", request.body),
+            (b"query", get_query.encode("utf-8")),
+            (b"variables", get_variables.encode("utf-8")),
+            (b"operationName", get_operation.encode("utf-8")),
+        ]
+        if request.GET.get("pretty"):
+            # Only a pretty request is framed with this part, so every compact
+            # request keeps the digest it always had.
+            parts.append((b"pretty", b"1"))
+        for tag, value in parts:
+            m.update(tag)
+            m.update(len(value).to_bytes(8, "big"))
+            m.update(value)
 
         return m.hexdigest()
 
@@ -1669,11 +2315,42 @@ class GraphQLView(BaseGraphQLView):
         """
         return not bool(request.COOKIES)
 
-    #: Sentinel used by ``dispatch`` to distinguish a cache miss from a cached
-    #: falsy value (e.g. an empty-body response).  Using ``cache.get(key)``
-    #: with a default of ``None`` and then checking ``if not response:`` would
-    #: treat a legitimately cached empty response as a miss.
+    #: Sentinel used by ``dispatch`` to distinguish a cache miss from a stored
+    #: value before validating whether that value remains eligible for reuse.
     _CACHE_MISS = object()
+
+    @staticmethod
+    def _cacheable_response_payload(payload: Any) -> bool:
+        """Accept only a successful GraphQL HTTP response for cache reuse.
+
+        The same check applies to freshly produced responses and old entries,
+        so failures stored by earlier versions are never replayed. An invalid
+        entry is ignored; a later successful response replaces only its own key.
+
+        Args:
+            payload: The stored body, status, and content-type tuple.
+
+        Returns:
+            True for an HTTP 200 GraphQL data envelope without errors.
+        """
+        if not isinstance(payload, tuple) or len(payload) != 3:
+            return False
+        body, status_code, content_type = payload
+        if (
+            status_code != 200
+            or not isinstance(body, (bytes, str))
+            or not isinstance(content_type, str)
+        ):
+            return False
+        try:
+            envelope = json.loads(body)
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return False
+        return (
+            isinstance(envelope, dict)
+            and isinstance(envelope.get("data"), dict)
+            and "errors" not in envelope
+        )
 
     #: Template for a namespace version-counter key. ``{identity}`` receives
     #: the scope-selected version namespace: ``global`` by default, or the
@@ -1930,6 +2607,9 @@ class GraphQLView(BaseGraphQLView):
 
         When "CACHE_ACTIVE" is True:
 
+        * The configured POST body cap is checked before operation parsing or
+          parse, validation, and response-cache access; refusals use the base
+          view's established HTTP error envelope.
         * Cache keys are partitioned by user identity (see "cache_key_prefix") so
           one user's cached response is never served to another user. Their v2
           shape also records invalidation scope, counter namespace and version.
@@ -1944,8 +2624,9 @@ class GraphQLView(BaseGraphQLView):
         * A request that would render GraphiQL (the view serves it and the client
           prefers HTML) bypasses the cache entirely, so an HTML page and the JSON
           answer for the same query never share a cache slot.
-        * A sentinel object detects cache misses so a legitimately cached falsy or
-          empty body is not re-executed on every request.
+        * Only HTTP 200 GraphQL data envelopes without errors are cached or
+          replayed. Old error/status entries are ignored, allowing recovery
+          without clearing unrelated cache keys.
         * A "query" that cannot be parsed during "get_operation_ast" — a syntax
           error, a non-string value, or a literal nested past the parser's
           recursion limit — falls through to "super_call", which returns the
@@ -1975,6 +2656,20 @@ class GraphQLView(BaseGraphQLView):
         """
         if not graphql_api_settings.CACHE_ACTIVE:
             return self.super_call(request, *args, **kwargs)
+
+        # The base view enforces the same configured cap, but the cache-active
+        # path classifies the GraphQL document before reaching base dispatch.
+        # Preflight here so an oversized body never reaches parse or cache work.
+        # On refusal, delegate to base dispatch for its established 413/411
+        # error envelope and content-type behavior.
+        if (
+            graphql_api_settings.MAX_REQUEST_BODY_SIZE is not None
+            and request.method.lower() == "post"
+        ):
+            try:
+                self._enforce_request_body_size(request)
+            except HttpError:
+                return self.super_call(request, *args, **kwargs)
 
         # RequestFactory-based callers may deliberately reuse a request object.
         # Never let execution state from a prior dispatch leak into this one.
@@ -2060,37 +2755,28 @@ class GraphQLView(BaseGraphQLView):
             cache_key_parts.append(signature)
         cache_key_parts.append(self.fetch_cache_key(request))
         cache_key = "_".join(cache_key_parts)
-        response = _cache.get(cache_key, self._CACHE_MISS)
+        cached_payload = _cache.get(cache_key, self._CACHE_MISS)
+        if cached_payload is not self._CACHE_MISS and self._cacheable_response_payload(
+            cached_payload
+        ):
+            # Rebuild without replaying the original client's CSRF cookie.
+            body, status_code, content_type = cached_payload
+            return HttpResponse(body, status=status_code, content_type=content_type)
 
-        if response is self._CACHE_MISS:
-            response = self.super_call(request, *args, **kwargs)
-            # Store only the serialisable response data — not the live
-            # HttpResponse object.  The base dispatch is decorated with
-            # @ensure_csrf_cookie, which attaches a per-client CSRF secret as
-            # Set-Cookie.  Caching the whole HttpResponse and returning it
-            # verbatim to subsequent clients in the same identity namespace
-            # would replay one client's CSRF token to others (issue #53b).
-            # By storing (body, status, content_type) and reconstructing a
-            # fresh HttpResponse on cache hits, each client that hits a cached
-            # entry receives a response with no Set-Cookie — the CSRF token is
-            # only set on cache-miss responses (which go through super_call →
-            # ensure_csrf_cookie normally).  The GraphQL endpoint is
-            # csrf_exempt so this does not affect CSRF protection of the
-            # endpoint itself.
-            cached_payload = (
-                response.content,
-                response.status_code,
-                response.get("Content-Type", "application/json"),
-            )
+        response = self.super_call(request, *args, **kwargs)
+        # Store only serialisable response data, never the live HttpResponse:
+        # @ensure_csrf_cookie may attach a per-client secret on cache misses.
+        # Previously stored failures are ignored and, on recovery, overwritten
+        # only at this response key; unrelated cache entries are untouched.
+        cached_payload = (
+            response.content,
+            response.status_code,
+            response.get("Content-Type", "application/json"),
+        )
+        if self._cacheable_response_payload(cached_payload):
             _cache.set(
                 cache_key, cached_payload, timeout=graphql_api_settings.CACHE_TIMEOUT
             )
-        else:
-            # Cache hit: reconstruct a fresh HttpResponse from the stored
-            # (body, status, content_type) tuple so no stale Set-Cookie header
-            # is replayed to this client.
-            body, status_code, content_type = response
-            response = HttpResponse(body, status=status_code, content_type=content_type)
 
         return response
 
@@ -2123,21 +2809,26 @@ class GraphQLView(BaseGraphQLView):
 
         Detects introspection by inspecting the AST rather than matching the raw
         query string. A document is treated as introspection when ALL of its
-        top-level selections are "__schema" or "__type" fields (the two standard
-        introspection entry-points). This correctly handles any formatting, named
-        or anonymous operations, and mixed inline fragments.
+        reachable root fields are "__schema" or "__type" (the two standard
+        introspection entry-points). Root inline and named fragments are expanded
+        iteratively; child selections inside introspection fields are not roots.
 
         Args:
             document: A parsed graphql-core "DocumentNode".
             operation_name: The operation selected by the request, if named.
 
         Returns:
-            True when every top-level selection is a meta-field ("__schema" /
-            "__type"), False otherwise.
+            True when at least one root field exists and every reachable root
+            field is "__schema" or "__type"; False for mixed or unresolved roots.
         """
         if document is None:
             return False
-        from graphql.language.ast import FieldNode
+        from graphql.language.ast import (
+            FieldNode,
+            FragmentDefinitionNode,
+            FragmentSpreadNode,
+            InlineFragmentNode,
+        )
 
         operation = get_operation_ast(document, operation_name)
         selections = getattr(
@@ -2145,11 +2836,54 @@ class GraphQLView(BaseGraphQLView):
         )
         if not selections:
             return False
-        return all(
-            isinstance(selection, FieldNode)
-            and selection.name.value in ("__schema", "__type")
-            for selection in selections
-        )
+        fragments: dict[str, FragmentDefinitionNode] = {}
+        duplicate_names: set[str] = set()
+        for definition in document.definitions:
+            if isinstance(definition, FragmentDefinitionNode):
+                name = definition.name.value
+                if name in fragments:
+                    duplicate_names.add(name)
+                else:
+                    fragments[name] = definition
+
+        active: set[str] = set()
+        expanded: set[str] = set()
+        work: list[tuple[Any, bool]] = [
+            (selection, False) for selection in reversed(selections)
+        ]
+        found_field = False
+        while work:
+            selection, leaving = work.pop()
+            if leaving:
+                active.remove(selection)
+                expanded.add(selection)
+            elif isinstance(selection, FieldNode):
+                if selection.name.value not in ("__schema", "__type"):
+                    return False
+                found_field = True
+            elif isinstance(selection, InlineFragmentNode):
+                nested = getattr(selection.selection_set, "selections", ())
+                if not nested:
+                    return False
+                work.extend((child, False) for child in reversed(nested))
+            elif isinstance(selection, FragmentSpreadNode):
+                name = selection.name.value
+                if name in active or name in duplicate_names:
+                    return False
+                if name in expanded:
+                    continue
+                fragment = fragments.get(name)
+                if fragment is None:
+                    return False
+                nested = getattr(fragment.selection_set, "selections", ())
+                if not nested:
+                    return False
+                active.add(name)
+                work.append((name, True))
+                work.extend((child, False) for child in reversed(nested))
+            else:
+                return False
+        return found_field
 
     def get_response(
         self, request: HttpRequest, data: Any, show_graphiql: bool = False
@@ -2187,18 +2921,24 @@ class GraphQLView(BaseGraphQLView):
             document=parsed_document,
         )
 
+        if getattr(request, MUTATION_ERRORS_FLAG, False) is True:
+            set_rollback()
+
         status_code = 200
         if execution_result:
             response: dict[str, Any] = {}
 
             if execution_result.errors:
+                set_rollback()
                 response["errors"] = [
                     self.format_error(e, request) for e in execution_result.errors
                 ]
 
-            if execution_result.errors and not execution_result.data:
-                # If there are errors and no data, consider it invalid.
-                status_code = 400
+            if execution_result.errors and any(
+                not getattr(error, "path", None) for error in execution_result.errors
+            ):
+                # Request errors have no field path and no execution data.
+                status_code = _request_error_status(execution_result.errors)
             else:
                 response["data"] = execution_result.data
 
@@ -2206,8 +2946,8 @@ class GraphQLView(BaseGraphQLView):
                 response["id"] = id
                 response["status"] = status_code
 
-            # AST-based introspection detection: bypass clean_dict for queries
-            # whose top-level selections are exclusively __schema / __type.
+            # AST-based introspection detection: bypass clean_dict when every
+            # selected root field, including reachable fragments, is introspection.
             # This is whitespace- and formatter-independent, unlike the previous
             # startswith("\n  query IntrospectionQuery") string match.
             if (
@@ -2221,18 +2961,15 @@ class GraphQLView(BaseGraphQLView):
                 _settings.graphql_api_settings.EXPOSE_QUERY_COST
                 and query
                 and status_code == 200
+                and (not execution_result.errors or execution_result.data is not None)
             ):
                 # Reuse the already-parsed document to avoid a second parse()
                 # call. Fall back to string-based parsing only when
                 # parsed_document is None (malformed query — cost is skipped).
                 #
-                # Skipped entirely when the request produced errors and no data
-                # (status 400): the cost of a document that never validated is
-                # computed from the fields it NAMES, so attaching it to a
-                # "Cannot query field" error turns the payload into a
-                # schema-existence oracle — a field pruned out of the caller's
-                # permission-scoped schema costs more than one that never
-                # existed.
+                # Request errors still have status 400 and no data. Keep cost
+                # absent for an execution error with null data too, while
+                # preserving the existing partial-data error behavior.
                 cost = self.get_query_cost(
                     query,
                     variables,
@@ -2391,7 +3128,8 @@ class AuthenticatedGraphQLView(GraphQLView):
           the FULL schema (no signature computed), so their key needs no
           signature segment.
         - Any other caller: returns the SHA-256 permission signature (the same
-          projection the LRU keys on: perms ∩ schema label-set), so two
+          grants the LRU keys on: normally schema labels, but all grants for a
+          native flat GFK fallback), so two
           callers who share a cache identity but hold DIFFERENT relevant perms
           never collide on one cached response body.
 
@@ -2411,7 +3149,8 @@ class AuthenticatedGraphQLView(GraphQLView):
         full = self.schema.graphql_schema
         label_set = frozenset((full.extensions or {}).get("gdx_label_set") or ())
         granted = frozenset(user.get_all_permissions())
-        return permission_signature(granted, label_set)
+        effective = signature_grants(full, granted, label_set)
+        return permission_signature(effective, effective)
 
     def dispatch(self, request: HttpRequest, *args: Any, **kwargs: Any) -> Any:
         """Enforce "permission_classes" and the access-group gate, then dispatch.

@@ -1,6 +1,7 @@
 """Native GraphQL scalar singletons for the output compiler.
 
-7 owned "GraphQLScalarType" singletons plus "GDX_SCALAR_MAP".
+8 globally mapped "GraphQLScalarType" singletons, one direct-input-only
+"IntOrString" singleton, plus "GDX_SCALAR_MAP".
 
 CustomDateFormat bypass:
     All three date/time scalars honour a "CustomDateFormat" wrapper FIRST —
@@ -21,7 +22,11 @@ from __future__ import annotations
 import datetime
 import decimal
 import json
+import re
 import uuid as _uuid_module
+from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
+from math import isfinite
 from typing import Any
 
 from graphql import (
@@ -39,7 +44,9 @@ from graphql.language.ast import (
     FloatValueNode,
     IntValueNode,
     ListValueNode,
+    NameNode,
     NullValueNode,
+    ObjectFieldNode,
     ObjectValueNode,
     StringValueNode,
     VariableNode,
@@ -244,20 +251,43 @@ GdxFilterTime = GraphQLScalarType(
 # ---------------------------------------------------------------------------
 
 
+#: Most zeros plain notation may pad. Far beyond any column precision, it stops
+#: a tiny literal with a huge exponent ("1E+999999999") from expanding into a
+#: gigabyte string when a resolver echoes it.
+_DECIMAL_MAX_PLAIN_PADDING = 1000
+
+
+def _plain_decimal(value: decimal.Decimal) -> str:
+    # "f" keeps the stored scale but never switches to scientific notation
+    # ("0E-8", "5.0E-7"), which str() does for small exponents. Past the
+    # padding bound the exact scientific form is kept instead.
+    _sign, digits, exponent = value.as_tuple()
+    if isinstance(exponent, int):  # "n", "N" or "F" for non-finite values
+        padding = exponent if exponent > 0 else -exponent - len(digits)
+        if padding > _DECIMAL_MAX_PLAIN_PADDING:
+            return str(value)
+    return format(value, "f")
+
+
 def _decimal_serialize(value: Any) -> str:
     if isinstance(value, decimal.Decimal):
-        return str(value)
+        return _plain_decimal(value)
     try:
-        return str(decimal.Decimal(value))
+        return _plain_decimal(decimal.Decimal(value))
     except (decimal.InvalidOperation, ValueError, TypeError) as exc:
         raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
 
 
 def _decimal_parse_value(value: Any) -> decimal.Decimal:
     try:
-        return decimal.Decimal(str(value))
+        parsed = decimal.Decimal(str(value))
     except (decimal.InvalidOperation, ValueError, TypeError) as exc:
         raise GraphQLError(f"Decimal cannot represent value: {value!r}") from exc
+    # NaN and the infinities parse as Decimals but no column can hold them, and
+    # reaching the ORM they surface as Django's unformatted validation message.
+    if not parsed.is_finite():
+        raise GraphQLError(f"Decimal cannot be a nonfinite Decimal: {value!r}")
+    return parsed
 
 
 def _decimal_parse_literal(ast: Any, variable_values: Any = None) -> decimal.Decimal:
@@ -267,15 +297,98 @@ def _decimal_parse_literal(ast: Any, variable_values: Any = None) -> decimal.Dec
 
 
 GdxDecimal = GraphQLScalarType(
-    # graphene exposes a ``Decimal`` scalar (used by the filter/input path for
-    # DecimalField lookups). On OUTPUT, graphene-django collapses DecimalField
-    # to ``Float`` (converter.py convert_field_to_float), so this singleton is
-    # NOT used by the output compiler — only the input/filter path. (See #1508.)
+    # Share one Decimal scalar across automatically derived DecimalField output,
+    # generated mutation input, and filter lookup values. Historical
+    # graphene-django output used Float; the approved native output default
+    # now serializes exact decimal text through this singleton.
     name="Decimal",
     description="Arbitrary-precision decimal scalar. Serializes as string.",
     serialize=_decimal_serialize,
     parse_value=_decimal_parse_value,
     parse_literal=_decimal_parse_literal,
+)
+
+
+# ---------------------------------------------------------------------------
+# GdxBigInt
+# ---------------------------------------------------------------------------
+
+
+_BIGINT_MIN = -(1 << 63)
+_BIGINT_MAX = (1 << 63) - 1
+
+
+def _bigint_serialize(value: Any) -> str:
+    """Serialize a signed 64-bit integer as a canonical decimal string.
+
+    Args:
+        value: Python integer returned by a Django BigInteger field.
+
+    Returns:
+        The exact decimal string used on the GraphQL wire.
+
+    Raises:
+        GraphQLError: If the value is not a signed 64-bit integer.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise GraphQLError(f"BigInt cannot represent value: {value!r}")
+    if not _BIGINT_MIN <= value <= _BIGINT_MAX:
+        raise GraphQLError(f"BigInt cannot represent out-of-range value: {value!r}")
+    return str(value)
+
+
+def _bigint_parse_value(value: Any) -> int:
+    """Parse a bounded canonical ASCII decimal string to a Python integer.
+
+    Args:
+        value: GraphQL variable or string literal value.
+
+    Returns:
+        The exact signed 64-bit Python integer.
+
+    Raises:
+        GraphQLError: If the value is non-string, malformed, or out of range.
+    """
+    if not isinstance(value, str) or not 1 <= len(value) <= 20:
+        raise GraphQLError("BigInt requires a decimal string of at most 20 characters")
+    digits = value[1:] if value.startswith("-") else value
+    if (
+        not digits
+        or any(char < "0" or char > "9" for char in digits)
+        or (len(digits) > 1 and digits.startswith("0"))
+        or value == "-0"
+    ):
+        raise GraphQLError(f"BigInt requires a canonical decimal string: {value!r}")
+    parsed = int(value)
+    if not _BIGINT_MIN <= parsed <= _BIGINT_MAX:
+        raise GraphQLError(f"BigInt is outside the signed 64-bit range: {value!r}")
+    return parsed
+
+
+def _bigint_parse_literal(ast: Any, variable_values: Any = None) -> int:
+    """Parse only GraphQL string literals, never numeric literals.
+
+    Args:
+        ast: GraphQL value node supplied by the query document.
+        variable_values: Unused GraphQL parser compatibility argument.
+
+    Returns:
+        The exact signed 64-bit Python integer.
+
+    Raises:
+        GraphQLError: If the node is not a valid BigInt string literal.
+    """
+    if not isinstance(ast, StringValueNode):
+        raise GraphQLError(f"BigInt requires a string literal: {ast!r}")
+    return _bigint_parse_value(ast.value)
+
+
+GdxBigInt = GraphQLScalarType(
+    name="BigInt",
+    description="Signed 64-bit integer serialized and parsed as a decimal string.",
+    serialize=_bigint_serialize,
+    parse_value=_bigint_parse_value,
+    parse_literal=_bigint_parse_literal,
 )
 
 
@@ -369,12 +482,61 @@ GdxJSONString = GraphQLScalarType(
 # ---------------------------------------------------------------------------
 
 
-def _json_raw_serialize(value: Any) -> Any:
+def _reject_nonfinite_json_input(value: Any) -> Any:
+    """Reject non-finite floats in raw JSON input without copying it.
+
+    Every mapping, every non-text sequence (tuple, namedtuple, deque, ...) and
+    every set is traversed, because the JSON encoder emits them all. Other native
+    Python values retain the scalar's existing input identity behavior.
+
+    Args:
+        value: Raw input value to inspect.
+
+    Returns:
+        The original value when no non-finite float is found.
+
+    Raises:
+        GraphQLError: If the input is or contains a non-finite float.
+    """
+    pending = [value]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if isinstance(current, float) and not isfinite(current):
+            raise GraphQLError("JSON cannot represent non-finite numbers")
+        is_mapping = isinstance(current, Mapping)
+        if is_mapping or (
+            isinstance(current, (Sequence, AbstractSet))
+            and not isinstance(current, (str, bytes, bytearray))
+        ):
+            identity = id(current)
+            if identity in visited:
+                continue
+            visited.add(identity)
+            pending.extend(current.values() if is_mapping else current)
     return value
+
+
+def _json_raw_serialize(value: Any) -> Any:
+    """Return an output value unchanged unless it holds a non-finite float.
+
+    NaN and the infinities have no JSON representation, so emitting them would
+    make the whole response invalid for strict parsers.
+
+    Args:
+        value: The resolved value to serialize.
+
+    Returns:
+        The original value.
+
+    Raises:
+        GraphQLError: If the value is or contains a non-finite float.
+    """
+    return _reject_nonfinite_json_input(value)
 
 
 def _json_raw_parse_value(value: Any) -> Any:
-    return value
+    return _reject_nonfinite_json_input(value)
 
 
 def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
@@ -385,18 +547,11 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
     mirroring graphene's "GenericScalar.parse_literal" semantics. Nested
     "VariableNode" references resolve against "variable_values".
 
-    When a nested "VariableNode" has no available value ("variable_values" is
-    None, as it is at validation time, OR the name is absent), the graphql
-    "Undefined" sentinel is returned instead of raising — matching graphql-core's
-    own "value_from_ast" and graphene's "GenericScalar". This is REQUIRED: for a
-    "$var" nested inside an inline object/list literal, graphql-core's
-    "ValuesOfCorrectTypeRule" invokes "parse_literal" at VALIDATION time with NO
-    variables; raising there would reject a valid document. At execution time the
-    real variables are supplied and substitution happens.
-
-    Inside an object literal such a field is OMITTED from the resulting dict
-    (again matching "value_from_ast"), so the "Undefined" sentinel — which is
-    not JSON-serializable — never reaches a resolver.
+    An unavailable nested variable returns graphql "Undefined" rather than
+    raising, so validation without variable values does not reject a valid
+    document. Inside a list, that sentinel becomes None to preserve the list
+    slot as JSON null. Inside an object, its field is omitted instead. A
+    top-level unavailable variable still returns "Undefined" to its caller.
 
     Args:
         ast: The GraphQL literal AST node to convert.
@@ -408,20 +563,24 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
         is itself a variable whose value is unavailable.
 
     Raises:
-        GraphQLError: If "ast" is not a JSON-representable literal node.
+        GraphQLError: If the literal is unsupported or contains a non-finite float.
     """
     if isinstance(ast, StringValueNode):
         return ast.value
     if isinstance(ast, IntValueNode):
         return int(ast.value)
     if isinstance(ast, FloatValueNode):
-        return float(ast.value)
+        return _reject_nonfinite_json_input(float(ast.value))
     if isinstance(ast, BooleanValueNode):
         return ast.value
     if isinstance(ast, NullValueNode):
         return None
     if isinstance(ast, ListValueNode):
-        return [_json_raw_parse_literal(item, variable_values) for item in ast.values]
+        values = []
+        for item in ast.values:
+            value = _json_raw_parse_literal(item, variable_values)
+            values.append(None if value is Undefined else value)
+        return values
     if isinstance(ast, ObjectValueNode):
         # An unavailable variable OMITS its field (graphql-core's own
         # ``value_from_ast`` does the same), so the ``Undefined`` sentinel never
@@ -435,8 +594,70 @@ def _json_raw_parse_literal(ast: Any, variable_values: Any = None) -> Any:
         name = ast.name.value
         if variable_values is None or name not in variable_values:
             return Undefined
-        return variable_values[name]
+        return _reject_nonfinite_json_input(variable_values[name])
     raise GraphQLError(f"JSON cannot represent literal: {ast!r}")
+
+
+_GRAPHQL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def _json_raw_value_to_literal(value: Any) -> Any:
+    """Represent a JSON value as a GraphQL literal when possible.
+
+    Args:
+        value: Value to represent without changing the original object.
+
+    Returns:
+        A constant value node, or None for an ineligible value.
+    """
+    active: set[int] = set()
+
+    def convert(item: Any) -> Any:
+        if item is None:
+            return NullValueNode()
+        if type(item) is bool:
+            return BooleanValueNode(value=item)
+        if type(item) is str:
+            try:
+                item.encode("utf-8")
+            except UnicodeEncodeError:
+                return None
+            return StringValueNode(value=item)
+        if type(item) is int:
+            try:
+                return IntValueNode(value=str(item))
+            except ValueError:
+                return None
+        if type(item) is float:
+            return FloatValueNode(value=str(item)) if isfinite(item) else None
+        if type(item) not in (list, dict):
+            return None
+        identity = id(item)
+        if identity in active:
+            return None
+        active.add(identity)
+        try:
+            if type(item) is list:
+                values = [convert(child) for child in item]
+                if any(child is None for child in values):
+                    return None
+                return ListValueNode(values=tuple(values))
+            fields = []
+            for key, child in item.items():
+                if type(key) is not str or _GRAPHQL_NAME.fullmatch(key) is None:
+                    return None
+                node = convert(child)
+                if node is None:
+                    return None
+                fields.append(ObjectFieldNode(name=NameNode(value=key), value=node))
+            return ObjectValueNode(fields=tuple(fields))
+        finally:
+            active.remove(identity)
+
+    try:
+        return convert(value)
+    except (RecursionError, OverflowError):
+        return None
 
 
 GdxJSON = GraphQLScalarType(
@@ -453,11 +674,58 @@ GdxJSON = GraphQLScalarType(
     serialize=_json_raw_serialize,
     parse_value=_json_raw_parse_value,
     parse_literal=_json_raw_parse_literal,
+    value_to_literal=_json_raw_value_to_literal,
+)
+
+
+def _int_or_string_parse_value(value: Any) -> int | str:
+    """Accept an unconverted native integer or string input.
+
+    Args:
+        value: Supplied GraphQL variable value.
+
+    Returns:
+        The original integer or string.
+
+    Raises:
+        GraphQLError: If the value is not an Int32 integer or string.
+    """
+    if type(value) is str or (type(value) is int and -(2**31) <= value < 2**31):
+        return value
+    raise GraphQLError(f"IntOrString cannot represent value: {value!r}")
+
+
+def _int_or_string_parse_literal(ast: Any, variable_values: Any = None) -> int | str:
+    """Parse only native GraphQL integer and string literal nodes.
+
+    Args:
+        ast: Supplied GraphQL literal node.
+        variable_values: Unused variable values supplied by graphql-core.
+
+    Returns:
+        The parsed integer or string without cross-branch conversion.
+
+    Raises:
+        GraphQLError: If the literal has an unsupported kind or integer range.
+    """
+    if isinstance(ast, StringValueNode):
+        return ast.value
+    if isinstance(ast, IntValueNode):
+        return _int_or_string_parse_value(int(ast.value))
+    raise GraphQLError(f"IntOrString cannot represent literal: {ast!r}")
+
+
+IntOrString = GraphQLScalarType(
+    name="IntOrString",
+    description="A string or signed 32-bit integer, without implicit conversion.",
+    serialize=_int_or_string_parse_value,
+    parse_value=_int_or_string_parse_value,
+    parse_literal=_int_or_string_parse_literal,
 )
 
 
 # ---------------------------------------------------------------------------
-# GDX_SCALAR_MAP — 7 custom singletons (8 keys: JSON has a legacy alias) + 5
+# GDX_SCALAR_MAP — 8 custom singletons (9 keys: JSON has a legacy alias) + 5
 # graphql-core builtins
 # ---------------------------------------------------------------------------
 
@@ -472,6 +740,7 @@ GDX_SCALAR_MAP: dict[str, GraphQLScalarType] = {
     "CustomDateTime": GdxDateTime,
     "CustomTime": GdxTime,
     "Decimal": GdxDecimal,
+    "BigInt": GdxBigInt,
     "UUID": GdxUUID,
     "JSONString": GdxJSONString,
     # The RAW JSON scalar is reachable under BOTH keys: the canonical ``JSON``

@@ -60,7 +60,7 @@ There are **11** shortcuts, each binding one scalar and each **position-agnostic
 | `DateField` | `CustomDate` |
 | `DateTimeField` | `CustomDateTime` |
 | `TimeField` | `CustomTime` |
-| `DecimalField` | `Decimal` |
+| `DecimalField` | `Decimal` (string, plain notation, stored scale kept: `0.00000050`, never `5.0E-7`; a value needing more than 1000 padded zeros keeps scientific form) |
 | `UUIDField` | `UUID` |
 | `JSONField` | `JSON` (or `JSONString` with `as_str=True`) |
 
@@ -131,8 +131,8 @@ class UserType(DjangoObjectType):
 | `model` | `Model` | Required | Django model class |
 | `registry` | `Registry` | Global registry | Type registry instance |
 | `skip_registry` | `bool` | `False` | Skip automatic type registration |
-| `only_fields` | `tuple/list` | `()` | Include only specified fields. **A security boundary** — see below |
-| `exclude_fields` | `tuple/list` | `()` | Exclude specified fields. **A security boundary** — see below |
+| `only_fields` | `tuple/list` | `()` | Include only specified automatically derived model fields. Declared output names remain valid selectors but declarations compile independently. Unknown names and bare strings fail at class definition. **A security boundary for model projection** — see below |
+| `exclude_fields` | `tuple/list` | `()` | Exclude specified automatically derived model fields. Declared output names remain valid selectors but this option does not remove declarations. Unknown names and bare strings fail at class definition. **A security boundary for model projection** — see below |
 | `include_fields` | `tuple/list` | `()` | Additional fields to include |
 | `filter_fields` | `dict` | `None` | Field filtering configuration. An entry naming a projected-away column **fails the schema build** |
 | `interfaces` | `tuple` | `()` | GraphQL interfaces to implement |
@@ -141,6 +141,12 @@ class UserType(DjangoObjectType):
 | `max_depth` | `int` | `None` | Max nested-object depth below this type (see [Query depth limiting](../usage/query-limits.md#query-depth-limiting)) |
 | `complexity` | `int` | `None` | Cost weight of a field returning this type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 
+An automatically derived model field with `choices` uses a generated GraphQL
+enum. If two choices generate the same **member** name, compiling the affected
+type raises `ImproperlyConfigured` instead of assigning a positional suffix.
+Adjust the choices so their generated names differ; see
+[Generated enum member collisions](../usage/types.md#generated-enum-member-collisions).
+
 !!! danger "`only_fields` / `exclude_fields` are a security boundary"
     A column this type projects away must not be **readable, orderable or
     filterable** through it. `ordering` rejects it at query time; a
@@ -148,6 +154,12 @@ class UserType(DjangoObjectType):
     what "hidden" means when a declaration or a relation is involved, its one
     exception and the two boundaries it cannot close are stated once, in
     [The projection is a security boundary](../usage/types.md#projection-security-boundary).
+
+    Write complete field names in a collection: `exclude_fields = ("password",)`,
+    not `exclude_fields = "password"`. A typo such as `"passwrod"` now raises
+    `ImproperlyConfigured` before the type registers. Model fields, reverse
+    relation names, and explicitly declared output fields are valid names;
+    a declared output field is still compiled independently of model projection.
 
 !!! warning "Unknown Meta options raise ImproperlyConfigured"
     Any key not in the table above is rejected at server startup with
@@ -175,8 +187,14 @@ Check if the root object is of this type.
 
 #### `get_queryset(queryset, info)` (classmethod)
 
-Override to customize the queryset used for this type. Applied wherever the type
-is mounted — at the root and through a parent relation alike.
+Override to customize the queryset used for this type. Queryset-backed root and
+mounted list/node paths use this hook. Generated FK/M2M mutation ID links also
+check the registered destination type's hook in the request schema before
+persisting the parent. A hidden link ID returns the same structured
+`Invalid pk` error as a nonexistent ID; see
+[mutation link migration](../usage/mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+Automatically expanded relation attributes and ORM relation-filter joins do
+not invoke this hook; see [the row-scope boundary](../usage/types.md#relation-scope-hatch).
 
 **Parameters:**
 - `queryset` (`QuerySet`): Base queryset
@@ -198,6 +216,8 @@ scope excludes is reported as missing — the ID comes straight from the caller.
 - `id` (`Any`): Object identifier
 
 **Returns:** Model instance or `None`
+
+**Raises:** `GraphQLError` with `extensions.code=INVALID_ID` when the model primary key cannot convert the ID.
 
 ### Example Usage
 
@@ -303,6 +323,11 @@ set it by hand only on an input you mount yourself inside another model's input.
 The child's Pydantic validation model still requires the key, so a standalone
 create that omits it fails cleanly.
 
+An existing unowned nullable reverse-FK child named by ID needs a registered
+update-serving child write host before its parent may adopt it. New children
+and already-owned child updates retain their prior behavior; see the
+[orphan-adoption contract](../usage/mutations.md#adopting-an-existing-reverse-fk-or-reverse-onetoone-orphan-by-id).
+
 ### Methods
 
 #### `get_type()` (classmethod)
@@ -365,18 +390,154 @@ Get the type when the unmounted type is mounted.
     `('profile', 'addresses')` is ignored and the relations keep their plain
     `ID` / `[ID!]` surface.
 
+An all-string `Literal` field on a hand-authored `InputType` compiles to an
+enum named from the compiled input type and the public field alias, such as
+`ArticleInputStatusEnum`. Its members use the existing choice-name
+normalization (`"draft"` becomes `DRAFT`); two values with the same generated
+member name fail schema construction. Inline documents and JSON variables
+send member names, while resolvers receive the original string values.
+Nullable/list/nested wrappers retain their usual input shape. Numeric or
+mixed `Literal` annotations still warn and use the `String` fallback.
+
+Only direct `typing.Union[int, str]` / `int | str` (either member order)
+compile to one shared `IntOrString` input scalar. Required and outer nullable
+forms publish `IntOrString!` and `IntOrString`, respectively. Integers retain
+their Python type and must fit signed 32-bit range; strings remain strings.
+There is no float, boolean, string-to-number, or number-to-string conversion.
+Invalid supplied values reject before the mutation resolver. Omitted fixed and
+factory defaults retain their prior behavior, including malformed legacy
+values. Other Union shapes, including list-wrapped unions, retain their warning
+and `String` fallback. Existing global scalar mappings and output types do not
+change.
+
+The exact `dict[str, int]` and `typing.Dict[str, int]` annotations compile
+to the existing raw `JSON` input scalar, preserving the same scalar identity as a bare `dict`. Unlike
+bare `dict`, it accepts only objects with string keys and plain integer
+values, without Pydantic's numeric-string or boolean coercion. Values follow Python `int` and JSON semantics
+(there is no 32-bit GraphQL `Int` bound). Its optional,
+list, nested and default wrappers keep their existing behavior.
+
+Exact `dict[str, str]` and `typing.Dict[str, str]` fields use that same
+`JSON` scalar and require string keys and string values, without implicit
+conversion. They retain the existing optional, list, nested, default, and
+permission-pruned input behavior. Other parameterized dictionaries remain
+unsupported and use the warning/`String` fallback; a bare `dict` remains
+permissive raw JSON.
+
+Exact `dict[str, bool]` and `typing.Dict[str, bool]` direct mutation inputs now
+use the same `JSON` scalar instead of `String`. Send a JSON object such as
+`"mapping": {"enabled": true}` or inline `mapping: {enabled: true}`;
+encoded JSON strings no longer match the wire type. Every key must be a
+string and every value must be an exact Boolean (`true` or `false`): `1`,
+`0`, `"true"`, null and nested values fail before the resolver or omitted
+sibling factories run. Empty objects are valid. Outer Optional, alias and
+fixed/factory-default behavior, including malformed omitted legacy defaults,
+is unchanged. This is field-local validation, not a change to bare `dict`,
+other maps, list-wrapped maps or the global JSON scalar.
+
+Nested `list`/`typing.List` wrappers around already-supported input leaves
+retain their annotated nullability at every level. For example,
+`list[list[int]]` compiles to `[[Int!]!]!`; GraphQL accepts nested values and
+wraps singleton values at each list level without casting leaf values.
+Strict typed-map validation still runs at the final JSON leaf and reports
+safe indexed field paths. Nested wrappers around unsupported leaves retain
+their existing warning/`String` fallback instead of gaining a new input type.
+
+The exact `set[int]` and `typing.Set[int]` input annotations expose `[Int!]!`.
+GraphQL accepts an integer list or a singleton integer and validates each
+value with `GraphQLInt` before resolution. The resolver receives a Python set:
+duplicate values are removed, and set iteration order is unspecified.
+Existing outer optionality and defaults are retained. Other set leaves and
+sets nested inside lists retain their legacy fallback.
+
+Exact `set[str]` and `typing.Set[str]` mutation inputs expose
+`[String!]!`. GraphQL accepts a string list or a whole-string singleton and
+validates each item with native `GraphQLString`. The resolver receives a
+deduplicated Python set: `["red", "red", "blue"]` becomes
+`{"red", "blue"}`, while `"ab"` becomes `{"ab"}`, not two characters.
+No iteration order is guaranteed. Existing outer optionality and defaults
+remain; other unapproved set leaves and nested sets still retain fallback behavior.
+
+Exact `set[bool]` and `typing.Set[bool]` mutation inputs expose
+`[Boolean!]!`. GraphQL accepts a boolean list or a singleton such as
+`false`, and validates each item with native `GraphQLBoolean`: 0, 1,
+strings and null list items are rejected before resolution. The resolver
+receives a deduplicated Python set, so `false` becomes `{False}`; no
+iteration order is guaranteed. Existing outer optionality, defaults,
+aliases and permission pruning remain. Other unapproved set leaves and nested sets
+retain their fallback behavior.
+
+Exact `set[float]` and `typing.Set[float]` mutation inputs expose
+`[Float!]!`. GraphQL accepts finite numeric lists or singleton numbers,
+coercing integers to native float values, while rejecting booleans, strings
+and null list items. Variables reject nonfinite values; a field-local check
+rejects overflowing numeric literals such as `1e999` before resolution.
+The resolver receives
+a deduplicated Python set: `[1.5, 1.5, 2.0]` becomes `{1.5, 2.0}` and
+`2` becomes `{2.0}`. No iteration order is guaranteed; outer optionality,
+defaults, aliases and permission pruning retain their existing behavior.
+Unapproved set leaves and nested sets retain fallback behavior.
+
+Exact `set[uuid.UUID]` and `typing.Set[uuid.UUID]` mutation inputs expose
+`[UUID!]!`. The existing native UUID scalar accepts canonical, uppercase and
+32-hex UUID strings in a list or as a whole-string singleton, validates each
+item before resolution, and supplies UUID objects. The resolver receives a
+deduplicated Python set; order is not guaranteed. Invalid UUIDs and null
+items reject before resolution. Existing outer optionality, defaults, aliases
+and permission pruning remain. Other unapproved set leaves and nested sets
+retain fallback behavior.
+
+Exact `set[decimal.Decimal]` and `typing.Set[decimal.Decimal]` mutation inputs
+expose `[Decimal!]!` using the existing native Decimal scalar. Finite native
+values, including a huge finite exponent, keep their exact precision through
+list or singleton coercion; `["10.10", "10.10"]` reaches the resolver as the
+Python set `{Decimal("10.10")}` without an ordering promise. Supplied NaN,
+sNaN and either Infinity are rejected by a field-local check before resolver
+execution or omitted sibling factories. Outer optionality, fixed/factory
+defaults, aliases and pruned input fields retain their established behavior;
+malformed legacy omitted defaults are not newly validated. The global Decimal
+scalar and unapproved set leaves remain unchanged.
+
+A fixed JSON default with GraphQL Name object keys, such as
+`{"views": 0}`, now renders through `print_schema` and default-value
+introspection as `mapping: JSON = { views: 0 }`. It still reaches the resolver
+for an omitted input as the original raw value. Nested representable JSON
+values work the same way. A fixed object with a key such as `"x-y"` keeps its
+existing runtime default but cannot be printed as a valid GraphQL object
+literal. A valid fixed list of JSON values, including a correctly shaped
+nested list, also renders in SDL and introspection. Its omitted input receives
+an equal list value; raw JSON leaves retain their existing identity. Malformed
+list defaults retain their legacy runtime and metadata behavior.
+Where metadata cannot render,
+use `Field(default_factory=lambda: {"views": 0})`: it supplies a value for each
+omitted input without advertising a fixed SDL default. A nullable `None`
+default is unaffected. Cyclic and non-JSON-native values, strings containing
+unpaired Unicode surrogates, and integers beyond Python's configured
+integer-to-string limit gain no new metadata support; runtime defaults remain
+unchanged.
+
 !!! note "Pydantic defaults on a hand-authored `InputType`"
 
-    A field declared on an `InputType` with a plain default (`limit: int = 10`)
-    or a `default_factory` (`Field(default_factory=list)`) surfaces that value as
-    the SDL default (`limit: Int = 10`); the factory runs **once**, at compile
-    time.
+    A plain default (`limit: int = 10`) remains a fixed SDL default
+    (`limit: Int = 10`). A zero-argument `default_factory` is different: its
+    field has **no SDL default**, and the factory runs for each new GraphQL-
+    coerced input object that omits the field. For example, `uid: str =
+    Field(default_factory=new_uid)` renders as `uid: String`, not a fixed
+    `uid: String = "uid-1"`. Two separate omitted inputs receive fresh values;
+    two aliases referencing the **same variable input object** share that one
+    coerced value. Explicit values and `null` do not invoke the factory.
+
+    Resolver input remains a plain `dict` with snake-case field names. A
+    factory returning a list now supplies a fresh list per new input object,
+    rather than a mutable list shared across requests. A factory error becomes
+    a GraphQL input error without exposing the original exception text.
 
     The one exception is Pydantic 2.10+'s **validated-data** factory
     (`Field(default_factory=lambda data: data["a"] + 1)`): it needs the
-    partially validated instance, so it has no compile-time value and the field
-    renders with **no** `= …` marker. Pydantic still applies it per instance
-    when the input is validated.
+    partially validated instance, so GraphQL cannot evaluate it; the field
+    renders with **no** `= …` marker and Pydantic still applies it when the
+    input is explicitly validated. Model-derived mutation inputs continue to
+    omit synthetic defaults so omitted updates remain distinct from `null`.
 
 ---
 
@@ -592,6 +753,11 @@ class ArticleType(DjangoModelType):
 | `complexity` | `int` | `None` | Cost weight of the generated output type (see [Query cost analysis](../usage/query-limits.md#query-cost-analysis)) |
 | `model_operations` | `tuple` | `("create", "update", "delete", "list", "retrieve")` | The operations this type serves. Anything left out has its `*Field()` builder raise, and stops counting when a parent nests this model |
 
+An automatic delete in id-only mode still publishes only the primary key.
+Its private channel-layer envelope may carry projected scalar values to decide
+plain equality and server scope after the row is gone; these values are not
+GraphQL fields or transport output. See [Filtering notifications](../usage/subscriptions.md#filtering-notifications).
+
 !!! tip "`model_operations` — declaring a read-only type"
     The default is **every** operation, so a type that says nothing behaves
     exactly as it always has. Narrowing it does two things:
@@ -789,6 +955,25 @@ user_type = registry.get_type_for_model(User)
 # Register a type manually
 registry.register(CustomUserType)
 ```
+
+Registering the same class again is idempotent, and re-executing the same
+declaration (reload, re-import) replaces the stale class. A user type also
+replaces a library-generated placeholder. Registering a distinct public
+`DjangoObjectType` for the same exact model in this registry (a subclass with
+its own `Meta.model` included) raises `ImproperlyConfigured` before it can
+replace the nested relation target; set `skip_registry = True` on the extra type
+or use separate registries and schema pairs for intentionally different public views;
+see [one public output type per model and registry](../usage/types.md#one-public-output-type-per-model-and-registry).
+
+Types generated dynamically (for example inside a function or a loop) follow
+one lifecycle rule. Re-defining a class with the same module and qualified name
+replaces its previous compile entries, so repeating one declaration does not
+grow the process-wide output list (100 redefinitions leave one entry). Each
+**distinct** generated name keeps its entry for the life of the registry (100
+distinct names leave 100 entries), because the library cannot know that a
+differently named class is abandoned. Generate types once at import time, reuse
+one name per logical type, or build the types of a short-lived schema against a
+dedicated `Registry`.
 
 ### Custom Registry
 
@@ -1025,6 +1210,12 @@ class CommentType(DjangoObjectType):
 
 See [Types — DjangoUnionType](../usage/types.md#djangouniontype-typed-genericforeignkey-targets) for the full usage guide including optimizer behavior.
 
+When a GFK uses the flat `GenericForeignKeyType` fallback, a
+[permission-pruned schema](../usage/permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution)
+keeps the same SDL but returns the whole target as `null` without the actual
+target model's read permission or when its registered row hook excludes it.
+Unpruned schemas and explicit typed unions retain their previous behavior.
+
 ---
 
 ## DjangoInterfaceType
@@ -1040,6 +1231,12 @@ class DjangoInterfaceType(ObjectType)  # ObjectType = django_graphex.core
 
 No additional Meta options beyond the GraphQL interface basics.
 Implementors declare membership via the `Meta.interfaces` kwarg.
+The `name=` parameter on a declared interface field is its exact GraphQL wire
+name. Implementing types must expose the same name and compatible type;
+the Python attribute still determines resolver lookup. With no explicit name,
+the attribute is camel-cased. See the [migration note](../usage/types.md#djangointerfacetype-shared-fields-across-types): an old accidental field such
+as `internalName` becomes its requested wire name, for example `name`, without
+an automatic legacy alias.
 
 ### Methods
 

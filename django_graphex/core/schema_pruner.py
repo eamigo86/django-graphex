@@ -61,6 +61,7 @@ from graphql import (
     GraphQLObjectType,
     GraphQLSchema,
     GraphQLUnionType,
+    Undefined,
     get_named_type,
     is_enum_type,
     is_input_object_type,
@@ -69,6 +70,7 @@ from graphql import (
     is_union_type,
 )
 
+from django_graphex.core._flat_gfk_scope import EFFECTIVE_GRANTS_EXT
 from django_graphex.core.perm_labels import implicit_perms_for_type
 
 __all__ = ("prune_schema",)
@@ -88,8 +90,8 @@ def prune_schema(full: GraphQLSchema, granted: frozenset[str]) -> GraphQLSchema:
     Args:
         full: The labeled FULL "GraphQLSchema" (P0 stamped
             "extensions[gdx_required_perms]" on generated fields).
-        granted: The permission codenames the caller holds. Extra perms outside
-            the schema label-set are harmless.
+        granted: The caller's effective grants. A prior pruned clone restricts
+            this set by intersection so a later prune cannot widen access.
 
     Returns:
         A distinct "GraphQLSchema" whose reachable closure omits every field the
@@ -103,7 +105,8 @@ class _Pruner:
 
     def __init__(self, full: GraphQLSchema, granted: frozenset[str]) -> None:
         self._full = full
-        self._granted = granted
+        previous = (full.extensions or {}).get(EFFECTIVE_GRANTS_EXT)
+        self._granted = granted if previous is None else granted & previous
         # Named object / interface type -> its field map AFTER per-field perm
         # filtering (before the survivor fixpoint drops dangling-type fields).
         self._filtered_fields: dict[str, dict[str, GraphQLField]] = {}
@@ -149,7 +152,10 @@ class _Pruner:
             subscription=subscription,
             types=implementer_types or None,
             directives=self._full.directives,
-            extensions=dict(self._full.extensions or {}),
+            extensions={
+                **(self._full.extensions or {}),
+                EFFECTIVE_GRANTS_EXT: self._granted,
+            },
         )
 
     def _forwarded_implementer_clones(self) -> list[GraphQLObjectType]:
@@ -397,10 +403,12 @@ class _Pruner:
     def _clone_input(self, gtype: Any) -> Any:
         """Clone an input object type, dropping the fields the caller may not use.
 
-        Only NESTED-object input fields carry an explicit
-        gdx_required_perms stamp, so every input field that exists today is
-        unaffected. Dropping one is safe: a nested input field is never NonNull
-        at the parent level.
+        Generated nested-object input fields carry explicit
+        gdx_required_perms stamps. Dropping one is safe: a nested input field
+        is never NonNull at the parent level. A hand-authored input field may
+        also be stamped; its factory, typed-map and set callbacks must be
+        restricted to surviving out-names so pruning cannot reinsert or inspect
+        a hidden field.
 
         A type that loses EVERY field is not cloned at all — the fixpoint has
         already dropped it from the survivors, and _field_survives has
@@ -413,11 +421,80 @@ class _Pruner:
         generated universe references an emptied input object.
         """
         kwargs = gtype.to_kwargs()
-        kwargs["fields"] = lambda g=gtype: {
-            fname: self._clone_input_field(ifield)
-            for fname, ifield in self._filtered_input_fields[g.name].items()
-            if self._filter_key_survives(g, ifield)
-        }
+        # A hand-authored input callback must not inspect or reinsert a field
+        # removed from this permission-scoped clone. Keep only the factories
+        # and validators whose resolver-facing out-names survive projection.
+        from django_graphex.core.input_compiler import _FactoryOutType
+
+        if isinstance(gtype.out_type, _FactoryOutType):
+            surviving = {
+                ifield.out_name or wire_name
+                for wire_name, ifield in self._filtered_input_fields[gtype.name].items()
+                if self._filter_key_survives(gtype, ifield)
+            }
+            kwargs["out_type"] = _FactoryOutType(
+                {
+                    name: factory
+                    for name, factory in gtype.out_type.factories.items()
+                    if name in surviving
+                },
+                {
+                    name: typed_map
+                    for name, typed_map in gtype.out_type.typed_maps.items()
+                    if name in surviving
+                },
+                gtype.out_type.set_int_fields & surviving,
+                gtype.out_type.set_str_fields & surviving,
+                gtype.out_type.set_bool_fields & surviving,
+                gtype.out_type.set_float_fields & surviving,
+                {
+                    name: default
+                    for name, default in gtype.out_type.set_float_defaults.items()
+                    if name in surviving
+                },
+                gtype.out_type.set_uuid_fields & surviving,
+                gtype.out_type.set_decimal_fields & surviving,
+                {
+                    name: default
+                    for name, default in gtype.out_type.set_decimal_defaults.items()
+                    if name in surviving
+                },
+                {
+                    name: spec
+                    for name, spec in gtype.out_type.boolean_maps.items()
+                    if name in surviving
+                },
+                {
+                    name: spec
+                    for name, spec in gtype.out_type.mutable_defaults.items()
+                    if name in surviving
+                },
+            )
+
+        def clone_fields(g: Any = gtype) -> dict[str, Any]:
+            """Build surviving fields and bind mutable defaults to their clones.
+
+            Args:
+                g: Original input type whose fields are projected.
+
+            Returns:
+                Permission-scoped input fields.
+            """
+            fields = {
+                fname: self._clone_input_field(ifield)
+                for fname, ifield in self._filtered_input_fields[g.name].items()
+                if self._filter_key_survives(g, ifield)
+            }
+            out_type = kwargs["out_type"]
+            if isinstance(out_type, _FactoryOutType):
+                for wire_name, cloned_field in fields.items():
+                    out_name = cloned_field.out_name or wire_name
+                    if out_name in out_type.mutable_defaults:
+                        default, _original_field = out_type.mutable_defaults[out_name]
+                        out_type.mutable_defaults[out_name] = (default, cloned_field)
+            return fields
+
+        kwargs["fields"] = clone_fields
         return type(gtype)(**kwargs)
 
     def _filter_key_survives(self, gtype: Any, ifield: Any) -> bool:
@@ -521,10 +598,23 @@ class _Pruner:
         return perms is None or frozenset(perms) <= self._granted
 
     def _clone_input_field(self, ifield: Any) -> Any:
-        """Clone a single input field, remapping its type."""
+        """Clone a surviving input field without sharing remapped-type memos.
+
+        Args:
+            ifield: Original surviving input field.
+
+        Returns:
+            Type-remapped field with any safe coerced-default memo.
+        """
         kwargs = ifield.to_kwargs()
         kwargs["type_"] = self._remap_type(ifield.type)
-        return type(ifield)(**kwargs)
+        cloned = type(ifield)(**kwargs)
+        memo = getattr(ifield, "_memoized_coerced_value", Undefined)
+        if memo is not Undefined and get_named_type(ifield.type) is get_named_type(
+            cloned.type
+        ):
+            setattr(cloned, "_memoized_coerced_value", memo)
+        return cloned
 
     def _rebuild_fields(self, type_name: str) -> dict[str, GraphQLField]:
         """Return the surviving, type-remapped field map for a cloned type."""

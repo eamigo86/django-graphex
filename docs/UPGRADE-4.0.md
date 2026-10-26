@@ -55,3 +55,5 @@ no-clobber eight-file install. Neither mode provides a same-user filesystem
 sandbox, and neither overwrites historical results. See the
 [benchmark guide](https://github.com/eamigo86/django-graphex/blob/integration/benchmarks/README.md)
 for the required trusted results parent and profile-specific invocation.
+
+After upgrading to 4.0, continue with the [4.1 upgrade guide](UPGRADE-4.1.md).

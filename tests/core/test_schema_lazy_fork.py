@@ -39,6 +39,10 @@ django.setup()
 
 import pytest  # noqa: E402
 
+from tests._schema_isolation import isolated_default_registry_pair  # noqa: E402
+
+pytestmark = pytest.mark.usefixtures(isolated_default_registry_pair.__name__)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_global_registries():

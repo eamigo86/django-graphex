@@ -51,6 +51,14 @@ The data path:
    and broadcasts the payload to the group. Every subscriber receives the
    notification, projected to the fields it requested.
 
+Automatic save and delete notifications are queued on the database connection
+that performed the write. A transaction on that alias delays delivery until
+its commit and discards the notification on rollback. A transaction open only
+on `default` does not delay a write committed in autocommit mode on another
+alias. The same rule applies to the missing-channel-layer warning. This is a
+per-connection notification guarantee, not a cross-database transaction or
+all-or-nothing delivery guarantee.
+
 Broadcast groups are named after the model, the subscription's `Meta.stream` and
 the action, so two subscriptions on the **same model** under different streams
 never receive each other's events — including when they disagree on
@@ -61,13 +69,35 @@ A cross-process channel layer (Redis) is required when the producer (the process
 running model writes) and the subscriber processes are separate; the in-memory
 layer is fine for development.
 
+### Delivery failures
+
+Automatic model notifications are best-effort per group: an event goes to up to
+four channel-layer groups and a failure to deliver to one group never prevents
+the others, in both ASGI and synchronous (WSGI, Celery) processes. Each failure
+logs one `Automatic notification dropped` error through the
+`django_graphex.subscriptions.bindings` logger with the model, stream, action,
+stage and the exception class chain (for example
+`redis.exceptions.ConnectionError`). Exception messages, group names and event
+data are not logged. A logging failure never fails the model write.
+
+### Close diagnostics
+
+Closing a subscription is best-effort. If closing its delivery source raises a
+`RuntimeError`, the server emits one warning through the
+`django_graphex.subscriptions.delivery` logger, with the original exception and
+traceback (`exc_info`). The error remains suppressed: this diagnostic does not
+add a client frame or guarantee that backend group cleanup succeeded. An
+already-closing async generator may also cause a benign warning. Keep server
+logs access-controlled because exception details are not sent to clients.
+Normal cooperative cancellation does not trigger this warning.
+
 !!! note "Custom transport migrations to GraphQL-core 3.3"
     The built-in SSE and WebSocket transports prepare an `Executor` before
     creating a 3.3 source stream. A custom transport must handle errors returned
     by `Executor.build()` and accept either an immediate or awaitable result from
     `create_source_event_stream()`. Keep per-event delivery and teardown in the
     serialize-once driver rather than replacing it with the stock `subscribe()`
-    pipeline. django-graphex 4.0.0 requires `graphql-core>=3.3.0,<3.4`;
+    pipeline. django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`;
     the historical 3.1.1 release requires `graphql-core>=3.2.13,<3.3`.
 
 !!! tip "Try it interactively"
@@ -196,6 +226,15 @@ Both transports accept an optional `schema_provider` in addition to the plain
 `schema=`. A `schema_provider` is a callable `provider(user) -> GraphQLSchema`
 resolved **per connection** with the connection's user (`request.user` for SSE,
 `scope["user"]` for WebSocket). When given, it **wins** over `schema=`.
+The provider contract is **synchronous**: the async transports run it through
+a thread-sensitive adapter, so a real user's initially cold permission lookup
+can use Django's synchronous ORM without running on the event loop. Request
+context variables propagate to that worker; do not depend on an arbitrary
+event-loop thread-local value being present there. Provider exceptions retain
+their transport behavior: SSE raises before opening a stream, while WebSocket
+frames the failed operation as an error without closing unrelated operations.
+This does not turn a coroutine-returning provider into a supported async
+provider; return a `GraphQLSchema` directly.
 
 This lets a subscription connection use the **same pruned schema as HTTP**: wire
 the provider to the bundled `pruned_schema_for` helper so a subscription
@@ -330,8 +369,12 @@ The generated subscription honors the type's authorization and scoping:
   is the transport's own context object, and it exposes **both** `info.user` and
   `info.context.user` — the second is the spelling a resolver uses, so hook code
   reads the same either way. It is evaluated at subscribe time and
-  enforced **per event at delivery**, merged over the client `filter` with
-  server precedence — the client can neither widen nor drop it. Equality scopes
+  enforced **per event at delivery**, combined with the client `filter` by
+  **AND**: an event is delivered only when it matches both. The client can
+  narrow the scope but never widen or drop it, and a client value that
+  contradicts the scope on the same key (scope `status: PUBLISHED`, client
+  `filter: {status: {exact: DRAFT}}`) delivers nothing instead of silently
+  falling back to the scope. Equality scopes
   on a serialized field (like `owner`) are decided **in memory**, so there is no
   per-event query.
 
@@ -555,6 +598,10 @@ event: complete
 data: 
 ```
 
+The optional idle heartbeat sends `: heartbeat` SSE comments without restarting
+the subscription source or changing any `next`/`complete` frame. It is **off by
+default**. See [SSE connection controls](#sse-connection-controls).
+
 !!! info "Posting the document form-encoded needs `X-Requested-With`"
 
     The endpoint also accepts `query` as `application/x-www-form-urlencoded` or
@@ -606,21 +653,123 @@ Error surfacing splits at the moment the stream is committed:
   `200 text/event-stream` response as a single `next` frame carrying
   `{"errors": [...]}` followed by the `complete` frame — never an HTTP 4xx,
   because a status code cannot change once the streaming response has begun.
+- **Masked errors** — with `DEBUG=False`, an unexpected exception from the
+  `subscribe` resolver, an event resolver or the stream itself while it is
+  iterated (a channel-layer error, a scope lookup) is framed with the allowlisted
+  message, `DATA_ACCESS_ERROR` or `INTERNAL_SERVER_ERROR`, its `path` and an
+  `errorId`, exactly as the HTTP views do (see
+  [Production execution errors](views.md#production-execution-errors)); one
+  ERROR record with the traceback is logged on `django_graphex.internal_errors`.
+  A deliberate `GraphQLError` keeps its message and `DEBUG=True` keeps the raw
+  text.
+- **Optional account cap** — a full authenticated-account limit returns plain
+  **HTTP 429** before source startup; an unavailable admission backend returns
+  **HTTP 503** before returning a streaming response, including when ownership
+  cannot be confirmed after source startup (that source is closed). Existing
+  streams are not interrupted by a rejected request. If a running stream later
+  loses its Redis lease, its
+  already-committed 200 response emits a generic `next` error and `complete`;
+  it cannot change to HTTP 503.
 
 ### WebSocket: the wire protocol
 
 The consumer speaks
 [`graphql-transport-ws`](https://github.com/enisdenjo/graphql-ws/blob/master/PROTOCOL.md) —
-your client must request that subprotocol when opening the socket. One socket
-multiplexes any number of operations, each identified by a client-chosen `id`:
+your client must offer that exact subprotocol when opening the socket. For a
+browser WebSocket client, pass it as the constructor's second argument:
+
+```javascript
+const socket = new WebSocket("wss://example.com/ws/graphql/", "graphql-transport-ws");
+```
+
+That selects the transport protocol; the client must still implement its
+`connection_init`, `subscribe`, and other message frames. A client offering
+other names as alternatives is accepted only if `graphql-transport-ws` is among
+them. With no matching offer, the server rejects the handshake **before**
+accepting the socket or starting subscription work and logs:
+
+```text
+WebSocket connection rejected: client must offer the 'graphql-transport-ws' subprotocol.
+```
+
+Configure the client's WebSocket subprotocol offer to resolve this error; a
+GraphQL `connection_init` frame cannot fix a failed handshake. The rejection
+uses ASGI close code `4406`, but a pre-accept close is normally sent on the
+wire as HTTP 403. Browser APIs may show only a generic connection error or
+`1006`, not the server log, a GraphQL JSON error, or a guaranteed `4406`/reason.
+
+#### Optional connection authentication
+
+By default, `connection_init` ignores its payload and uses the user supplied by
+Channels middleware in `scope["user"]`. Existing session-based clients, including
+the Playground, need no change. To authenticate an initialization credential,
+opt in with an **async** `on_connect(scope, payload)` callback:
+
+```python
+from collections.abc import Mapping
+from typing import Any
+
+from django.contrib.auth.base_user import AbstractBaseUser
+
+from django_graphex.subscriptions.transports.ws import subscription_ws_consumer
+from myapp.auth import verify_token  # Project-defined async credential verifier.
+from myapp.schema import schema
+
+async def authenticate_socket(
+    scope: Mapping[str, Any], payload: Mapping[str, Any]
+) -> AbstractBaseUser | None:
+    """Authenticate the socket through the project's credential service.
+
+    Args:
+        scope: The Channels connection scope, including any session identity.
+        payload: The normalized initialization payload containing credentials.
+
+    Returns:
+        The authenticated user for this socket, or None for rejected credentials.
+    """
+    token = payload.get("token")
+    # The project-defined async verifier may also raise for invalid credentials.
+    return await verify_token(token)
+
+consumer = subscription_ws_consumer(
+    schema=schema.graphql_schema,
+    on_connect=authenticate_socket,
+)
+```
+
+The client sends `{"type": "connection_init", "payload": {"token": "…"}}`
+after opening the socket with the `graphql-transport-ws` subprotocol. The
+callback runs before `connection_ack`, schema resolution, or subscription work.
+Its returned authenticated user replaces any session user **for this socket**;
+both permission checks and `schema_provider` see that one identity. It does not
+log a Django session in or alter HTTP/SSE authentication. The application owns
+credential format, verification, expiry, and reconnect behavior; the transport
+does not supply JWT validation or mid-connection refresh.
+
+With a callback, an absent or null payload becomes `{}`, while a non-object
+payload closes the already accepted socket with `4400` before callback
+invocation. Missing, anonymous, or rejected user credentials close with `4403`
+and a generic server diagnostic; no ACK, schema resolution, or fallback to a
+previous session identity occurs. The initialization deadline remains active
+while the callback runs: a stalled callback closes with `4408`; a second
+`connection_init` closes with `4429`, and a `subscribe` before ACK with `4401`.
+Do not place tokens in client-visible errors or application logs.
+
+Once connected, one socket multiplexes any number of operations, each
+identified by a client-chosen `id`:
 
 | # | Direction | Message |
 |---|-----------|---------|
-| 1 | client → server | `{"type": "connection_init"}` — must be the first message (the auth boundary) |
+| 1 | client → server | `{"type": "connection_init"}` — default scope-user auth, or optional `on_connect` payload verification |
 | 2 | server → client | `{"type": "connection_ack"}` |
 | 3 | client → server | `{"type": "subscribe", "id": "1", "payload": {"query": "subscription { … }"}}` |
 | 4 | server → client | `{"type": "next", "id": "1", "payload": {"data": {…}}}` — one frame per delivered event |
 | 5 | server → client | `{"type": "complete", "id": "1"}` — only when the stream itself ends |
+
+After the server sends `complete`, it has finished this operation's source
+cleanup attempt and released its ID slot. A client may immediately send a new
+`subscribe` with the same ID; a genuinely concurrent duplicate still closes
+with `4409`.
 
 The `subscribe` payload carries the same `query` / `variables` /
 `operationName` keys as an HTTP POST. A subscribe-time failure (parse error,
@@ -637,7 +786,10 @@ the init timeout, `4409` duplicate operation `id`, `4429` a second
 `connection_init`. `4400` covers **any** frame the consumer cannot dispatch —
 including a body that is not valid JSON and a non-string `id` — and the close
 tears down every live operation on that socket first, so a malformed frame can
-never leave a task or a joined group behind.
+never leave a task or a joined group behind. Because any client can send such a
+frame, it is logged at DEBUG, not as an ERROR with a traceback. Errors in
+`error` and `next` frames are masked in production like the HTTP views' (see
+[Production execution errors](views.md#production-execution-errors)).
 
 A failure that happens **after** delivery started is not a close and not an
 `error` frame: it arrives as `{"type": "next", "payload": {"errors": [...]}}`
@@ -649,8 +801,16 @@ HTTP error is impossible.
 
 ### Unsubscribing
 
-Both transports guarantee that a gone client is a gone subscriber — teardown
-discards every channel-layer group the operation had joined.
+Both transports tear down a gone client's source by discarding its joined
+channel-layer groups. If cancellation arrives while a group join is in flight,
+startup also attempts to discard that source's channel from the attempted
+group. A conforming channel layer ignores a discard for a membership that was
+never created, as required by the [Channels channel-layer specification](https://channels.readthedocs.io/en/stable/channel_layer_spec.html).
+Backend discard failures can still prevent cleanup; this is not
+a guarantee across backend outages or distributed races. A failed source
+startup can be retried on the same source; an explicitly closed source stays
+closed. Cleanup failures are logged internally without replacing the startup
+error.
 
 **WebSocket** — send a `complete` frame for the operation id:
 
@@ -705,7 +865,42 @@ Filters are evaluated **per connection at delivery time**:
 - **`exact`** is decided in memory against the serialized payload — no extra
   query. This is the fast path the whole serialize-once engine is built around,
   so prefer it for scoping.
-- **The other three lookups** fall back to a single-row database check.
+- A native `Float` exact filter matches an event snapshot when both values are
+  actual finite floats with exactly equal numeric values. In particular,
+  `-0.0` and `0.0` now match in either direction. This also changes the
+  low-level `split_filters` result for a legacy dictionary containing those
+  two float values. It does not parse numeric strings, use an epsilon, change
+  Boolean/null matching, or normalize indexed group keys. Non-finite values
+  retain the previous string-comparison behavior. A full-payload field must
+  be present in the snapshot for this in-memory comparison; missing fields and
+  other lookups retain their database-check behavior.
+- A typed `Decimal` exact filter compares finite numeric values from the
+  event-time JSON snapshot, so `1.0` matches a serialized `"1.00"`. This also
+  works for valid high-precision values, including snapshots longer than 256
+  characters, and for full-payload delete events after the row is gone. No
+  separate snapshot-length cutoff is added by this comparison. Server scope
+  values supplied as strings keep their existing string comparison, while
+  malformed or non-finite values retain the prior fallback behavior. The
+  engine does not reread a possibly changed row to resolve this equality.
+- A typed `DateTime` exact filter compares the captured full-payload ISO value
+  as a DateTime, without millisecond rounding or a later row lookup. All six
+  microsecond digits survive transport; equivalent timezone-aware offsets
+  match the same instant, while different microseconds do not. Naive values
+  are not assigned a timezone, and this does not change other scalar filters.
+  For example, an event captured at `2026-10-18T12:00:00.123456+00:00`
+  matches `exact: "2026-10-18T17:30:00.123456+05:30"` and delivers that
+  captured DateTime through the existing output scalar. An older notification
+  already truncated to milliseconds cannot regain its lost digits.
+- Numeric snapshots and typed filters compare by value whichever of `int`,
+  `float` or `Decimal` each side is: an integer or float snapshot (a `Float` or
+  `Decimal` field saved with a plain number, so the payload carries `1` or
+  `1.5`) matches `1.0` or `Decimal("1.50")`. When a float is on either side the
+  other operand is first rounded to the nearest float, which is what a float
+  column stores: `2**53 + 1` equals `float(2**53)` and `Decimal("0.1")` equals
+  `0.1`. Without a float the comparison is exact. Booleans, NaN, Infinity and
+  integers beyond the float range never match.
+- **The other three lookups** fall back to a single-row database check while
+  the row exists. A deleted row cannot satisfy that check.
 - Combine them:
   `filter: { post: { exact: 7 }, status: { in: ["open", "urgent"] } }`.
 - Omitting `filter` delivers every event in the group.
@@ -745,10 +940,17 @@ Filters are evaluated **per connection at delivery time**:
     delivered payload.
 
 !!! note "Delete + lookup filters"
-    On a `delete` the row no longer exists, so only the in-memory (equality)
-    path applies. With `payload_mode = "full"` the payload still carries the
-    field values, so equality filters work on deletes; with id-only payloads,
-    non-pk filters cannot be evaluated on delete and the notification is dropped.
+    Automatic `delete` notifications capture **projected concrete scalar**
+    values from the model instance at `post_delete`: SQL has removed the row,
+    but loaded in-memory fields and the PK are still available. Deferred fields
+    are not fetched after deletion. Plain equality filters, including
+    server-forced scopes, can
+    use this private snapshot even when the public payload is id-only. The
+    server scope still overrides a conflicting client filter. Missing or
+    nonprojected fields and lookup filters are not inferred from a deleted
+    row. In id-only mode, relation equality is likewise not part of this
+    private scalar snapshot. Such events are dropped unless every condition is
+    verifiable. This is not a general in-memory lookup evaluator.
 
 !!! tip "Scoping vs. security"
     A client-supplied `filter` is a **convenience** scope, not an authorization
@@ -766,6 +968,9 @@ Filters are evaluated **per connection at delivery time**:
     exactly `X`?" about any declared field, one guess at a time. That is fine
     for a value with a large space (a password hash) and **not** fine for one
     with a small space (a boolean flag, a status enum, a short token).
+    A declared DateTime field is also an exact-match oracle at its captured
+    microsecond precision; this precision fix does not make client filters an
+    authorization control.
 
     Keep sensitive columns out of that surface with `only_fields` /
     `exclude_fields` on the subscription's `Meta` — they gate the event payload
@@ -799,13 +1004,20 @@ event or a WS `next{id, payload}` message). Subscribing with
     The `{"stream": ..., "payload": {"action": ..., "model": ..., "data": ...}}`
     message you may see in channel-layer captures is the **internal** broadcast
     between the signal binding and the subscriber processes — it never reaches
-    the client. Clients only see the transport frames above.
+    the client. Automatic deletes may also carry a private `delete_match`
+    mapping of projected scalar values in that envelope; it is never copied
+    into GraphQL `data`, SSE, or WebSocket results. Treat channel-layer access
+    as privileged: its operators can see those values until the message expires.
+    Clients only see the transport frames above.
 
 ## Notification payload
 
 On every model change the binding builds the notification `data`. By default it
-is **id-only** — `{"id": <pk>}` — which **skips serialization entirely** (the
-fastest option for hot models, where clients typically refetch on notification).
+is **id-only** — `{"id": <pk>}` — which skips full-payload serialization on
+create and update (the fastest option for hot models, where clients typically
+refetch on notification). An automatic delete additionally captures projected
+scalar values privately for equality matching; the public data remains only
+the primary key.
 Set it to **full** to serialize the whole instance through the native (Pydantic)
 backend.
 
@@ -832,6 +1044,14 @@ class UserSubscription(Subscription):
         payload_mode = "full"   # full payload for this one; "full"/"id_only"/None
 ```
 
+!!! note "`DurationField` on the event type"
+
+    A `DurationField` is typed `Float` (seconds) on the event type, as on the
+    query output. The payload carries Django's ISO 8601 duration string
+    (`P0DT00H00M05S`) and the event type converts it to the same total seconds
+    (`5.0`) that the query output returns. The declared `Float` type is kept in
+    4.x, so a duration is never delivered as an ISO string.
+
 !!! note "File and binary columns"
 
     The payload is JSON-encoded before it crosses the channel layer, so the two
@@ -842,6 +1062,16 @@ class UserSubscription(Subscription):
     `payload_mode = "full"` on a model carrying either column raised
     `TypeError: Object of type FieldFile is not JSON serializable` on **every**
     save.
+
+!!! note "DateTime event snapshots"
+
+    Full-payload native DateTime fields remain JSON-safe ISO strings on the
+    channel layer, but preserve their captured microseconds. Only the native
+    DateTime output boundary reconstructs a typed value for the existing
+    scalar; arbitrary JSON strings and custom output fields are not parsed.
+    Automatic signal events capture before commit and deliver after commit;
+    manual `broadcast()` still sends immediately. Neither path rereads a
+    changed or deleted row to decide full-payload DateTime equality.
 
 !!! warning "id-only is the default"
 
@@ -973,7 +1203,9 @@ setting) was removed. Authentication is now the transport's own request/scope:
 - **SSE** authenticates the **HTTP request** (`request.user` / session /
   middleware) before the engine joins any group.
 - **WebSocket** authenticates the **connection scope** at `connection_init`
-  (the auth boundary) before any subscription is accepted.
+  (the auth boundary) before any subscription is accepted. An optional
+  `on_connect` callback can replace that user after validating the init
+  payload; no callback preserves the existing session behavior.
 
 The subscription's `authorize_subscription` / `permission_classes` hooks run
 **before** any `group_add`, so a denial short-circuits before the source is
@@ -1004,9 +1236,74 @@ disconnect — so a client that stays under the cap never notices it.
     subscriptions per socket. Use it only when every client is trusted and you
     bound connections elsewhere (gateway/proxy rate limiting).
 
-The SSE transport needs no equivalent: one `text/event-stream` request carries
-exactly one subscription, so its concurrency is bounded by your server's
-connection limits rather than by an in-process registry.
+The WebSocket cap is **per socket**, not per account. SSE has an independent,
+optional **per-authenticated-account** cap below. One SSE request still carries
+exactly one subscription.
+
+### SSE connection controls
+
+Both SSE controls are independent and **disabled by default**. The heartbeat
+value defaults to 15 seconds and the account-cap value defaults to five, but
+neither value enables its control. To enable either one:
+
+```python
+import os
+
+DJANGO_GRAPHEX = {
+    "SSE_HEARTBEAT_ENABLED": True,
+    "SSE_HEARTBEAT_INTERVAL": 15,  # seconds; positive finite number
+    "SSE_CONNECTION_LIMIT_ENABLED": True,
+    "SSE_MAX_CONNECTIONS_PER_USER": 5,  # positive integer
+    "SSE_CONNECTION_REDIS_URL": os.environ["SSE_CONNECTION_REDIS_URL"],
+}
+```
+
+Enable only the keys you need; heartbeat does **not** require Redis. The cap
+requires one reachable Redis deployment shared by all SSE workers and the
+optional Python `redis` client (the `subscriptions` extra brings it through
+`channels-redis`). Set a `redis://` or `rediss://` URL only when enabling the
+cap; keep credentials outside source control. A missing client, URL, or
+unavailable Redis instance fails new authenticated admissions with HTTP 503.
+Redis connect and command calls request two-second **per-socket** timeouts.
+This is not a two-second end-to-end deadline: Redis client retries and URL
+query options can extend the total wait or override the requested timeouts.
+Keep operator-supplied retry and timeout options bounded for the deployment.
+Anonymous requests bypass this cap without an IP-based bucket. The cap does
+not alter WebSocket operations or authentication policy.
+
+Admission, renewal, and release use atomic Redis operations keyed by a stable
+account identity and a unique stream token. The sixth concurrent stream under
+the example cap receives HTTP 429 **before** subscribing; the first five
+continue. Each active stream renews its own lease even when heartbeat is off;
+ownership is checked after startup, when body consumption begins, and before
+delivering a result whenever renewal is due. Already expired tokens are not
+recreated. A cancelled admission settles before token-specific cleanup, though
+backend failure can still defer cleanup until expiry.
+Normal completion, disconnect, source-start failure, and response close release
+the token. A crash or failed release relies on a 45-second lease expiry; a
+renewal that sees an expired token stops the stream instead of recreating its
+slot. A delayed consumer may therefore lose a lease and need to reconnect.
+A renewal that **fails** (timeout, connection error) is not treated as a lost
+lease: the stream stays open and retries every five seconds while the last
+confirmed renewal is less than 40 seconds old (the 45-second TTL minus a
+five-second safety margin). A later success resets that window. Only when
+failures outlast it, or Redis answers that the token is no longer owned, does
+the stream end with the usual lease-lost frame; the frame never carries backend
+details. A short Redis outage therefore no longer drops every stream at once.
+All streams of a process share one Redis client (connection pool) per URL. The
+client pings idle connections every 30 seconds and enables TCP keepalive; lease
+admission retries once after a connection error, so a connection dropped by a
+proxy does not fail the next admission with HTTP 503.
+Redis failover and network partitions can weaken a strict global count: this
+is an availability guard, not a distributed consensus guarantee. Keep the
+server/gateway connection limit as a separate safeguard.
+
+Maintainers can run the explicit real-Redis SSE integration suite using the
+isolated setup in `integration/live_redis/README.md`. It is separate from the
+default test suite, which does not require a Redis service. Its direct Lua
+checks use a private Unix socket, where the shared client retains the same
+timeouts and idle health checks but omits TCP-only socket keepalive. This does
+not add Unix URLs to the public `SSE_CONNECTION_REDIS_URL` setting.
 
 ### GraphQL execution middleware
 
@@ -1140,7 +1437,33 @@ On the **ASGI path** (loop present), the coroutine is scheduled as a
 fire-and-forget task via `loop.create_task` — the call returns immediately
 without blocking the loop thread, and a done-callback logs any delivery failure
 via the module logger.  On the **WSGI / sync path** (no running loop),
-`async_to_sync` is used and errors propagate synchronously as before.
+`async_to_sync` is used. Explicit calls to `SubscriptionBinding.broadcast`
+retain synchronous error propagation; automatic model-signal notifications use
+the best-effort policy below.
+
+### Automatic notification failures
+
+Automatic `post_save` and `post_delete` notifications are **best-effort**.
+An ordinary error while preparing a notification snapshot or delivering it
+after commit drops that event and logs only the model label, stream, action,
+stage, and exception class. The payload, routing index, primary key, user, and
+exception message are not logged by this boundary. A successful database write
+still succeeds, and a failed delivery does not stop later `on_commit` callbacks.
+This also applies to generated mutations that save the model.
+
+This is a change from synchronous automatic delivery errors propagating into
+the caller. If an application depended on that exception to fail a mutation,
+it must handle notification delivery explicitly instead. **Explicit**
+`SubscriptionBinding.broadcast` calls retain their previous strict behavior.
+Model validation and database write errors still propagate; rollback still
+emits no event. Cancellation and other `BaseException` control signals are not
+converted into successful writes.
+
+Best-effort delivery does not guarantee that a subscriber receives the event:
+there is no retry, outbox, or durable queue. Monitor the metadata-only drop
+logs and use an application-owned outbox if delivery guarantees are required.
+An event's payload and routing data remain frozen at signal time, even when
+the same model instance changes before the transaction commits.
 
 ### Commit-time broadcast delivery
 
@@ -1167,6 +1490,25 @@ Subscription broadcasts (`_on_save`, `_on_delete`) are now deferred via
     after the test; `on_commit` callbacks never execute inside that wrapper.
     If your subscription tests assert on `captured_group_sends`, mark them with
     `@pytest.mark.django_db(transaction=True)` so real commits occur.
+
+### Automatic and manual write paths
+
+Automatic notifications come from Django's `post_save` and `post_delete`
+signals, not from every ORM write. `bulk_create`, `bulk_update`,
+`QuerySet.update`, and `M2M.add` do **not** send those model signals and therefore
+do not automatically broadcast through this binding. Use an ordinary model
+`save()` when signal-driven delivery is required.
+
+For a write path that deliberately bypasses signals, the manual API is
+`Subscription.get_binding().broadcast(action, instance)`, where
+`Subscription` is your concrete subscription class. This call captures and
+sends the instance's current state **immediately**; unlike automatic signal
+delivery, it is not queued with `on_commit` and can notify before a rollback.
+If the event must describe committed state, arrange the manual call through
+application-owned hooks **after the outermost commit**, using a fresh instance
+loaded at that point for an update. For a deletion, retain the needed event
+data in application code before the row disappears. Do not defer a lambda over
+a mutable model instance and assume it preserves the earlier state.
 
 ### ORM access in the subscribe hooks
 

@@ -82,6 +82,25 @@ def test_tox_tool_ranges_match_declared_dev_compatibility() -> None:
     assert TOX_TOOL_NAMES <= seen
 
 
+def test_django_matrix_factor_ranges_are_documented() -> None:
+    """Keep contributor guidance aligned with the actual Django tox ranges.
+
+    Scenario: Historical factor names must not be mistaken for version pins.
+    """
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(ROOT / "tox.ini")
+    dependencies = parser["testenv"]["deps"]
+    documentation = (ROOT / "docs" / "contributing.md").read_text()
+
+    for factor in ("django52", "django60"):
+        match = re.search(rf"^\s*{factor}:\s*(Django[^\n]+)$", dependencies, re.M)
+        assert match is not None, factor
+        assert f"`{factor}`" in documentation
+        assert f"`{match.group(1).strip()}`" in documentation
+    assert "name, not an exact-version pin" in documentation
+    assert "locked coverage environment" in documentation
+
+
 def test_diff_cover_has_a_deliberate_dev_range() -> None:
     """The standalone patch-coverage tool must not resolve to an arbitrary major.
 

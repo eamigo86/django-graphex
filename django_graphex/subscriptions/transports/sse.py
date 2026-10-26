@@ -52,6 +52,7 @@ the base package never hard-requires the optional "[subscriptions]" extra.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from functools import partial
@@ -63,20 +64,28 @@ from django.http import StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from graphql import (
     ExecutionResult,
+    GraphQLError,
     OperationType,
     create_source_event_stream,
-    parse,
 )
 from graphql.utilities import get_operation_ast
 
-from ...security import format_graphql_error, introspection_disabled
+from ...security import (
+    as_graphql_error,
+    format_client_error,
+    introspection_disabled,
+    mark_client_errors,
+)
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
+    _is_too_deep,
+    _parse_subscription_document,
     _start_source_event_stream,
     _validate_subscription_document,
     operation_selection_error,
 )
+from ._sse_lease import _RENEW_INTERVAL, _RETRY_INTERVAL, _acquire, _Lease
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -105,6 +114,15 @@ def _close_source_sync(source: "ChannelLayerSource") -> None:
     if source.is_closed:
         return
     async_to_sync(source.aclose)()
+
+
+def _close_lease_sync(lease: _Lease) -> None:
+    """Release an SSE lease when Django closes an uniterated response.
+
+    Args:
+        lease: The token owned by this HTTP response.
+    """
+    async_to_sync(lease.close)()
 
 
 # A generic denial for a subscription-less (fully-pruned) schema. It mirrors the
@@ -209,11 +227,10 @@ async def _resolve_request_user(request: "HttpRequest") -> Any:
     noticed: an empty session resolves to "AnonymousUser" without touching the
     database.
 
-    Touching one attribute from a thread resolves the lazy object IN PLACE, so
-    this is the whole fix for every later reader — the hooks, the middleware
-    chain and any resolver reaching back through "context.request" all see a
-    plain, already-loaded user. The WS transport needs no equivalent: Channels'
-    "AuthMiddleware" awaits the lookup before the consumer runs.
+    Touching one attribute from a thread resolves the lazy object IN PLACE for
+    later readers. It does not load the user's permissions: a synchronous
+    schema provider must also run outside the event loop. The WS transport's
+    auth middleware resolves its user, but has the same provider requirement.
 
     Args:
         request: The incoming HTTP request, possibly carrying a lazy user.
@@ -291,7 +308,9 @@ def _frame_next(result: ExecutionResult) -> bytes:
     if result.data is not None:
         payload["data"] = result.data
     if result.errors:
-        payload["errors"] = [format_graphql_error(error) for error in result.errors]
+        payload["errors"] = [
+            format_client_error(error, None, "SSE") for error in result.errors
+        ]
     body = json.dumps(payload)
     return f"event: next\ndata: {body}\n\n".encode("utf-8")
 
@@ -304,6 +323,45 @@ _COMPLETE_FRAME: bytes = b"event: complete\ndata: \n\n"
 # every conforming client ignores — its only job is to be the first body chunk,
 # because that is what makes an ASGI server flush the status line and headers.
 _PREAMBLE_FRAME: bytes = b":\n\n"
+_HEARTBEAT_FRAME: bytes = b": heartbeat\n\n"
+_LEASE_LOST_MESSAGE = "SSE stream lease lost; reconnect to retry."
+
+
+class _LeaseLost(Exception):
+    """Signal that a running stream can no longer prove lease ownership."""
+
+
+async def _renew_lease(lease: _Lease, loop: asyncio.AbstractEventLoop) -> float:
+    """Renew a running stream's lease, tolerating transient backend errors.
+
+    A backend error does not mean the lease is gone: its TTL spans several
+    renewal intervals. The stream keeps running and retries soon, as long as
+    the last confirmed renewal still leaves a safety margin. A definite answer
+    that the token is no longer owned always ends the stream.
+
+    Args:
+        lease: The lease owned by the running stream.
+        loop: The running loop, whose clock stamps confirmed renewals.
+
+    Returns:
+        Seconds until the next renewal attempt.
+
+    Raises:
+        _LeaseLost: If ownership is gone or can no longer be assumed.
+    """
+    sent_at = loop.time()
+    try:
+        owned = await lease.renew()
+    except Exception:  # noqa: BLE001 - no Redis details
+        if lease.may_still_own(loop.time()):
+            logger.warning("SSE lease renewal failed; retrying.")
+            return _RETRY_INTERVAL
+        raise _LeaseLost from None
+    if not owned:
+        raise _LeaseLost
+    # Stamp the send time: Redis started the new TTL no earlier than that.
+    lease.renewed_at = sent_at
+    return _RENEW_INTERVAL
 
 
 def _make_spec(
@@ -382,7 +440,11 @@ def subscription_sse_view(
         )
 
     async def _view(request: "HttpRequest", *args: Any, **kwargs: Any) -> Any:
-        from django.http import HttpResponseBadRequest, HttpResponseForbidden
+        from django.http import (
+            HttpResponse,
+            HttpResponseBadRequest,
+            HttpResponseForbidden,
+        )
 
         # Imported HERE, not at module level: "views" reaches
         # "core.permission_signature_cache", which reads "DJANGO_GRAPHEX" while it
@@ -407,13 +469,17 @@ def subscription_sse_view(
         if csrf_header_missing(request, BaseGraphQLView.get_content_type(request)):
             return HttpResponseForbidden(CSRF_GUARD_MESSAGE)
 
-        # Resolve the lazy user ONCE, in a thread, before either the provider
-        # below or any subscribe hook reads it from inside this async view.
+        # Resolve the lazy user before a provider or subscribe hook reads it.
         user = await _resolve_request_user(request)
 
         # Per-connection schema resolution: the provider (when given) wins and is
-        # resolved with the request user, matching the HTTP pruned schema.
-        conn_schema = schema_provider(user) if schema_provider is not None else schema
+        # resolved with the request user. A synchronous provider may query the
+        # ORM for cold permissions, so keep it off the event loop as well.
+        conn_schema = (
+            await sync_to_async(schema_provider, thread_sensitive=True)(user)
+            if schema_provider is not None
+            else schema
+        )
 
         body = _read_request_body(request)
         if body is None:
@@ -434,8 +500,15 @@ def subscription_sse_view(
             return HttpResponseBadRequest("No GraphQL query provided.")
 
         try:
-            document = parse(query)
-        except Exception as exc:  # PRE-200: a syntax error is an HTTP 4xx.
+            document = _parse_subscription_document(query)
+        except GraphQLError as exc:  # PRE-200: a syntax error is an HTTP 4xx.
+            if _is_too_deep(exc):
+                # Same envelope and code the HTTP view answers for this document.
+                return HttpResponse(
+                    json.dumps({"errors": [format_client_error(exc, None, "SSE")]}),
+                    status=400,
+                    content_type="application/json",
+                )
             return HttpResponseBadRequest(f"GraphQL syntax error: {exc}")
 
         operation_ast = get_operation_ast(document, body["operationName"])
@@ -456,9 +529,16 @@ def subscription_sse_view(
             )
 
         context = TransportContext(request)
+        # Validate timing before returning HTTP 200; the generator cannot
+        # change the status if a malformed setting is discovered later.
+        heartbeat_enabled = graphql_api_settings.SSE_HEARTBEAT_ENABLED
+        heartbeat_interval = (
+            graphql_api_settings.SSE_HEARTBEAT_INTERVAL if heartbeat_enabled else 15
+        )
 
         started_source: "ChannelLayerSource | None" = None
         pre_stream_result: ExecutionResult | None = None
+        lease: _Lease | None = None
 
         # Subscription-less (fully-pruned) schema short-circuit: a per-user pruned
         # schema whose Subscription root is None would make graphql-core raise the
@@ -467,8 +547,6 @@ def subscription_sse_view(
         # philosophy) so nothing about the server's schema shape leaks. Delivered
         # in-stream (the 200 stream is committed below), never a source.
         if conn_schema.subscription_type is None:
-            from graphql import GraphQLError
-
             pre_stream_result = ExecutionResult(
                 data=None,
                 errors=[GraphQLError(_SUBSCRIPTION_DENIED_MESSAGE)],
@@ -492,26 +570,81 @@ def subscription_sse_view(
                 hide_suggestions=hide_suggestions,
             )
             if validation_errors:
-                pre_stream_result = ExecutionResult(data=None, errors=validation_errors)
+                pre_stream_result = ExecutionResult(
+                    data=None, errors=mark_client_errors(validation_errors)
+                )
             else:
+                # Account admission is BEFORE the native subscribe entry and its
+                # group join. Anonymous callers never use a principal/IP bucket.
+                if (
+                    graphql_api_settings.SSE_CONNECTION_LIMIT_ENABLED
+                    and user is not None
+                    and user.is_authenticated
+                ):
+                    # Stamp before the send: the grant's TTL started no earlier.
+                    acquire_sent = asyncio.get_running_loop().time()
+                    try:
+                        lease = await _acquire(
+                            user,
+                            graphql_api_settings.SSE_CONNECTION_REDIS_URL,
+                            graphql_api_settings.SSE_MAX_CONNECTIONS_PER_USER,
+                        )
+                    except Exception:  # noqa: BLE001 - fail closed, no backend details
+                        logger.warning("SSE admission backend unavailable.")
+                        return HttpResponse(
+                            "SSE admission is temporarily unavailable.", status=503
+                        )
+                    if lease is None:
+                        return HttpResponse("SSE connection limit reached.", status=429)
+                    lease.renewed_at = acquire_sent
                 # Run the subscription field's native subscribe entry. This runs
                 # the KEPT hooks BEFORE any group_add (authorize-deny
                 # short-circuits before the source), returning the started
                 # ChannelLayerSource — or an ExecutionResult when the subscribe
                 # resolver reported an error (deny).
-                source_or_result = await _start_source_event_stream(
-                    conn_schema,
-                    document,
-                    context_value=context,
-                    variable_values=body["variables"],
-                    operation_name=body["operationName"],
-                    source_factory=create_source_event_stream,
-                    hide_suggestions=hide_suggestions,
-                )
+                try:
+                    source_or_result = await _start_source_event_stream(
+                        conn_schema,
+                        document,
+                        context_value=context,
+                        variable_values=body["variables"],
+                        operation_name=body["operationName"],
+                        source_factory=create_source_event_stream,
+                        hide_suggestions=hide_suggestions,
+                    )
+                except BaseException:
+                    if lease is not None:
+                        await lease.close()
+                    raise
                 if isinstance(source_or_result, ExecutionResult):
                     pre_stream_result = source_or_result
+                    if lease is not None:
+                        await lease.close()
+                        lease = None
                 else:
                     started_source = source_or_result  # type: ignore[assignment]
+                    if lease is not None:
+                        # Startup may have outlived the initial token. Never
+                        # return HTTP 200 with a source we no longer own.
+                        try:
+                            owned = await lease.renew()
+                        except Exception:  # noqa: BLE001 - no backend details
+                            owned = False
+                        except BaseException:
+                            try:
+                                await started_source.aclose()
+                            finally:
+                                await lease.close()
+                            raise
+                        if not owned:
+                            try:
+                                await started_source.aclose()
+                            finally:
+                                await lease.close()
+                            return HttpResponse(
+                                "SSE admission is temporarily unavailable.",
+                                status=503,
+                            )
 
         spec = _make_spec(
             conn_schema,
@@ -540,10 +673,66 @@ def subscription_sse_view(
                 return
 
             delivery = drive_subscription(started_source, spec, context)
+            pending: asyncio.Task[ExecutionResult] | None = None
             try:
                 try:
-                    async for result in delivery:
-                        yield _frame_next(result)
+                    if heartbeat_enabled or lease is not None:
+                        loop = asyncio.get_running_loop()
+                        first_delay = _RENEW_INTERVAL
+                        if lease is not None:
+                            # The response body can be consumed long after
+                            # startup. Confirm ownership before any data read.
+                            first_delay = await _renew_lease(lease, loop)
+                        next_heartbeat = (
+                            loop.time() + heartbeat_interval
+                            if heartbeat_enabled
+                            else float("inf")
+                        )
+                        next_renew = (
+                            loop.time() + first_delay
+                            if lease is not None
+                            else float("inf")
+                        )
+                        while True:
+                            if lease is not None and loop.time() >= next_renew:
+                                delay = await _renew_lease(lease, loop)
+                                next_renew = loop.time() + delay
+                            if pending is None:
+                                pending = asyncio.create_task(delivery.__anext__())
+                            deadline = min(next_heartbeat, next_renew)
+                            done, _ = await asyncio.wait(
+                                {pending}, timeout=max(0, deadline - loop.time())
+                            )
+                            now = loop.time()
+                            if lease is not None and now >= next_renew:
+                                delay = await _renew_lease(lease, loop)
+                                next_renew = loop.time() + delay
+                            if not done:
+                                if heartbeat_enabled and now >= next_heartbeat:
+                                    yield _HEARTBEAT_FRAME
+                                    next_heartbeat = loop.time() + heartbeat_interval
+                                continue
+                            try:
+                                result = pending.result()
+                            except StopAsyncIteration:
+                                break
+                            finally:
+                                pending = None
+                            yield _frame_next(result)
+                            if heartbeat_enabled:
+                                next_heartbeat = loop.time() + heartbeat_interval
+                    else:
+                        async for result in delivery:
+                            yield _frame_next(result)
+                except _LeaseLost:
+                    from graphql import GraphQLError
+
+                    logger.warning("SSE lease renewal failed; closing stream.")
+                    yield _frame_next(
+                        ExecutionResult(
+                            data=None, errors=[GraphQLError(_LEASE_LOST_MESSAGE)]
+                        )
+                    )
                 except Exception as exc:  # noqa: BLE001 - framed, never escapes
                     # A delivery failure (e.g. an ORM error raised by a
                     # server-forced scope lookup) must NOT escape the generator:
@@ -551,19 +740,24 @@ def subscription_sse_view(
                     # so an escaping exception aborts the connection with no
                     # protocol signal at all. Frame it exactly like a post-200
                     # validation error — next{errors} — then complete.
-                    from graphql import GraphQLError
-
-                    logger.exception("Subscription delivery failed; closing stream.")
+                    # "_frame_next" masks it and logs it once (DEBUG: raw).
                     yield _frame_next(
-                        ExecutionResult(data=None, errors=[GraphQLError(str(exc))])
+                        ExecutionResult(data=None, errors=[as_graphql_error(exc)])
                     )
                 # The source completed (out-of-band close) → terminal frame.
                 yield _COMPLETE_FRAME
             finally:
+                if pending is not None:
+                    pending.cancel()
+                    await asyncio.gather(pending, return_exceptions=True)
                 # Client disconnect / aclosing / normal completion: tear the
                 # source down so every joined group is discarded (no ghost
                 # subscriber). aclose() is idempotent.
-                await delivery.aclose()
+                try:
+                    await delivery.aclose()
+                finally:
+                    if lease is not None:
+                        await lease.close()
 
         response = StreamingHttpResponse(
             _event_stream(), content_type="text/event-stream"
@@ -583,6 +777,8 @@ def subscription_sse_view(
             response._resource_closers.append(
                 partial(_close_source_sync, started_source)
             )
+        if lease is not None:
+            response._resource_closers.append(partial(_close_lease_sync, lease))
         # Record the live source so callers/tests can observe + assert teardown.
         _STARTED_SOURCES[response] = started_source
         return response

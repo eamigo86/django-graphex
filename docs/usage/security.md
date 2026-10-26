@@ -57,17 +57,23 @@ DJANGO_GRAPHEX = {
 and `__type` (so tools can't dump your schema), while leaving `__typename`
 untouched.
 
+Install the middleware in the GraphQL execution chain to enforce the setting.
+`ALLOW_INTROSPECTION=False` is the default, but **does not block introspection
+on its own**: the default `MIDDLEWARE` setting is empty. This configuration
+blocks `__schema` and `__type` for non-superusers:
+
 ```python
 DJANGO_GRAPHEX = {
-    "ALLOW_INTROSPECTION": False,            # default: block introspection
+    "MIDDLEWARE": ["django_graphex.security.DisableIntrospectionMiddleware"],
+    "ALLOW_INTROSPECTION": False,            # default; enforced by the middleware above
     "INTROSPECTION_ALLOW_SUPERUSER": True,   # default: active superusers may introspect
 }
 ```
 
 | Setting | Default | Effect |
 |---------|---------|--------|
-| `ALLOW_INTROSPECTION` | `False` | When `True`, introspection is allowed for everyone. |
-| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | When `True`, an **active** superuser (`is_active` **and** `is_superuser`) may introspect even if `ALLOW_INTROSPECTION` is `False`. |
+| `ALLOW_INTROSPECTION` | `False` | Only enforced when `DisableIntrospectionMiddleware` is installed. When `True`, that middleware permits introspection for everyone. |
+| `INTROSPECTION_ALLOW_SUPERUSER` | `True` | With `DisableIntrospectionMiddleware` installed and `ALLOW_INTROSPECTION=False`, an **active** superuser (`is_active` **and** `is_superuser`) may introspect. |
 
 A blocked introspection query returns an error; a missing `context`/`user`
 (non-HTTP execution) is treated as non-superuser and does not crash. The bypass
@@ -381,6 +387,21 @@ user is denied (fail-closed). `""` (default) disables it, and the public
 
 ### Permission-scoped schema (`PERMISSION_SCOPED_SCHEMA`)
 
+Generated mutation FK/M2M ID links have a separate **destination row-scope**
+check when the destination public type overrides `get_queryset`. Hidden and
+nonexistent IDs return the same structured invalid-pk error before the parent
+write; child write permissions do not run for a link. Automatic FK/reverse-FK
+and OneToOne output reads, automatic declared/reverse M2M output lists and
+counts, plus forward-FK/forward-OneToOne/reverse-FK/M2M filters, have separate
+bounded destination-scope rules. Other joins and explicit resolvers are not
+globally scoped by this ID-link check. See
+[mutation ID-link migration](mutations.md#migrating-id-links-hidden-by-a-destination-scope).
+
+Adopting an existing nullable reverse-FK orphan by ID is a **child write**, not
+an FK/M2M ID link. It requires an update-serving child host and passes that
+host's existing scope and permission checks; see
+[reverse-FK orphan adoption](mutations.md#adopting-an-existing-reverse-fk-or-reverse-onetoone-orphan-by-id).
+
 With [`PERMISSION_SCOPED_SCHEMA`](settings.md#security) enabled,
 `AuthenticatedGraphQLView` serves **each authenticated request a schema pruned to
 the caller's permissions** — a field the caller lacks perms for is *absent* from
@@ -397,9 +418,12 @@ Security model:
   reveals a hidden field ever existed.
 - **No cross-permission cache leak** — the pruned schema, the in-process schema
   cache, and the HTTP **response cache** are all keyed by the caller's
-  *permission signature* (`perms ∩ schema label-set`). Two callers with different
-  relevant perms never share a pruned schema or a cached response body for the
-  same query.
+  *permission signature*. Normally that is `perms ∩ schema label-set`; schemas
+  with a native flat GFK fallback use all grants because an unregistered target
+  model is absent from the static labels. Two callers with different relevant
+  perms never share a pruned schema or a cached response body for the same
+  query. [Flat GFK targets](permission-scoped-schema.md#flat-gfk-targets-are-checked-at-resolution)
+  are also checked against the actual target row scope at execution.
 - **Empty root ⇒ generic 403** — a caller whose entire `Query` root is pruned
   away gets the endpoint's generic `403`, byte-identical to the
   `permission_classes` / `API_ACCESS_GROUP` denials — an empty schema is
@@ -454,18 +478,51 @@ GraphQLView.as_view(schema=schema, graphiql=True, graphiql_template="myapp/graph
 
 ### AST-based introspection detection (`CLEAN_RESPONSE`)
 
-When `CLEAN_RESPONSE=True` is set, `GraphQLView` passes the response data through
-`clean_dict` to remove `null` fields. Introspection responses (`__schema` / `__type`
-queries) are **exempt** — applying `clean_dict` to them would corrupt the payload
-because many introspection fields legitimately return `null`.
+When `CLEAN_RESPONSE=True` is set, `GraphQLView` passes ordinary response data
+through `clean_dict`. It recursively removes `null`, empty strings, and empty
+lists or objects (including containers emptied by cleaning), while retaining
+numeric zero and `false` in fields and arrays. Array elements that remain keep
+their original order. The default is `False`, which leaves the full payload
+unchanged. For example, an ordinary response is cleaned as follows:
 
-The check is AST-based: a response is treated as introspection when **all**
-top-level selections are `__schema` or `__type` fields, regardless of the
-query's textual format. This correctly handles compact inline queries
-(`{ __schema { types { name } } }`), differently-indented or re-formatted
-clients, and `__type` queries.
-For documents containing multiple operations, the exemption follows the
-request's `operationName`; the order of operations in the document has no effect.
+```json
+{"count": 0, "enabled": false, "missing": null, "blank": "", "items": [null, 0, false, {}]}
+```
+
+becomes:
+
+```json
+{"count": 0, "enabled": false, "items": [0, false]}
+```
+
+Introspection responses (`__schema` / `__type` queries) are **exempt**;
+cleaning them would corrupt fields that legitimately return `null` or `[]`.
+
+The check is AST-based: a response is treated as introspection when the
+**selected operation** has at least one root field and all its reachable root
+fields are `__schema` or `__type`. Root inline fragments and named fragment
+spreads count too; aliases do not change the underlying field name:
+
+```graphql
+query TypeDetails {
+  ...TypeRoot
+}
+
+fragment TypeRoot on Query {
+  selectedType: __type(name: "Query") {
+    description
+    interfaces { name }
+  }
+}
+```
+
+With `CLEAN_RESPONSE=True`, this response keeps `description: null` and
+`interfaces: []` rather than removing them. A normal root field mixed into a
+direct, inline, or named fragment makes the response eligible for ordinary
+cleaning; `__typename` is not an introspection entry point. Missing or cyclic
+root spreads do not gain an exemption. For multi-operation documents,
+`operationName` chooses the operation; unrelated operations and fragments do
+not change its cleaning policy. `CLEAN_RESPONSE=False` remains unchanged.
 
 ## Query depth & cost limits
 

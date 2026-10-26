@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """Tests for django_graphex.utils module."""
 
+from collections import OrderedDict
+from copy import deepcopy
+from decimal import Decimal
+
 from django.test import TestCase
 
 from django_graphex.utils import (
@@ -36,6 +40,56 @@ class UtilsTest(TestCase):
         cleaned = clean_dict(dirty_dict)
         expected = {"key1": "value1", "key4": {"nested1": "value"}}
         self.assertEqual(cleaned, expected)
+
+    def test_clean_dict_retains_zero_and_false_without_mutating_input(self) -> None:
+        """Keep meaningful falsy scalars while pruning recursive empty values.
+
+        The original OrderedDict and nested inputs remain unchanged.
+        """
+        dirty = OrderedDict(
+            (
+                ("zero", 0),
+                ("false", False),
+                ("nested", OrderedDict((("false", False), ("empty", [])))),
+                ("values", [None, 0, [], False, {"removed": ""}, -2, "0"]),
+                ("empty_after_cleaning", {"removed": None}),
+                ("decimal_zero", Decimal("0")),
+                ("float_zero", 0.0),
+                ("blank", ""),
+            )
+        )
+        original = deepcopy(dirty)
+
+        cleaned = clean_dict(dirty)
+
+        self.assertEqual(
+            cleaned,
+            OrderedDict(
+                (
+                    ("zero", 0),
+                    ("false", False),
+                    ("nested", OrderedDict((("false", False),))),
+                    ("values", [0, False, -2, "0"]),
+                    ("decimal_zero", Decimal("0")),
+                    ("float_zero", 0.0),
+                )
+            ),
+        )
+        self.assertIs(type(cleaned), OrderedDict)
+        self.assertEqual(
+            list(cleaned),
+            ["zero", "false", "nested", "values", "decimal_zero", "float_zero"],
+        )
+        self.assertEqual(dirty, original)
+
+    def test_clean_dict_retains_root_scalars_and_prunes_emptied_lists(self) -> None:
+        """Leave scalar roots unchanged and prune emptied list elements.
+
+        Zero and false remain after adjacent empty containers disappear.
+        """
+        self.assertEqual(clean_dict(0), 0)
+        self.assertIs(clean_dict(False), False)
+        self.assertEqual(clean_dict([{}, {"empty": []}, 0, False]), [0, False])
 
     def test_to_kebab_case(self) -> None:
         """Ship-broken contract: to_kebab_case must convert CamelCase and

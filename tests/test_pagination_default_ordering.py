@@ -2,9 +2,9 @@
 """Regression — the "ordering" argument works with the DEFAULT paginator.
 
 Every paginated list field advertises an "ordering" argument built from the
-paginator's "to_graphql_fields()". With the SHIPPED defaults
+paginator's "to_graphql_fields()". With the FORMER shipped defaults
 ("DEFAULT_PAGINATION_CLASS" = "LimitOffsetGraphqlPagination",
-"DEFAULT_PAGE_SIZE" = None, "MAX_PAGE_SIZE" = None) the resolved paginator is
+"DEFAULT_PAGE_SIZE" = None, "MAX_PAGE_SIZE" = None) the resolved paginator was
 UNBOUNDED, and "LimitOffsetGraphqlPagination.paginate_queryset" returned the
 queryset untouched from its unbounded early-return — BEFORE the ordering was
 ever read. The argument was therefore present in the schema (GraphiQL
@@ -19,7 +19,7 @@ ordered correctly — which is why the defect never showed up in the suite.
 Pinned here, end-to-end through a compiled "DjangoGraphQLSchema" and
 "graphql_sync" against a real database:
 
-* the default (unbounded) paginator orders ascending and descending, for the
+* the default paginator orders ascending and descending, for the
   single-term, multi-term and camelCase spellings;
 * an invalid ordering field is rejected with the SAME clean
   "Invalid ordering field" error the bounded paginator already produced
@@ -106,14 +106,14 @@ class ExplicitMemberListType(DjangoListObjectType):
 class DefaultMemberListType(DjangoListObjectType):
     """List container with NO "pagination", so the global default applies.
 
-    This is the container under test: the resolved default paginator is the
-    unbounded one whose "ordering" argument used to be inert.
+    This is the container under test: it exercises the default paginator,
+    whose formerly unbounded "ordering" argument used to be inert.
     """
 
     class Meta:
         """Bind the container to "DefaultOrderMember" with no paginator.
 
-        Omitting "pagination" is what resolves the unbounded
+        Omitting "pagination" resolves the global
         "DEFAULT_PAGINATION_CLASS" instance under test.
         """
 
@@ -222,7 +222,7 @@ def _ordering(value: str) -> str:
 
 
 class DefaultPaginatorOrderingTest(TestCase):
-    """The unbounded DEFAULT paginator must honor "ordering" on the root list.
+    """The DEFAULT paginator must honor "ordering" on the root list.
 
     Covers ascending, descending, multi-term and camelCase spellings through
     "DjangoListObjectField", the field class the defect was reported on.
@@ -239,16 +239,16 @@ class DefaultPaginatorOrderingTest(TestCase):
         DefaultOrderMember.objects.create(name="a", sort_key=1)
         DefaultOrderMember.objects.create(name="c", sort_key=2)
 
-    def test_default_paginator_is_unbounded(self) -> None:
-        """Assert the shipped defaults really do resolve an unbounded paginator.
+    def test_default_paginator_has_library_size(self) -> None:
+        """Assert the shipped defaults resolve a 100-row paginator without a cap.
 
-        If this fails the rest of this class is testing the bounded paginator
-        by accident, and the regression it guards would go unnoticed.
+        If this fails, the test no longer matches the library's documented
+        default and might mask an accidental size/cap change.
         """
-        assert graphql_api_settings.DEFAULT_PAGE_SIZE is None
+        assert graphql_api_settings.DEFAULT_PAGE_SIZE == 100
         assert graphql_api_settings.MAX_PAGE_SIZE is None
         paginator = graphql_api_settings.DEFAULT_PAGINATION_CLASS()
-        assert paginator.default_limit is None
+        assert paginator.default_limit == 100
         assert paginator.max_limit is None
 
     def test_ordering_argument_is_advertised(self) -> None:
