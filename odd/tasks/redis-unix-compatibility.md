@@ -1,6 +1,6 @@
 # Restore real Redis integration without changing public transports
 
-Status: IN PROGRESS. Repository locator: odd/tasks/redis-unix-compatibility.md.
+Status: CLOSED. Repository locator: odd/tasks/redis-unix-compatibility.md.
 
 ## Objective and scope
 
@@ -79,8 +79,9 @@ verification. Preserve the public TCP/TLS-only SSE URL contract.
   diff checks passed. Changelog mirror RED (one failure) was corrected in both
   CHANGELOG.md and docs/changelog.md before the final full GREEN run.
   Owned Redis PID 1691 exited normally; socket gone, no persistence. All 267
-  protected files unchanged. Implementation commit: recorded at RUX-2 closure.
-- [ ] RUX-2 — Independently verify and close the work unit.
+  protected files unchanged. Implementation commit:
+  a7d9c16108c81014ccdffd03388ac7330f86ee76.
+- [x] RUX-2 — Independently verify and close the work unit.
   Route: delegated verifier, then parent mechanical tracking update.
   Read the exact diff, confirm every previously failing scenario passes without
   mocks or transport substitution, repeat full root and real Redis serially,
@@ -90,7 +91,25 @@ verification. Preserve the public TCP/TLS-only SSE URL contract.
   unrelated library bytes, root coverage artifacts, and owned Redis cleanup.
   Record failed/skipped/unavailable checks honestly. Save tracking closure in a
   local Conventional Commit. Rollback boundary: tracking metadata only.
-  Evidence/commit: pending.
+  Independently verified behavior commit:
+  a7d9c16108c81014ccdffd03388ac7330f86ee76. Evidence:
+  /private/tmp/dgx-rux-2-1vbhrgan/report.md and summary.json.
+  Focal: 34 passed; complete root: 7,784 passed, 6 existing skips, 18 warnings,
+  4,064 subtests; Playground: 98 passed; real Redis: 10 passed, no pytest
+  warnings or skips. Raw/XML agree: branches 5,087/5,324 = 95.5485%; combined
+  18,516/18,974 = 97.5862%. All five added executable lines and both outcomes
+  of the Unix decision are covered; this is not an unrun diff-cover claim.
+  Ruff/check-only format, mypy (84 files), standard/strict docstrings, strict
+  documentation (44 HTML files), and committed-range whitespace passed.
+  Independent bounded diagnostic checks confirmed the 8,192-byte limit and
+  nonblocking behavior. All three secondary causes have direct RED traces;
+  all five formerly failing scenarios and all public TCP scenarios now pass.
+  Owned Redis PID 29340 exited normally; PID absent, socket/private directory
+  removed, no persistence. All 882 tracked and 267 protected files, including
+  84 benchmark artifacts and root coverage outputs, stayed unchanged during
+  verification. Public URL settings are byte-identical to the base.
+  Parent read back the report/proof and repeated diff checks. Closure is a
+  separate tracking-only Conventional Commit; no source changes follow proof.
 
 ## Progress and next step
 
@@ -110,5 +129,13 @@ for the owned endpoints; the unchanged ten-case suite passes as a whole. Final
 normalized full root and applicable quality/docs gates pass. No incompatible
 change was introduced. Authored implementation diff: 131 lines, plus this
 tracker (initially 98 lines); delivery remains below 400 lines with no PR.
-Next: save the behavior work-unit commit, then run independent RUX-2 against
-those exact committed source bytes. RDD remains disabled/unmanaged.
+Behavior work-unit saved locally as a7d9c16108c81014ccdffd03388ac7330f86ee76
+(245 authored changed lines including the initial tracker). Independent RUX-2
+passed on those exact committed source bytes. No required check is failing or
+unavailable. The six skips are five PostgreSQL-only cases and one retired
+Graphene-container case; PostgreSQL and real TLS/failover were not exercised.
+All 358 root benchmark harness unit cases ran, but official measurements and
+snapshots were not regenerated. No PR, push, tag, publishing, installation or
+download occurred. RDD remains disabled/unmanaged, not a native review receipt.
+Next: none for this compatible correction; any further scope requires a new
+request. Local tracking closure records the completed proof without releasing.
