@@ -13,6 +13,7 @@ from django.db import connection, models
 from django.test import RequestFactory
 from django.test.utils import isolate_apps
 from graphql import GraphQLString, graphql_sync
+from packaging.version import Version
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -325,7 +326,8 @@ def test_generated_mutation_persists_reserved_field(
         reserved_name: Pydantic-reserved Django column name under test.
         host_kind: Public generated mutation host to exercise.
     """
-    assert graphql.__version__ == importlib.metadata.version("graphql-core") == "3.3.0"
+    assert graphql.__version__ == importlib.metadata.version("graphql-core")
+    assert Version("3.3.0") <= Version(graphql.__version__) < Version("3.4")
     assert (
         Path(django_graphex.__file__)
         .resolve()

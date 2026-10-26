@@ -257,16 +257,18 @@ class _FactoryOutType:
                 type(item) is decimal.Decimal and item.is_finite() for item in value
             ):
                 values[field_name] = set(value)
-        for field_name, (default, default_input) in self.mutable_defaults.items():
+        for field_name, (default, gql_field) in self.mutable_defaults.items():
             value = values.get(field_name, Undefined)
             # graphql-core hands every execution the same coerced default, so
             # an omitted field is the only case where the value is that object.
+            # 3.3.0 caches on the external default; 3.3.1 caches on the field.
             # Supplied values are already new per request and are left alone.
             if value is not Undefined and (
                 value is default
+                or value is getattr(gql_field, "_memoized_coerced_value", Undefined)
                 or (
-                    default_input is not None
-                    and value is default_input._memoized_coerced_value
+                    gql_field.default is not None
+                    and value is gql_field.default._memoized_coerced_value
                 )
             ):
                 values[field_name] = copy.deepcopy(value)
@@ -1461,6 +1463,7 @@ def compile_input_type(
                     literal=StringValueNode(value=str(default_value))
                 )
                 gql_field.default._memoized_coerced_value = default_value
+                setattr(gql_field, "_memoized_coerced_value", default_value)
             if default_value is not Undefined and is_mutable_default(default_value):
                 mutable_default_candidates[alias] = (
                     field_name,
@@ -1480,9 +1483,9 @@ def compile_input_type(
                     # graphql-core 3.3 preserves JSON variable object identity.
                     # Keep the public printable default unchanged while marking
                     # only its private coerced cache for omitted-field provenance.
-                    gql_field.default._memoized_coerced_value = _OmittedBooleanMap(
-                        default_value
-                    )
+                    marker = _OmittedBooleanMap(default_value)
+                    gql_field.default._memoized_coerced_value = marker
+                    setattr(gql_field, "_memoized_coerced_value", marker)
             if _is_exact_int_set(annotation):
                 set_int_candidates[alias] = (field_name, gql_field)
             if _is_exact_str_set(annotation):
@@ -1679,7 +1682,7 @@ def compile_input_type(
         )
         mutable_defaults.clear()
         mutable_defaults.update(
-            (field_name, (default, gql_field.default))
+            (field_name, (default, gql_field))
             for alias, (
                 field_name,
                 gql_field,

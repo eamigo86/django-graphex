@@ -1705,6 +1705,12 @@ other maps, list-wrapped maps or the global JSON scalar.
     list copy with the same JSON elements. Malformed list defaults retain their
     legacy runtime and metadata behavior.
 
+    Omitted fixed defaults remain separate from explicitly supplied values
+    under supported graphql-core 3.3 versions, including after a
+    permission-scoped schema clone. Mutable defaults are copied for each
+    execution; cloning does not restore hidden input fields or reuse a
+    coerced default when its nested input type has changed.
+
     JSON objects may also contain keys that cannot be GraphQL Names, such as
     `"x-y"`. Those existing runtime defaults remain accepted, but
     `print_schema` and default-value introspection cannot render them as

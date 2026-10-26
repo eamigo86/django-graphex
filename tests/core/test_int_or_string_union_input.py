@@ -541,7 +541,7 @@ def test_custom_equality_leaf_does_not_match_direct_union() -> None:
 
     with pytest.warns(
         UserWarning,
-        match=r"unsupported input field type typing\.Union\[.*CustomLeaf, str\].*falling back to the GraphQLString scalar",
+        match=r"unsupported input field type .*CustomLeaf.*str.*falling back to the GraphQLString scalar",
     ) as caught:
         schema, _received = _schema(R08qCustomInput)
     assert [type(warning.message) for warning in caught] == [UserWarning]
@@ -593,16 +593,18 @@ def test_unapproved_wrapped_union_retains_string_fallback() -> None:
         unrelated: Union[int, float]
         wider: Union[int, str, float, None]
 
-    with pytest.warns(
-        UserWarning,
-        match=r"unsupported input field type typing\.Union\[.*falling back to the GraphQLString scalar",
-    ) as caught:
+    with pytest.warns(UserWarning) as caught:
         schema, _received = _schema(R08qWrappedUnionInput)
     assert len(caught) == 3
     assert all(type(warning.message) is UserWarning for warning in caught)
-    assert "typing.Union[int, str]" in str(caught[0].message)
-    assert "typing.Union[int, float]" in str(caught[1].message)
-    assert "typing.Union[int, str, float, NoneType]" in str(caught[2].message)
+    for warning, members in zip(
+        caught,
+        (("int", "str"), ("int", "float"), ("int", "str", "float", "None")),
+    ):
+        message = str(warning.message)
+        assert "unsupported input field type" in message
+        assert "falling back to the GraphQLString scalar" in message
+        assert all(member in message for member in members)
     sdl = print_schema(schema)
     assert "values: [String!]!" in sdl
     assert "unrelated: String!" in sdl

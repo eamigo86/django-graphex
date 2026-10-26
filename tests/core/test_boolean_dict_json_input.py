@@ -7,12 +7,16 @@ from typing import Dict
 import pytest
 from graphql import (
     GraphQLArgument,
+    GraphQLDefaultInput,
     GraphQLField,
+    GraphQLInputField,
     GraphQLInputObjectType,
     GraphQLNonNull,
     GraphQLObjectType,
     GraphQLSchema,
     GraphQLString,
+    Undefined,
+    get_named_type,
     graphql_sync,
     print_schema,
 )
@@ -265,6 +269,37 @@ def test_fixed_default_omission_and_explicit_same_object_have_distinct_policy() 
     assert print_schema(schema) == baseline
 
 
+def test_two_legacy_defaults_keep_field_local_omission_and_freshness() -> None:
+    """Keep each invalid legacy default isolated across omitted requests.
+
+    Scenario: Two aliased Boolean maps are omitted twice, while explicitly
+    supplying either invalid value remains a client error.
+    """
+    first = {"legacy": 1}
+    second = {"other": "not a Boolean"}
+
+    class TwoLegacyMaps(InputType):
+        """Exercise two independent fixed defaults on one input object."""
+
+        primary_map: dict[str, bool] = first
+        secondary_map: dict[str, bool] = second
+
+    schema, received = _schema(TwoLegacyMaps, name="TwoLegacyMaps")
+    query = "mutation($payload: TwoLegacyMaps!) { echo(payload: $payload) { result } }"
+    for _ in range(2):
+        omitted = graphql_sync(schema, query, variable_values={"payload": {}})
+        assert omitted.errors is None
+        assert received[-1] == {"primary_map": first, "secondary_map": second}
+        assert received[-1]["primary_map"] is not first
+        assert received[-1]["secondary_map"] is not second
+
+    for field_name, invalid in (("primaryMap", first), ("secondaryMap", second)):
+        supplied = graphql_sync(
+            schema, query, variable_values={"payload": {field_name: invalid}}
+        )
+        assert supplied.errors and len(received) == 2
+
+
 @pytest.mark.parametrize("fixed", ["legacy", [1], 1])
 def test_malformed_fixed_nonobject_default_keeps_omission_policy(
     fixed: object,
@@ -459,6 +494,153 @@ def test_fixed_default_provenance_survives_permission_clone() -> None:
         clone, query, variable_values={"payload": {"publicMap": fixed}}
     )
     assert invalid.errors and len(received) == 1
+
+
+def test_pruned_legacy_default_stays_fresh_without_hidden_sibling() -> None:
+    """Keep an omitted public default fresh without reviving a hidden field.
+
+    Scenario: A permission clone retains only the public Boolean-map default,
+    even after the full schema has separately memoized both defaults.
+    """
+    public = {"legacy": 1}
+    hidden = {"secret": 1}
+
+    class ScopedTwoMaps(InputType):
+        """Declare independently memoized public and permission-gated maps."""
+
+        public_map: dict[str, bool] = Field(default=public, alias="publicMap")
+        hidden_map: dict[str, bool] = Field(default=hidden, alias="hiddenMap")
+
+    input_type = compile_input_type(ScopedTwoMaps, name="ScopedTwoMaps")
+    input_type.fields["hiddenMap"].extensions = {
+        "gdx_required_perms": frozenset({"private"})
+    }
+    full, received = _schema(ScopedTwoMaps, name="ScopedTwoMaps", input_type=input_type)
+    query = "mutation($payload: ScopedTwoMaps!) { echo(payload: $payload) { result } }"
+    assert graphql_sync(full, query, variable_values={"payload": {}}).errors is None
+
+    clone = prune_schema(full, frozenset())
+    cloned = clone.get_type("ScopedTwoMaps")
+    assert set(cloned.fields) == {"publicMap"}
+    assert set(cloned.out_type.boolean_maps) == {"public_map"}
+    assert set(cloned.out_type.mutable_defaults) == {"public_map"}
+    for _ in range(2):
+        omitted = graphql_sync(clone, query, variable_values={"payload": {}})
+        assert omitted.errors is None
+        assert received[-1] == {"public_map": public}
+    received[-2]["public_map"]["legacy"] = False
+    assert received[-1]["public_map"] == public
+    assert public == {"legacy": 1}
+    denied = graphql_sync(
+        clone, query, variable_values={"payload": {"hiddenMap": hidden}}
+    )
+    assert denied.errors and len(received) == 3
+
+
+@pytest.mark.parametrize("grants", [frozenset(), frozenset({"private"})])
+def test_clone_first_external_json_list_default_stays_fresh(
+    grants: frozenset[str],
+) -> None:
+    """Copy a mutable external default per request in both permission views.
+
+    Args:
+        grants: Permission signature used to clone the full schema.
+    """
+
+    class JsonListDefault(InputType):
+        """Expose a mutable JSON list and one permission-gated sibling."""
+
+        entries: list[dict] = [{"enabled": True}]
+        private_note: str = "hidden"
+
+    input_type = compile_input_type(JsonListDefault, name="JsonListDefault")
+    input_type.fields["privateNote"].extensions = {
+        "gdx_required_perms": frozenset({"private"})
+    }
+    full, received = _schema(
+        JsonListDefault, name="JsonListDefault", input_type=input_type
+    )
+    clone = prune_schema(full, grants)
+    cloned = clone.get_type("JsonListDefault")
+    assert ("privateNote" in cloned.fields) is ("private" in grants)
+    query = (
+        "mutation($payload: JsonListDefault!) { echo(payload: $payload) { result } }"
+    )
+    first = graphql_sync(clone, query, variable_values={"payload": {}})
+    assert first.errors is None
+    assert received[-1]["entries"] == [{"enabled": True}]
+    received[-1]["entries"][0]["enabled"] = False
+    second = graphql_sync(clone, query, variable_values={"payload": {}})
+    assert second.errors is None
+    assert received[-1]["entries"] == [{"enabled": True}]
+    assert JsonListDefault.model_fields["entries"].default == [{"enabled": True}]
+
+
+def test_pruned_nested_input_does_not_inherit_warmed_private_memo() -> None:
+    """Do not reuse a full-schema default after its nested type loses a field.
+
+    Scenario: A full-schema default is coerced before pruning a protected
+    nested field; the clone must evaluate its narrower type independently.
+    """
+    child = GraphQLInputObjectType(
+        "PrivateChild",
+        {
+            "public": GraphQLInputField(GraphQLString),
+            "secret": GraphQLInputField(
+                GraphQLString,
+                extensions={"gdx_required_perms": frozenset({"private"})},
+            ),
+        },
+    )
+    parent = GraphQLInputObjectType(
+        "ParentWithDefault",
+        {
+            "child": GraphQLInputField(
+                child,
+                default=GraphQLDefaultInput(value={"public": "ok", "secret": "hidden"}),
+            )
+        },
+    )
+    received: list[dict[str, object]] = []
+
+    def capture(_root: object, _info: object, payload: dict[str, object]) -> str:
+        """Record only values that reach the resolver.
+
+        Args:
+            _root: Unused root object.
+            _info: Unused execution context.
+            payload: Coerced parent input.
+
+        Returns:
+            A constant acknowledgement.
+        """
+        received.append(payload)
+        return "ok"
+
+    full = GraphQLSchema(
+        query=GraphQLObjectType(
+            "RootWithDefault",
+            {
+                "echo": GraphQLField(
+                    GraphQLString,
+                    args={"payload": GraphQLArgument(parent)},
+                    resolve=capture,
+                )
+            },
+        )
+    )
+    query = "{ echo(payload: {}) }"
+    assert graphql_sync(full, query).errors is None
+    assert received[-1] == {"child": {"public": "ok", "secret": "hidden"}}
+
+    clone = prune_schema(full, frozenset())
+    assert set(clone.get_type("PrivateChild").fields) == {"public"}
+    source_field = full.get_type("ParentWithDefault").fields["child"]
+    cloned_field = clone.get_type("ParentWithDefault").fields["child"]
+    assert get_named_type(source_field.type) is not get_named_type(cloned_field.type)
+    assert getattr(cloned_field, "_memoized_coerced_value", Undefined) is Undefined
+    result = graphql_sync(clone, query)
+    assert result.errors and len(received) == 1
 
 
 def test_field_selection_and_replacement_remove_stale_boolean_map_metadata() -> None:

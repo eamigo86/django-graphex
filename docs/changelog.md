@@ -389,6 +389,10 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Preserve omitted input defaults across graphql-core 3.3.0 and 3.3.1,
+  including permission-scoped schema clones. Mutable values remain fresh per
+  execution; explicit invalid values and hidden input fields remain rejected.
+
 - Keep published direct many-to-many filters available on Django 5.2 while
   rejecting hidden relation targets. Base-install tests also collect without
   importing the optional Channels subscription implementation.

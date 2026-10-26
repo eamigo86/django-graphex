@@ -166,17 +166,45 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   all diffs and reran both new/relevant contracts on 5.2 without Channels: PASS.
   Official disposable profiles are under /private/tmp/rdc1-YKI1Kn; originals
   unchanged. Report: /private/tmp/rdc1-YKI1Kn/RDC1-report.md.
-  Local coherent commit: pending immediately after this evidence update.
-- [ ] RDC-2 — Restore omitted-default provenance across supported dependency
+  Local coherent commit: 866ddd276df527d2af47192221eb8eae8273eb5f.
+  RDD remains OFF; independent final verification is still required.
+- [x] RDC-2 — Restore omitted-default provenance across supported dependency
   patches, and replace stale assertions with semantic tests. Separate actual
   regressions from exact graphql-core patch and Python-specific type-repr
   expectations. Reproduce Boolean-map and IntOrString defaults while varying
   graphql-core/Pydantic deliberately; preserve explicit-invalid rejection,
   mutable-default freshness, printed SDL and introspection. RED before minimum
   compiler fix; no public scalar/default contract changes without approval.
-  Own core/input_compiler.py, implicated default/native-base/reserved-field
-  tests and matching docs/changelog. Verify latest isolated and locked full
-  suites plus focused cross-version cases. Evidence/commit: pending.
+  Own core/input_compiler.py, core/schema_pruner.py, implicated default/
+  native-base/reserved-field tests and matching docs/changelog. Controlled
+  reproduction isolated graphql-core 3.3.1 moving default memoization from
+  GraphQLDefaultInput to GraphQLInputField; Pydantic 2.14 alone affects the
+  stale invalid-Meta expectation, not the omitted-default regression.
+  Additional pruner ownership is parent-authorized within the same compatible
+  fix: retain only the exact existing _memoized_coerced_value for surviving
+  fields whose named GraphQL type preserves identity, never by name/equality
+  or for remapped input objects. Independent read-only assumption challenge
+  found this safe only with unchanged permission filtering and per-execution
+  deepcopy; it is not implementation approval. Require FULL-first AND clone-
+  first mutable list/JSON omissions across two permission signatures, hidden-
+  sibling and explicit-invalid refusal, and a warmed remapped-input negative
+  control. Preserve Undefined identity and the effective memo-owner path.
+  Parent updates only this ownership record while the writer holds pruner
+  edits; record that authorized parent-only tracker change in preservation.
+  Verify latest isolated and locked full
+  suites plus focused cross-version cases. Report:
+  /private/tmp/rdc2-6NNKYG/RDC2-report.md. Controlled RED separated 25 graphql-
+  3.3.1 default failures from one Pydantic-2.14 stale exception assertion.
+  Final focal: 134 passed in each of four disposable profiles. Locked and
+  latest full: 7,793 passed, 7 justified skips, 4,064 subtests; branches
+  5,095/5,332 = 95.55514%, combined 18,541/18,999 = 97.58935%, raw/XML agree.
+  Latest's single JSONField deprecation belongs to RDC-3 below, not filtered.
+  Ruff/import normalization and final focal, mypy, docstrings, Bandit,
+  strict docs/44-page anchors and preservation passed. Initial missing-
+  editable metadata failures are retained as harness failures, not hidden.
+  Parent inspected runtime/test/docs diffs and reran four cache-security/
+  freshness cases on graphql-core 3.3.1: PASS. Independent full normalized-
+  tree verification still pending. Local coherent commit: pending now.
 - [ ] RDC-3 — Close the real Codecov patch deficit without weakening gates.
   Read exact missing lines/denominator from hosted evidence where available,
   add meaningful regression coverage for real branches, and retain every
@@ -192,6 +220,11 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   61 partials). Do not replace the failed check's result with later API data.
   A fresh corrected-head check must reconcile this; no padding unrelated tests
   or lowering thresholds. Native-schema partial lines are outside the PR diff.
+  New latest-only warning to evaluate: tests/test_exact_null_filtering.py:265,
+  RemovedInDjango2028Warning for JSONField exact=None used as the JSON-null
+  oracle. Own this test's compatible oracle update if supported JSONNull is
+  available, keeping JSON scalar null distinct from SQL NULL and retaining
+  Django 5.2/6.0 behavior. No runtime-filter semantic change or warning filter.
 - [ ] RDC-4 — Independently verify, push and repeat all hosted checks. Verify
   protected original/frozen data and environments before/after; no benchmark
   regeneration. Push only the candidate branch through eamigo86 with no tags.
@@ -214,8 +247,9 @@ PR #254 is open and attached. Current observed head b74659f and run
 40380745811 have 9 pass/8 fail/3 expected skips/0 pending. Source diagnosis
 was read-only at that stage. The human has now authorized the bounded
 corrective units above with TDD, disposable official dependencies and all
-checks repeated. RDC-1 passed locally; next RDC-2 restores omitted-default
-provenance under the actually resolved versions. Keep gates/support intact;
+checks repeated. RDC-1/RDC-2 passed locally; next RDC-3 evaluates the new
+JSON-null test warning and compatibility documentation, then independent
+verification and a fresh hosted Codecov status. Keep gates/support intact;
 consult before any incompatible change. Prior local tracking commit 6b620e0
 is unpushed and can travel with verified corrections, not a standalone rerun.
 No merge, tag, workflow dispatch or publication. Rollback for this metadata

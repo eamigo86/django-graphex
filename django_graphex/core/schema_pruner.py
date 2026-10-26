@@ -61,6 +61,7 @@ from graphql import (
     GraphQLObjectType,
     GraphQLSchema,
     GraphQLUnionType,
+    Undefined,
     get_named_type,
     is_enum_type,
     is_input_object_type,
@@ -469,11 +470,31 @@ class _Pruner:
                     if name in surviving
                 },
             )
-        kwargs["fields"] = lambda g=gtype: {
-            fname: self._clone_input_field(ifield)
-            for fname, ifield in self._filtered_input_fields[g.name].items()
-            if self._filter_key_survives(g, ifield)
-        }
+
+        def clone_fields(g: Any = gtype) -> dict[str, Any]:
+            """Build surviving fields and bind mutable defaults to their clones.
+
+            Args:
+                g: Original input type whose fields are projected.
+
+            Returns:
+                Permission-scoped input fields.
+            """
+            fields = {
+                fname: self._clone_input_field(ifield)
+                for fname, ifield in self._filtered_input_fields[g.name].items()
+                if self._filter_key_survives(g, ifield)
+            }
+            out_type = kwargs["out_type"]
+            if isinstance(out_type, _FactoryOutType):
+                for wire_name, cloned_field in fields.items():
+                    out_name = cloned_field.out_name or wire_name
+                    if out_name in out_type.mutable_defaults:
+                        default, _original_field = out_type.mutable_defaults[out_name]
+                        out_type.mutable_defaults[out_name] = (default, cloned_field)
+            return fields
+
+        kwargs["fields"] = clone_fields
         return type(gtype)(**kwargs)
 
     def _filter_key_survives(self, gtype: Any, ifield: Any) -> bool:
@@ -577,10 +598,23 @@ class _Pruner:
         return perms is None or frozenset(perms) <= self._granted
 
     def _clone_input_field(self, ifield: Any) -> Any:
-        """Clone a single input field, remapping its type."""
+        """Clone a surviving input field without sharing remapped-type memos.
+
+        Args:
+            ifield: Original surviving input field.
+
+        Returns:
+            Type-remapped field with any safe coerced-default memo.
+        """
         kwargs = ifield.to_kwargs()
         kwargs["type_"] = self._remap_type(ifield.type)
-        return type(ifield)(**kwargs)
+        cloned = type(ifield)(**kwargs)
+        memo = getattr(ifield, "_memoized_coerced_value", Undefined)
+        if memo is not Undefined and get_named_type(ifield.type) is get_named_type(
+            cloned.type
+        ):
+            setattr(cloned, "_memoized_coerced_value", memo)
+        return cloned
 
     def _rebuild_fields(self, type_name: str) -> dict[str, GraphQLField]:
         """Return the surviving, type-remapped field map for a cloned type."""
