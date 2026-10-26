@@ -1,6 +1,6 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: CORRECTING_HOSTED_FAILURES. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: LOCAL_CORRECTIONS_VERIFIED_AWAITING_HOSTED_CHECKS. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
 ## Objective and authority
 
@@ -237,7 +237,9 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   docs contract checks them, with no renamed factors or changed support bounds.
   Ruff, mypy, docstrings, Bandit, strict docs/44-page anchors and preservation
   passed. Independent normalized full suites and fresh hosted Codecov remain
-  pending; no gate has been lowered. Local coherent commit: pending now.
+  pending; no gate has been lowered. Local coherent commit:
+  0bd7c908b0484ee595e87ed97b8136120d62c458. Parent spot-check: 7 passed on
+  Django 6.1 with the deprecation promoted to error.
 - [ ] RDC-4 — Independently verify, push and repeat all hosted checks. Verify
   protected original/frozen data and environments before/after; no benchmark
   regeneration. Push only the candidate branch through eamigo86 with no tags.
@@ -245,6 +247,25 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   all applicable jobs and external Codecov statuses green, with only expected
   publication skips. Retain failed prior evidence; no retry-until-green or
   unsupported success claim. Evidence/commit: pending, then close RD-4.
+  Independent local verdict PASS_SCOPED at 0bd7c90, report:
+  /private/tmp/rdc4-independent-fmiy4s4_/RDC4-report.md and status.json.
+  Locked 6.0.8/core3.3.0 and latest 6.1.2/core3.3.1 full suites each pass
+  7,794 tests, 7 justified skips and 4,064 subtests, with zero test warnings.
+  Pure branches 5,095/5,332 = 95.55514%; combined 18,541/18,999 = 97.58935%,
+  raw/XML reconciled and all original global thresholds intact.
+  Fresh base Django5.2.18/core3.3.1/Pydantic2.14.1 truly without Channels:
+  7,063 passed, 39 justified optional/service skips, 4,064 subtests; base's
+  existing tox coverage policy is unchanged, not falsely reported above 95%.
+  Playground 98, benchmark contracts 358 (no timing), focal base 306,
+  warning/docs 14, quality/security, strict docs/44 anchors all passed.
+  Local cumulative diff cover 98.63425%; not an actual Codecov status.
+  Eight before/after inventories match, including original/frozen data and
+  prior proof. External base-runner cache-option exit4 was retained and only
+  that incompatible external argument removed before the valid final run.
+  No source findings remain within these corrections. RDD OFF; unavailable
+  native risk assessment was not substituted for independent proof.
+  Parent next commits this metadata and pushes the verified correction batch;
+  all actual hosted checks on the resulting new head remain PENDING.
 
 ## Progress and next step
 
@@ -260,9 +281,10 @@ PR #254 is open and attached. Current observed head b74659f and run
 40380745811 have 9 pass/8 fail/3 expected skips/0 pending. Source diagnosis
 was read-only at that stage. The human has now authorized the bounded
 corrective units above with TDD, disposable official dependencies and all
-checks repeated. RDC-1/RDC-2 passed locally; next RDC-3 evaluates the new
-JSON-null test warning and compatibility documentation, then independent
-verification and a fresh hosted Codecov status. Keep gates/support intact;
+checks repeated. RDC-1/RDC-2 and RDC-3's test/docs portion passed locally;
+independent normalized full verification also passed. Next push the verified
+batch and observe every hosted check, including fresh Codecov, before closure.
+Keep gates/support intact;
 consult before any incompatible change. Prior local tracking commit 6b620e0
 is unpushed and can travel with verified corrections, not a standalone rerun.
 No merge, tag, workflow dispatch or publication. Rollback for this metadata
