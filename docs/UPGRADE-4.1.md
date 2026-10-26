@@ -539,6 +539,64 @@ IDs to select parents. An automatic reverse output accessor remains required:
 an explicitly declared or permission-pruned relation still has no filter path.
 See [reverse-FK filter scope](usage/filtering.md#reverse-fk-filter-scope).
 
+### Foreign keys targeting a non-primary-key column
+
+If a child uses `ForeignKey(Parent, to_field="code")`, reverse-FK filters and
+windowed nested-list counts must correlate against `Parent.code`, not the
+parent's primary key. In 4.0.0, a parent with `pk=1, code=101` could be
+mistaken for one with `pk=2, code=1` when filtering their children, and a
+nested `totalCount` could count another parent's rows. Both paths now follow
+the foreign key's actual target column. Ordinary foreign keys targeting the
+parent primary key are unaffected.
+
+```python
+from django.db import models
+
+class Parent(models.Model):
+    code = models.IntegerField(unique=True)
+    name = models.CharField(max_length=10)
+
+class Child(models.Model):
+    parent = models.ForeignKey(
+        Parent, to_field="code", related_name="children", on_delete=models.CASCADE
+    )
+    label = models.CharField(max_length=10)
+```
+
+For example, let parents A, B and C have `(pk, code)` values `(1, 101)`,
+`(2, 1)` and `(101, 5)`. Give A a child labelled `y`, B children `x`, `b1`,
+`b2`, and C children `c0`, `c1`, `c2`. This reverse filter selects A and C,
+not B; it is the complement of a visible child labelled `x`:
+
+```graphql
+query {
+  parents(filter: { children: { not: { label: { exact: "x" } } } }) {
+    results { name }
+  }
+}
+```
+
+The same crossed keys must not affect nested pagination or its unsliced count:
+
+```graphql
+query {
+  parents {
+    results {
+      name
+      children {
+        totalCount
+        results(limit: 2, offset: 0) { label }
+      }
+    }
+  }
+}
+```
+
+The counts are A: 1, B: 3 and C: 3, even though each result page contains
+at most two children. Review custom schemas with non-primary-key `to_field`
+relations; the separate destination `get_queryset` visibility rule above
+still applies when a child output type defines that hook.
+
 ### Review filters that traverse an M2M relation
 
 Both forward and reverse M2M filter paths now apply the destination type's

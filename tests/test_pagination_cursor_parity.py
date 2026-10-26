@@ -143,8 +143,8 @@ def test_cursor_validation_matrix_is_identical_on_both_paths(
         ("decimal", "9" * 400, False),
         ("decimal", "-1e999", False),
         ("decimal", "1e10000", False),
-        # More fractional digits than decimal_places=2 can never match a stored
-        # value: valid, and compared exactly (see the exact-page tests below).
+        # Finer-than-column boundaries are valid and compared exactly; SQLite
+        # can physically store finer values and representable ties (see below).
         ("decimal", "1e-999", False),
         ("decimal", "0.001", False),
         ("decimal", "2.50", False),

@@ -1413,6 +1413,9 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Docs and tests
 
+- Document exact Decimal/BigInt directive results and the reverse-FK
+  `to_field` filter/count migration, with tests that execute the published
+  operations; no library behavior changes.
 - Correct both Playground cursor walkthroughs to match `pageInfo(first: ...)`
   with `results(first: ...)`, and publish a post in the anonymous subscription
   walkthroughs. Executable tests now run the copied operations and their

@@ -38,7 +38,7 @@ Evidence: observation 25765 and
   Observe RED from page-size mismatch and draft suppression before editing docs.
   Fix both copies, retain anonymous-draft suppression tests, and update mirrored
   changelogs. Keep Channels-only tests in the Playground transport module.
-- [ ] **T2 — Complete API/migration guidance and correct the stale comment.**
+- [x] **T2 — Complete API/migration guidance and correct the stale comment.**
   Delegated direct, same single writer after T1: execute the numeric reference's
   literal operation with exact Decimal/BigInt outputs, and literal upgrade
   operations against existing crossed-PK/target fixtures. Observe the documented
@@ -121,9 +121,32 @@ comment. Neither rollback changes library semantics or benchmark measurements.
   and no required gate failed. It was not expanded into this authorized scope.
 - T1 evidence: `writer/t1/` and `verification/t1/report.md` under the baseline
   evidence directory; all 98 protected files unchanged.
-- T1 local commit: being recorded with tests/docs/helper and this tracker.
+- T1 local commit: `f544eed` (tests/docs/helper and initial tracker),
+  **457 additions + 7 deletions**, including 129 tracker lines; 335 authored
+  source/test/public-doc changed lines. Rollback is this work unit alone.
   Risk assessment was unassessable/high because of the existing untracked
   inventory. RDD remains disabled/unmanaged; independent verification provided
   the additional functional check, with no native review started.
-- T2/T3, final root coverage and docs build: pending.
-- Next: record T1 commit identity, then the same bounded writer implements T2.
+- T2: numeric guidance now includes exact Decimal/BigInt wire examples;
+  upgrade guidance explains non-PK targets and demonstrates reverse filters and
+  nested counts; the inaccurate SQLite comment is corrected without changing
+  cursor assertions. Mirrored changelog additions remain under 4.1 Unreleased.
+- T2 RED: three missing-documentation failures before doc edits, not runtime
+  failures. Initial GREEN had 251 related tests. Independent readback found a
+  richer fixture masking an incomplete Python model snippet (`name` missing).
+  A new literal Python/GraphQL AST contract first failed on the missing field;
+  adding the field resolved it. Initial quality DOC002 and the partial report
+  are retained, not hidden or treated as proof of a source implementation bug.
+- Corrected T2 independent and writer checks: **252 related tests passed**;
+  all four new root documentation tests also pass with Channels/Daphne imports
+  prohibited. Existing Float example and cursor assertions remain valid.
+  Parent reran the four root documentation tests: **4 passed**.
+- T2 Ruff format/check, mypy, configured standard/strict docstrings, changelog
+  mirror and whitespace checks passed. All 98 protected files remain unchanged.
+  Evidence: `writer/t2/`, `verification/t2/report-initial.md`,
+  `verification/t2/report-corrected.md` and `parent-spot-final.log`.
+- T2 local commit: being recorded with its docs/tests and this evidence. No
+  production implementation, API, defaults or benchmark artifacts changed.
+- T3 final root coverage, whole-Playground validation and docs build: pending.
+- Next: record T2 commit identity, then independently verify the frozen final
+  candidate. Keep all source/tests/docs bytes unchanged during final checks.

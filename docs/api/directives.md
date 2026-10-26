@@ -534,6 +534,14 @@ Return the absolute value of a number.
     fields: when the field's GraphQL type is `String`, the result is returned as
     a string. A `null` value passes through unchanged (returns `null`).
 
+    They also compute directly on `Decimal` and `BigInt` without converting to
+    binary floating point. `@round` uses half-to-even rounding for `Decimal`.
+    The field's scalar still controls the wire value: `Decimal` and `BigInt`
+    serialize as exact JSON strings, while `Float` remains a JSON number.
+    Null values remain `null` on all three scalar types. `@number` and
+    `@currency` leave `Decimal` and `BigInt` values raw rather than changing
+    their scalar output into formatted text.
+
 #### Example
 
 ```graphql
@@ -546,6 +554,43 @@ query {
   }
 }
 ```
+
+#### Exact Decimal and BigInt example
+
+For an `item` with `amt = Decimal("-2.665")`, `big = -9007199254740993`
+(beyond JavaScript's exact integer range), and `flt = 4.27`, the same
+mathematical directives retain the declared output scalars:
+
+```graphql
+query {
+  item {
+    roundedHalf: amt @round(precision: 2)
+    floored: amt @floor
+    ceiled: amt @ceil
+    absolute: amt @abs
+    roundedBig: big @round(precision: -1)
+    absoluteBig: big @abs
+    floatRounded: flt @round(precision: 1)
+  }
+}
+```
+
+```json
+{
+  "item": {
+    "roundedHalf": "-2.66",
+    "floored": "-3",
+    "ceiled": "-2",
+    "absolute": "2.665",
+    "roundedBig": "-9007199254740990",
+    "absoluteBig": "9007199254740993",
+    "floatRounded": 4.3
+  }
+}
+```
+
+If the source fields are `null`, these selections return `null` rather than
+numeric zero or the text `"None"`.
 
 ---
 
