@@ -5,7 +5,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SERIES = "core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c"
+SERIES = "core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e"
+PREVIOUS_SERIES = "core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c"
 RESULTS = ROOT / "benchmarks/results" / SERIES
 LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")
 OPERATIONS = ("flat_list", "nested", "single", "filtered", "create_comment")
@@ -25,7 +26,7 @@ def _load_result(library: str, authors: int) -> dict:
     return json.loads((RESULTS / f"{prefix}{library}.json").read_text(encoding="utf-8"))
 
 
-def test_comparison_intro_names_all_five_retained_series() -> None:
+def test_comparison_intro_names_all_six_retained_series() -> None:
     """Count the current series and each retained historical comparison.
 
     The introduction must not omit either earlier 4.0.0 result series.
@@ -35,8 +36,9 @@ def test_comparison_intro_names_all_five_retained_series() -> None:
         "## Current core33 comparison", maxsplit=1
     )[0]
     for label in (
-        "five distinct benchmark series",
+        "six distinct benchmark series",
         SERIES,
+        PREVIOUS_SERIES,
         "core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e",
         "core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9",
         "3.1.1-source core33",
@@ -80,6 +82,33 @@ def test_current_comparison_table_is_derived_from_eight_artifacts() -> None:
     assert match.group(1).strip() == "\n".join(rows)
 
 
+def test_current_write_mean_table_uses_run_mean_medians() -> None:
+    """Bind the write mean comparison to the separate run-mean statistic.
+
+    The published table must not substitute the p50 statistic for a mean.
+    """
+    page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
+    match = re.search(
+        r"<!-- core33-write-mean:start -->\n(.*?)\n<!-- core33-write-mean:end -->",
+        page,
+        re.DOTALL,
+    )
+    assert match is not None
+    rows = [
+        "| Comments | GraphEx mean | Ariadne mean | GraphEx less mean time |",
+        "| :-- | --: | --: | --: |",
+    ]
+    for authors in (1000, 2000):
+        graphex = _load_result("graphex", authors)["operations"]["create_comment"]
+        ariadne = _load_result("ariadne", authors)["operations"]["create_comment"]
+        reduction = 100 * (1 - graphex["mean_ms"] / ariadne["mean_ms"])
+        rows.append(
+            f"| {authors * 50:,} | {graphex['mean_ms']:.4f} ms | "
+            f"{ariadne['mean_ms']:.4f} ms | {reduction:.2f}% |"
+        )
+    assert match.group(1).strip() == "\n".join(rows)
+
+
 def test_current_results_guidance_distinguishes_provenance_and_statistics() -> None:
     """Distinguish the new whole-stack comparison from historical releases.
 
@@ -87,7 +116,7 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
     """
     page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
     current = page.split("## Current core33 comparison", maxsplit=1)[1].split(
-        "### Historical core33 3.1.1-source comparison", maxsplit=1
+        "### Historical core33 4.1.0 comparison", maxsplit=1
     )[0]
     current = " ".join(current.replace("**", "").split())
     result = _load_result("graphex", 1000)
@@ -107,7 +136,8 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
     ):
         assert token in current
     assert f"benchmarks/results/{SERIES}/" in current
-    assert "460efb9b7c29b097f2939c05e79514f2fda3242c" in current
+    assert PREVIOUS_SERIES not in current
+    assert PREVIOUS_SERIES in page.split("### Historical core33 4.1.0 comparison", 1)[1]
     assert "Historical core33 4.0.0 comparison" in page
     assert "Historical core33 4.0.0 pre-fragment comparison" in page
     assert "benchmarks/run_publish_core33.py" in current
@@ -118,25 +148,67 @@ def test_current_public_summary_uses_new_artifact_values() -> None:
 
     The expected ratios come from the committed portable result fields.
     """
-    ratios = []
+    mean_reductions = []
+    mean_pairs = []
+    p50_ratios = []
     for authors in (1000, 2000):
         graphex = _load_result("graphex", authors)
         ariadne = _load_result("ariadne", authors)
-        graphex_ms = graphex["operations"]["create_comment"]["p50_ms"]
-        ariadne_ms = ariadne["operations"]["create_comment"]["p50_ms"]
-        ratios.append(graphex_ms / ariadne_ms)
+        graphex_op = graphex["operations"]["create_comment"]
+        ariadne_op = ariadne["operations"]["create_comment"]
+        mean_pairs.append((graphex_op["mean_ms"], ariadne_op["mean_ms"]))
+        mean_reductions.append(
+            100 * (1 - graphex_op["mean_ms"] / ariadne_op["mean_ms"])
+        )
+        p50_ratios.append(graphex_op["p50_ms"] / ariadne_op["p50_ms"])
     for path in (ROOT / "README.md", ROOT / "docs/why.md"):
-        text = path.read_text(encoding="utf-8")
+        text = " ".join(path.read_text(encoding="utf-8").split())
         assert SERIES in text
-        for ratio in ratios:
+        for reduction in mean_reductions:
+            assert f"{reduction:.2f}% less mean time" in text
+        for graphex_mean, ariadne_mean in mean_pairs:
+            assert f"{graphex_mean:.4f} vs {ariadne_mean:.4f} ms" in text
+        for ratio in p50_ratios:
             assert f"{ratio:.2f}×" in text
+        assert "local SQLite" in text
+        assert "not a paired historical comparison" in text
+        assert "mean of three run means" not in text
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         current = path.read_text(encoding="utf-8").split("## 3.1.1", 1)[0]
         assert SERIES in current
         assert "4.1.0 source" in current
         assert _load_result("graphex", 1000)["measurement_source"]["commit"] in current
-        for ratio in ratios:
+        for reduction in mean_reductions:
+            assert f"{reduction:.2f}% less mean time" in current
+        for ratio in p50_ratios:
             assert f"{ratio:.2f}×" in current
+        assert "local SQLite" in current
+
+
+def test_current_batch_ranking_is_scoped_to_both_statistics() -> None:
+    """Require the local-only ranking to match both published statistics.
+
+    This assertion does not generalize the ranking beyond the selected batch.
+    """
+    page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
+    current = page.split("## Current core33 comparison", 1)[1].split(
+        "### Historical core33 4.1.0 comparison", 1
+    )[0]
+    current = " ".join(current.split())
+    for authors in (1000, 2000):
+        results = {library: _load_result(library, authors) for library in LIBRARIES}
+        for operation in OPERATIONS:
+            for statistic in ("mean_ms", "p50_ms"):
+                graphex = results["graphex"]["operations"][operation][statistic]
+                assert all(
+                    graphex < results[library]["operations"][operation][statistic]
+                    for library in LIBRARIES
+                    if library != "graphex"
+                )
+    assert (
+        "lowest observed mean and p50 in all ten operation/seed combinations" in current
+    )
+    assert "only in this local batch" in current
 
 
 def test_current_cold_import_table_is_derived_from_eight_artifacts() -> None:

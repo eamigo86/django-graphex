@@ -230,13 +230,20 @@ A fully wired example project lives in [`examples/playground/`](examples/playgro
 [Settings](https://eamigo86.github.io/django-graphex/usage/settings/) and the
 [Migration Guide](https://eamigo86.github.io/django-graphex/migration/).
 
-The [current core33 comparison](docs/why.md#current-core33-comparison) is
-derived from eight committed portable results in `core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c`,
-measured from the 4.1.0 source `460efb9b7c29b097f2939c05e79514f2fda3242c`. In the SQLite
-create-comment operation, GraphEx/Ariadne p50 was 0.55× at 50,000 comments
-and 0.55× at 100,000; these are whole-stack observations under accepted
-background load, not an equal-core or universal performance guarantee.
-Earlier `core33-4.0.0` (two series), 3.1.1-source core33 and 3.1.0 figures remain historical.
+The [current core33 comparison](docs/why.md#current-core33-comparison) uses
+eight committed portable results in
+core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e, measured from
+4.1.0 source f9f4eae81954959ab71e4a9037d5ba06486d6a8e, not a published
+wheel. In the local SQLite
+create-comment operation, GraphEx/Ariadne means were 0.5159 vs 0.9268 ms at
+50,000 comments (44.34% less mean time for GraphEx) and 0.5549 vs 0.9382 ms
+at 100,000 (40.85% less mean time). The separate p50 ratios were 0.54×
+(0.4758/0.8754 ms) and 0.51× (0.4592/0.8978 ms), respectively.
+These are median-of-three-run statistics, not a paired historical comparison:
+the four whole stacks differ in graphql-core version and the host load changed.
+The result is not a PostgreSQL or universal performance claim. The preceding
+core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c and older
+series remain historical.
 
 ## License
 

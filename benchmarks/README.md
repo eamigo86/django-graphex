@@ -223,12 +223,12 @@ records, and staging residue for inspection; no reset or automatic deletion
 occurs. The publisher still refuses an occupied public target.
 
 The [current comparison](../docs/why.md#current-core33-comparison) renders
-all five request p50/SQL cells for both seed sizes directly from the eight
-committed artifacts in `core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c`. Its earlier
-`core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`,
-`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9`, 3.1.1-source core33 and 3.1.0 series remain historical. The
-current series measures 4.1.0 source `460efb9b7c29b097f2939c05e79514f2fda3242c`, not a published
-wheel.
+all five request p50/SQL cells at both seed sizes from eight committed artifacts
+in core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e. The current
+series measures 4.1.0 source f9f4eae81954959ab71e4a9037d5ba06486d6a8e,
+not a published wheel. The preceding
+core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c,
+two 4.0.0 series, 3.1.1-source core33 and 3.1.0 stay historical.
 
 The `replay` mode instead requires `--profile core33 --events`,
 `--raw-manifest`, `--batch-result`, and `--results-root`. It reconstructs the
@@ -259,18 +259,30 @@ prepared comparison should use
 `core33-<version>-<full-measurement-commit>` after the measuring source is frozen,
 not a mutable `latest` pointer. For example, append
 `--series core33-<version>-<full-measurement-commit>` to either command above.
-The current 4.1.0 SQLite result is installed at
-`results/core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c/`. Its eight JSON files were generated from measuring
-source `460efb9b7c29b097f2939c05e79514f2fda3242c` with no harness patch and added in the commit that publishes them;
-publication identity is not measurement identity. The three-run per-statistic medians include
-create-comment GraphEx/Ariadne p50 ratios of 0.55× at 50,000 comments and
-0.55× at 100,000. SQL counts match the 4.0.0 series for every operation and
-library. Whole-stack graphql-core versions differ, and accepted background load
-(about 8-10 load average, against 4-6 for the previous series) was not stable
-throughout the run. The earlier
-`core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/` and
-`core33-4.0.0-01f82ab94c86a5f35918dec4ba51deee02a58ac9/` series remain available; no series is a paired
-baseline or PostgreSQL timing result.
+The current 4.1.0 local SQLite result is installed at
+results/core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e/.
+Its eight portable JSON files come from
+24 validated raw runs: three cyclic rotations of four whole stacks across
+two seed sizes, with five operations, 15 warmups and 100 timed requests per
+operation per run. Source f9f4eae81954959ab71e4a9037d5ba06486d6a8e
+(tree 5a6779d44d6b6746db2d218590a4dabbeb17f03c)
+was measured with the unmodified harness; the later docs commit is not the
+measured source. Every published timing statistic is the median of its three
+run-level statistics. In particular, mean_ms is the median of three run means,
+while p50_ms is the median of three run p50 values, not a pooled percentile.
+The create-comment means are 0.5159 vs 0.9268 ms at 50,000 comments
+(44.34% less mean time for GraphEx) and 0.5549 vs 0.9382 ms at 100,000
+(40.85% less mean time). Separate GraphEx/Ariadne p50 ratios are 0.54× and
+0.51×. GraphEx had the lowest observed mean and p50 in all ten operation/seed
+combinations only in this local batch. SQL counts match the preceding 4.1.0
+series for all operations and libraries. GraphEx/Strawberry used graphql-core
+3.3.0; Graphene/Ariadne used 3.2.13, although all stacks used Python 3.12.11
+and Django 6.0.8. Host load fell from 10.86 to 9.24 on 16 logical CPUs;
+therefore these are load-sensitive whole-stack observations, not a paired
+historical comparison or a universal speedup. They are not PostgreSQL timings
+or statistically significant claims. The previous
+core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c/
+remains unchanged as history. The earlier 4.0.0 series remain available too.
 
 The older `results/core33/` bundle stays intact. Selecting a fresh name does
 not strengthen the existing trusted-parent or pathname-substitution limits.
