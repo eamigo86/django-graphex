@@ -44,7 +44,7 @@ algorithm passed. That prototype is evidence, not production implementation.
   upgrade/pagination guidance, including the stale weak-executor/request-budget
   descriptions. No example/Playground/benchmark change is expected because the
   public API and their configured workloads remain unchanged; verify that claim.
-- [ ] **T2 — Independently verify and record closure.**
+- [x] **T2 — Independently verify and record closure.**
   Route: delegated verification for the numeric correction and a fresh full
   suite/coverage proof; parent performs one spot check and structural readback.
   Record actual failures, skips, warnings, coverage, local commit identities,
@@ -123,6 +123,16 @@ fixes. Original tiny-boundary protection must not be removed independently.
 - Delivery remains local only. The coherent correction exceeds the advisory
   initial forecast; no tests/docs were omitted or compressed to meet it. Any
   future PR size/chain decision remains deferred because PRs are not authorized.
-- T1 work-unit commit: being recorded with this tracker and the verified files.
-  T2 functional checks are complete; final commit identity/mirror closure pending.
-- Next step: create the local work-unit commit, record its identity, and close T2.
+- T1 work-unit commit and T2 functional-check evidence: `577adfb`
+  (`fix(pagination): preserve exact SQLite Decimal cursor boundaries`). Its
+  authored count is **579 additions + 69 deletions**, including **128 tracker
+  lines**; the source/test/public-doc correction is **520 changed lines**.
+  This follow-up tracker-only commit records closure; no verified source bytes
+  are changed after the final proof.
+- RDD disposition for both tasks: **disabled/unmanaged (global off)**; no native
+  review or consent flow was started. Independent functional verification is
+  recorded above and does not claim native review approval.
+- Status: **CLOSED**, with the complete tracker mirrored to Engram. No remaining
+  blocker in this authorized correction. Future PR planning, CI matrix/live
+  PostgreSQL and any release remain outside this local-only task.
+- Next step: maintainer review when desired; no automatic remote action.
