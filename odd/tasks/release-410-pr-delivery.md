@@ -1,6 +1,6 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: IN PROGRESS. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: WAITING_FOR_CI_CORRECTION_SCOPE. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
 ## Objective and authority
 
@@ -82,13 +82,45 @@ review, **not** a release or merge.
   author eamigo86, target main, retained codex head. Closing issue #253 and
   exactly type:breaking-change plus size:exception verified on readback.
   PR attachment succeeded. This evidence is saved in the RD-2 metadata commit.
-- [ ] RD-3 — Observe applicable hosted checks for that exact PR head until
+  RD-2 evidence commit and pushed PR head:
+  b74659f1bb78b674cf4a182d150622b850d49445.
+- [x] RD-3 — Observe applicable hosted checks for that exact PR head until
   terminal. Inventory the matrix, base-install, quality/security, coverage,
   PostgreSQL, docs, Playground, artifact and PR-policy jobs that actually run.
   Record pass/fail/skip with links and collect diagnostics for failures. On a
   PR event, production publication jobs are expected to skip; a skipped
   release job is not a test pass. Do not infer CI-green from local proof or
   from incomplete checks, and do not dispatch a workflow.
+  Observation completed, acceptance FAILED: run 40380745811 for the exact
+  b74659f head is terminal; PR is still open on main with that head.
+  https://github.com/eamigo86/django-graphex/actions/runs/40380745811
+  Final check inventory: 9 pass, 8 fail, 3 expected skips, 0 pending; no
+  separate commit-status contexts. The superseded 414df95 run is excluded.
+  Failed: six Python/Django matrix jobs, base-install and Codecov patch.
+  Django 5.2/base collection reports declared to-many filters as unpublished;
+  the scalar-versus-relation classification must be reproduced before fixing.
+  Django 6.0 matrix reports 26/26/28 test failures, despite local/full coverage
+  proof passing; bounded diagnosis is pending before corrective scope.
+  Codecov patch: 96.41% against 96.43%, not the passing diff-cover gate.
+  Passed: lint-and-security, diff-check, coverage, postgresql, get-version,
+  docs-build, playground, release-artifact and Codecov project.
+  Hosted pure branches 5,087/5,324 = 95.5485%; local changed-line gate 98%;
+  Codecov project 96.72%. Artifact build, single wheel/sdist, external wheel
+  smoke, dependency audit, checksums and upload passed in this PR run.
+  Skipped: publish, create-release and deploy-docs, as required for this PR.
+  Evidence: /private/tmp/pr254-ci-OI1y9k/ci-report.md and status.json.
+  Observation is complete, not CI approval; no retry, gate relaxation or
+  publication occurred. RD-4 remains pending until a corrected head is green.
+  Read-only diagnosis: /private/tmp/pr254-ci-diagnosis-zTXvcP/diagnosis.md.
+  The passing locked job uses Django 6.0.8/graphql-core 3.3.0/Pydantic 2.13.4;
+  the failing django60 tox label actually resolves Django 6.1.2, graphql-core
+  3.3.1 and Pydantic 2.14.1. This difference is observed, not a proven sole
+  root cause. Base-install also imports optional Channels in a core test.
+  Stale exact-version/message assertions are separate from genuine omitted-
+  default symptoms requiring isolated reproduction. Do not pin dependencies
+  blindly, lower coverage gates or narrow public support without approval.
+  Public status comment records the failed candidate without private logs:
+  https://github.com/eamigo86/django-graphex/pull/254#issuecomment-6424751980.
 - [ ] RD-4 — Close the delivery record without releasing. When checks are
   green, record the exact head, PR/issue identities, terminal check evidence,
   remaining release gates and a next-step boundary for maintainer review.
@@ -101,16 +133,17 @@ review, **not** a release or merge.
 Issue #253 was created under eamigo86 and its status:approved label was
 confirmed before PR creation: https://github.com/eamigo86/django-graphex/issues/253.
 The obsolete status:needs-review label was removed under the human's explicit
-approval. RD-1 and RD-2 are complete; RD-3 and RD-4 remain pending.
+approval. RD-1/RD-2 delivery and RD-3 terminal observation are complete;
+RD-4 CI-green closure is pending because eight checks failed.
 The CLI rejected combining --template with --body-file before making a remote
 change; the successful creation used the actual template headings in the body
 and existing enhancement/status labels instead. No duplicate issue was created.
-PR #254 is open and attached. Initial pull-request run:
-https://github.com/eamigo86/django-graphex/actions/runs/40380622029,
-head 414df951840f74cb0e475769c3e86f50683284e6. Its jobs have started, not passed.
-The metadata evidence update will advance the PR head; only terminal checks
-for the resulting exact head can establish completion. No merge or release.
-Hosted CI, release artifacts, advisory results and remote publication remain
-unknown until separately observed or authorized. Rollback for this metadata
+PR #254 is open and attached. Current observed head b74659f and run
+40380745811 have 9 pass/8 fail/3 expected skips/0 pending. Source diagnosis
+is read-only; no implementation correction has been authorized in this
+delivery task. Keep all quality gates intact and consult before any
+incompatible fix. This failure record may be committed locally without a
+new push: do not spend another CI run on unchanged failing implementation.
+No merge, tag, workflow dispatch or publication. Rollback for this metadata
 unit is this task file and its external draft bodies; no package source or
 measurement data is part of the unit.
