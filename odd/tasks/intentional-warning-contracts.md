@@ -1,6 +1,6 @@
 # Assert intentional warnings without hiding diagnostics
 
-Status: IN PROGRESS. Repository locator: odd/tasks/intentional-warning-contracts.md.
+Status: CLOSED. Repository locator: odd/tasks/intentional-warning-contracts.md.
 
 ## Objective and authorized scope
 
@@ -88,8 +88,8 @@ verify warning category and message.
   Documentation: docs/contributing.md plus both changelog mirrors. Initial
   full proof was retained separately before final exact-category tightening;
   the final normalized candidate received a fresh full run. Implementation
-  commit is recorded in the closure metadata after this unit is saved.
-- [ ] WN-2 — Independently verify and close.
+  commit: 14788ebac90dc6ca8d36e75b575fea0b93f2dbc7.
+- [x] WN-2 — Independently verify and close.
   Route: delegated verifier, then parent mechanical tracking closure.
   Verify intentional diagnostics remain emitted, unexpected warnings are not
   hidden, and public behavior/production bytes are unchanged. Independently run
@@ -97,7 +97,24 @@ verify warning category and message.
   Playground and documentation/quality, and verify protected artifact hashes.
   Explicitly report remaining warnings, skips, unavailable checks and limits.
   Save tracking-only closure in a local Conventional Commit.
-  Rollback boundary: tracking metadata only. Evidence/commit: pending.
+  Rollback boundary: tracking metadata only. Independently verified commit:
+  14788ebac90dc6ca8d36e75b575fea0b93f2dbc7. Evidence:
+  /private/tmp/dgx-warn-wn2-r8i846n7/WN-2-report.md and verification-summary.json.
+  Strict focal: 201 passed; standard focal: 201 passed; full root: 7,784 passed,
+  6 existing skips, 4,064 subtests, zero unasserted warning entries; Playground:
+  98 passed. Fresh branch coverage: 5,087/5,324 = 95.5485%; combined:
+  18,516/18,974 = 97.5862%; PID-owned raw data and XML agree.
+  Four external controls each fail exactly one test for the right reason:
+  missing warning, wrong message, additional warning, duplicate warning. These
+  are post-GREEN negative evidence, not invented pre-edit TDD failures.
+  Ruff lint/format, mypy (84 files), standard/strict docstrings, all four
+  changelog contracts, strict docs build (44 HTML files) and diff checks pass.
+  All 883 tracked files and 267 protected artifacts were unchanged during
+  verification, including parent-owned tracking metadata and 84 benchmark
+  artifacts. All 86 production, 38 example/Playground and two Redis integration
+  files are byte-identical to the starting base. No global filters changed.
+  Parent read back proof and repeated diff checks; closure is a tracking-only
+  Conventional Commit with no test or source changes after verification.
 
 ## Progress and next step
 
@@ -105,5 +122,15 @@ The 18 displayed entries and 22 raw emissions are reconciled. Only test warning
 contracts and their documentation changed; existing fallback, schema, mutation
 and field-method checks remain. No global filters, suppression, public API or
 dependency change was necessary. Nine owned files total 160 authored changed
-lines, plus this tracker; delivery remains below 400 lines. Next: save the WN-1
-work unit locally, then independently verify WN-2 against committed test bytes.
+lines, plus this tracker. WN-1 was saved locally as
+14788ebac90dc6ca8d36e75b575fea0b93f2dbc7 (269 authored changed lines).
+WN-2 passed independently against these exact committed test bytes. No required
+check is failing or unavailable. The six skips remain five PostgreSQL-only
+cases and one retired Graphene-container case. Two native macOS startup
+diagnostics are retained in the full log; they are not Python/pytest warnings.
+No Redis service was started or rerun: its unchanged runtime/integration bytes
+retain the earlier historical 10/10 proof, not a new real-Redis result.
+All 358 benchmark harness unit cases ran without regenerating measurements.
+No incompatible change, publication, PR, push, tag, installation or download
+occurred. Next: none for this warning-contract hardening. RDD remains OFF;
+independent functional proof is not a native review receipt.
