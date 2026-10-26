@@ -204,7 +204,10 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   editable metadata failures are retained as harness failures, not hidden.
   Parent inspected runtime/test/docs diffs and reran four cache-security/
   freshness cases on graphql-core 3.3.1: PASS. Independent full normalized-
-  tree verification still pending. Local coherent commit: pending now.
+  tree verification still pending. Local coherent commit:
+  e649ca1de6a06560c23f1d82bf626f8a962c86ec. One automatic local-commit
+  approval review timed out before process creation; its explicitly allowed
+  single retry succeeded. No source/proof retry or remote mutation resulted.
 - [ ] RDC-3 — Close the real Codecov patch deficit without weakening gates.
   Read exact missing lines/denominator from hosted evidence where available,
   add meaningful regression coverage for real branches, and retain every
@@ -225,6 +228,16 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   oracle. Own this test's compatible oracle update if supported JSONNull is
   available, keeping JSON scalar null distinct from SQL NULL and retaining
   Django 5.2/6.0 behavior. No runtime-filter semantic change or warning filter.
+  Local test/documentation work PASS: /private/tmp/rdc3-nyjt69/RDC3-report.md.
+  JSONNull availability and deprecation verified in official installed source;
+  RED on 6.1 with only that warning promoted to error, GREEN across 5.2/6.0/
+  6.1. Related exact-null/docs contracts: 18 passed in each profile. Parent
+  reran latest exact-null plus tox contracts with deprecation-as-error: PASS.
+  Contributor guide accurately describes existing ranges; one new executable
+  docs contract checks them, with no renamed factors or changed support bounds.
+  Ruff, mypy, docstrings, Bandit, strict docs/44-page anchors and preservation
+  passed. Independent normalized full suites and fresh hosted Codecov remain
+  pending; no gate has been lowered. Local coherent commit: pending now.
 - [ ] RDC-4 — Independently verify, push and repeat all hosted checks. Verify
   protected original/frozen data and environments before/after; no benchmark
   regeneration. Push only the candidate branch through eamigo86 with no tags.

@@ -251,6 +251,15 @@ minimum supported version and an upper major-version bound.
 
 ### Test contract
 
+The historical `django60` tox factor is a name, not an exact-version pin:
+its dependency range is `Django>=6.0,<7.0`, so a fresh matrix environment
+may resolve a later 6.x release. Likewise, `django52` uses
+`Django>=5.2,<6.0`. The separately locked coverage environment currently
+uses Django 6.0.8; passing there does not replace testing the versions
+actually resolved by tox. Record installed dependency versions with each
+matrix result rather than inferring them from the factor name. These ranges
+state the tested compatibility policy, not a guarantee about future releases.
+
 Focused RED/GREEN commands must disable the repository-wide coverage options:
 
 ```bash

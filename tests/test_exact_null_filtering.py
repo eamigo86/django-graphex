@@ -238,7 +238,7 @@ def test_public_exact_null_composes_without_changing_empty_nodes(db: None) -> No
 
 
 def test_exact_null_field_matrix_and_json_sql_null(db: None) -> None:
-    """One predicate selects SQL NULL across scalar, date, time, FK and JSON.
+    """Keep JSON scalar null distinct from SQL NULL across Django versions.
 
     Args:
         db: Enable the disposable Django test database.
@@ -262,8 +262,9 @@ def test_exact_null_field_matrix_and_json_sql_null(db: None) -> None:
     ScalarKindsModel.objects.filter(pk=json_null.pk).update(
         json_field=models.Value("null")
     )
+    json_null_oracle = models.JSONNull() if hasattr(models, "JSONNull") else None
     assert list(
-        ScalarKindsModel.objects.filter(json_field__exact=None).values_list(
+        ScalarKindsModel.objects.filter(json_field__exact=json_null_oracle).values_list(
             "pk", flat=True
         )
     ) == [json_null.pk]
