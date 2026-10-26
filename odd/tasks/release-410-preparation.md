@@ -1,6 +1,7 @@
 # Promote the verified benchmark and prepare release 4.1.0 locally
 
-Status: IN PROGRESS. Repository locator: odd/tasks/release-410-preparation.md.
+Status: CLOSED_LOCAL_READY. Repository locator: odd/tasks/release-410-preparation.md.
+Remote delivery, hosted CI and publication are not completed or authorized.
 
 ## Objective and authority
 
@@ -145,7 +146,7 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
   Read-only risk assessment again returned high/unassessable due to untracked
   audit reports. RDD remains globally OFF; independent RP-3 is required, not a
   claimed native approval. No review transaction or mode change was invoked.
-- [ ] RP-3 — Independently verify and close local preparation.
+- [x] RP-3 — Independently verify and close local preparation.
   Route: independent verifier, then parent mechanical tracking closure.
   Recompute all published table/ratio claims from the selected JSON, verify no
   metric/provenance/source drift, and repeat relevant/full tests with coverage
@@ -181,17 +182,47 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
   failed/interrupted proof remains available, not represented as passing.
   Only two owned files changed; all protected data/environments/frozen bytes
   unchanged. Parent inspected diff and reran the regression: PASS.
-  Corrective local commit and independent targeted closure: pending.
+  Corrective local commit: 574c81233200b8519d90fda467bd3e7fe9916f62
+  (83 authored lines with tracking; cumulative feature 676 before final
+  metadata-only closure). Independent targeted closure: PASS_SCOPED, report
+  /private/tmp/core33-rp3-doc-verify-cjkiif73/RP3-DOC-1-independent-addendum.md
+  and RP3-DOC-1-addendum-summary.json. No findings remain within this feature's
+  authorized local scope. All 40 SQL equalities and preserved history verified;
+  15 focal contracts and strict docs/44-page anchors passed again. The verifier
+  independently reconciled the writer's normalized 7,788/6/4,064 full proof
+  and raw/XML coverage without needlessly repeating the unchanged suite.
+  All six explicit before/after inventories matched, including prior proof,
+  parent tracker, databases, environments and frozen source. RDD remains OFF;
+  committed assessment is unavailable/high because of untracked audit reports,
+  not a fabricated approval. Independent functional/source verification passed.
+  RP-3 includes the corrective commit above; the final tracking-only commit
+  contains this closure and no implementation changes.
   Hosted gates remain pending, not failed/passed.
 
 ## Progress and next step
 
-Version 4.1.0 is confirmed. RP-1 is committed locally as
-98715cf0838fa56c773cce1ef8b55824ebced177 with the approved size exception.
-RP-2 and its manual tag-dispatch hardening are committed locally as 25f4999
-after TDD/checks. RP-3 passed local functional/arithmetic/preservation checks
-but returned PARTIAL for one stale historical noise claim. Next: bounded
-TDD documentary correction and independent targeted verification. No PR, tags,
-publication, new timing or local package artifacts. This enforces the existing
-release policy, not an incompatible public API change. The frozen measurement
-checkout and JSON remain immutable. Hosted release gates are still pending.
+Local preparation is closed: RP-1 (98715cf), RP-2 (25f4999) and the RP-3
+documentary correction (574c812) are committed with the approved local size
+exception. Independent verification and the targeted follow-up passed. Final
+suite: 7,788 passed, 6 existing skips, 4,064 subtests; pure branch 95.54846%,
+combined 97.58617%. The independent Playground run passed 98 tests. Strict
+docs and offline quality/security checks passed. Historical intermediate
+PARTIAL/RED/interrupted evidence is retained rather than rewritten.
+
+Version remains 4.1.0 and release notes remain Unreleased. README, comparison,
+benchmark guide, release guide and both changelogs reflect the verified local
+measurement and publication policy. Library runtime, benchmark JSON, original
+data/environments and frozen measuring checkout are unchanged by this feature.
+No PR, push, tag, publication, timing rerun or local release artifact build.
+
+Next delivery steps are OUTSIDE this local closure and require authorization:
+
+1. Authorize the GitHub destination, operation and account/session for remote
+   preparation, then submit the candidate under repository review policy.
+2. Require all hosted matrix/base/quality/security/coverage/Codecov/PostgreSQL,
+   documentation, Playground and release-artifact gates to pass. Actual
+   wheel/sdist smoke/audit/checksums and network advisories remain pending.
+3. Finalize the release date/notes and obtain explicit maintainer release OK
+   only after those checks. No tag is authorized by this local task.
+4. Only then may a separately authorized immutable annotated version-tag push
+   trigger PyPI, GitHub Release and Pages; verify the resulting publication.
