@@ -151,6 +151,11 @@ def iter_ids(limit: int) -> Iterator[int]:
 - Follow strict **RED → GREEN → REFACTOR** for code, documentation, workflows
   and benchmark-harness changes.
 - Write tests for every feature and regression.
+- When a test deliberately triggers a warning, assert its category and stable
+  message with `pytest.warns`, and check the captured count when the scenario
+  emits more than one. Keep the behavior assertions alongside the warning
+  contract. Do not suppress warnings through global filters: an unexpected
+  warning must still fail a focused run with `-W error`.
 - Keep branch coverage strictly above 95%; the root and changed-line floor is
   **95.01%**. The combined line-plus-branch percentage is not the pure branch
   percentage. After a fresh full-suite run, check the latter separately with

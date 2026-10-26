@@ -377,6 +377,9 @@ Each item links to its migration note in the [4.1 upgrade guide](docs/UPGRADE-4.
 
 ### Fixes and changes
 
+- Test quality: assert the category, stable message, and expected count of
+  intentional input-fallback, private-field security, and Pydantic reserved-name
+  warnings. Unexpected warnings remain visible; runtime behavior is unchanged.
 - Mask exceptions raised while iterating a subscription source. An async-generator
   `subscribe` that raised on iteration, a channel-layer error or a scope lookup
   failure reached the client as `GraphQLError(str(exc))`, which counted as

@@ -553,7 +553,12 @@ def test_python_type_to_gql_unknown_type_fallback() -> None:
     class SomeCustomType:
         pass
 
-    result = _python_type_to_gql(SomeCustomType)
+    with pytest.warns(
+        UserWarning,
+        match=r"unsupported input field type 'SomeCustomType'.*falling back to the GraphQLString scalar",
+    ) as caught:
+        result = _python_type_to_gql(SomeCustomType)
+    assert [type(warning.message) for warning in caught] == [UserWarning]
     assert result is GraphQLString
 
 

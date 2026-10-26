@@ -157,7 +157,12 @@ def test_schema_keeps_protected_fields_extension_alongside_registry() -> None:
     class _PrivQuery(ObjectType):
         secret = field(GraphQLString)
 
-    schema = DjangoGraphQLSchema(query=_PubQuery, private_query=_PrivQuery)
+    with pytest.warns(
+        RuntimeWarning,
+        match=r"AuthenticatedFieldsMiddleware is not in settings\.DJANGO_GRAPHEX\['MIDDLEWARE'\]; private fields will NOT be protected\.",
+    ) as caught:
+        schema = DjangoGraphQLSchema(query=_PubQuery, private_query=_PrivQuery)
+    assert [type(warning.message) for warning in caught] == [RuntimeWarning]
     extensions = schema.graphql_schema.extensions or {}
     # Both extensions coexist.
     assert "gdx_registry" in extensions

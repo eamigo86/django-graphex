@@ -120,7 +120,12 @@ def test_unrelated_dictionary_leaf_keeps_string_fallback() -> None:
     class OtherLeaf(InputType):
         mapping: Dict[str, float]  # noqa: UP006
 
-    schema, _received = _schema(OtherLeaf, name="OtherLeaf")
+    with pytest.warns(
+        UserWarning,
+        match=r"unsupported input field type typing\.Dict\[str, float\].*falling back to the GraphQLString scalar",
+    ) as caught:
+        schema, _received = _schema(OtherLeaf, name="OtherLeaf")
+    assert [type(warning.message) for warning in caught] == [UserWarning]
     assert "mapping: String!" in print_schema(schema)
 
 
@@ -133,7 +138,12 @@ def test_list_wrapped_boolean_map_keeps_existing_fallback() -> None:
     class Wrapped(InputType):
         mappings: list[dict[str, bool]]
 
-    schema, _received = _schema(Wrapped, name="Wrapped")
+    with pytest.warns(
+        UserWarning,
+        match=r"unsupported input field type dict\[str, bool\].*falling back to the GraphQLString scalar",
+    ) as caught:
+        schema, _received = _schema(Wrapped, name="Wrapped")
+    assert [type(warning.message) for warning in caught] == [UserWarning]
     assert "mappings: [String!]!" in print_schema(schema)
 
 
@@ -512,7 +522,12 @@ def test_custom_equality_annotations_do_not_gain_boolean_map_contract() -> None:
     class CustomMap(InputType):
         mapping: Dict[str, CustomLeaf]  # noqa: UP006
 
-    schema, _received = _schema(CustomMap, name="CustomMap")
+    with pytest.warns(
+        UserWarning,
+        match=r"unsupported input field type typing\.Dict\[str, .*CustomLeaf\].*falling back to the GraphQLString scalar",
+    ) as caught:
+        schema, _received = _schema(CustomMap, name="CustomMap")
+    assert [type(warning.message) for warning in caught] == [UserWarning]
     assert "mapping: String!" in print_schema(schema)
 
     class EqualToMapMeta(type):
@@ -532,5 +547,10 @@ def test_custom_equality_annotations_do_not_gain_boolean_map_contract() -> None:
     class Outer(InputType):
         mapping: CustomOuter
 
-    outer_schema, _received = _schema(Outer, name="Outer")
+    with pytest.warns(
+        UserWarning,
+        match=r"unsupported input field type 'CustomOuter'.*falling back to the GraphQLString scalar",
+    ) as caught:
+        outer_schema, _received = _schema(Outer, name="Outer")
+    assert [type(warning.message) for warning in caught] == [UserWarning]
     assert "mapping: String!" in print_schema(outer_schema)

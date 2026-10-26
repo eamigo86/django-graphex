@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -350,27 +351,48 @@ def test_generated_mutation_persists_reserved_field(
         try:
             private_registry = Registry()
 
-            if host_kind == "type":
+            warning_context = (
+                pytest.warns(
+                    UserWarning,
+                    match=rf'Field name "{reserved_name}" in "Reserved_{reserved_name}Native" shadows an attribute in parent "BaseModel"',
+                )
+                if reserved_name in {"model_dump", "model_validate"}
+                else nullcontext()
+            )
+            with warning_context as caught:
+                if host_kind == "type":
 
-                class ReservedType(DjangoModelType):
-                    class Meta:
-                        model = model_cls
-                        input_field_name = "payload"
-                        output_field_name = "record"
-                        model_operations = ("create", "update")
+                    class ReservedType(DjangoModelType):
+                        class Meta:
+                            model = model_cls
+                            input_field_name = "payload"
+                            output_field_name = "record"
+                            model_operations = ("create", "update")
 
-                host = ReservedType
-            else:
+                    host = ReservedType
+                else:
 
-                class ReservedMutation(DjangoModelMutation):
-                    class Meta:
-                        model = model_cls
-                        registry = private_registry
-                        input_field_name = "payload"
-                        output_field_name = "record"
-                        model_operations = ("create", "update")
+                    class ReservedMutation(DjangoModelMutation):
+                        class Meta:
+                            model = model_cls
+                            registry = private_registry
+                            input_field_name = "payload"
+                            output_field_name = "record"
+                            model_operations = ("create", "update")
 
-                host = ReservedMutation
+                    host = ReservedMutation
+            if caught is not None:
+                assert len(caught) == 2, [str(warning.message) for warning in caught]
+                expected = (
+                    f'Field name "{reserved_name}" in '
+                    f'"Reserved_{reserved_name}Native" shadows an attribute '
+                    'in parent "BaseModel"'
+                )
+                assert all(
+                    type(warning.message) is UserWarning
+                    and str(warning.message) == expected
+                    for warning in caught
+                )
 
             class Query(ObjectType):
                 ping = field(GraphQLString)
@@ -585,7 +607,20 @@ def test_original_methods_remain_available_on_generated_class() -> None:
                 """
                 return value.upper()
 
-        schema = build_model_schema(model_cls, base=Rules)
+        with pytest.warns(
+            UserWarning,
+            match=r'Field name "model_(?:dump|validate)" in "ReservedMethodsNative" shadows an attribute in parent ".*Rules"',
+        ) as caught:
+            schema = build_model_schema(model_cls, base=Rules)
+        assert len(caught) == 2
+        assert all(type(warning.message) is UserWarning for warning in caught)
+        assert 'Field name "model_dump" in "ReservedMethodsNative"' in str(
+            caught[0].message
+        )
+        assert 'Field name "model_validate" in "ReservedMethodsNative"' in str(
+            caught[1].message
+        )
+        assert all('shadows an attribute in parent "' in str(w.message) for w in caught)
         assert schema.model_config["extra"] == "forbid"
         validated = schema.model_validate(
             {"model_dump": "first", "model_validate": "second"}
