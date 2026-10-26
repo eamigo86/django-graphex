@@ -97,8 +97,9 @@ historical snapshots or publishing a release.
   Both source snapshots remained unchanged; primary protected inventory has
   37,019 entries. Measurement HEAD/tree/status are exact and clean. Publisher
   seed/output/results parents are empty, distinct and mode 0700. No timing has
-  run. The local setup tracking commit is recorded after saving this unit.
-- [ ] BR-2 — Execute and retain a validated new comparison series.
+  run. Local setup tracking commit:
+  a5268726ab453dd75e1247663a8423251f82028d.
+- [x] BR-2 — Execute and retain a validated new comparison series.
   Route: the same single worker, serial execution without concurrent tests.
   Run the unchanged official publisher for both scales and all four libraries,
   three rotated repetitions, preserving raw runs and exact source/constraints
@@ -107,7 +108,18 @@ historical snapshots or publishing a release.
   retain prior series and report a results table with operation units and fair
   ratio direction. Save generated result work unit locally.
   Rollback: the new result series only, never the historical measurements.
-  Evidence/commit: pending.
+  Evidence: /private/tmp/core33-br1.wrp6LvAu/BR2-report.md, BR2-validation.json,
+  BR2-table.csv and BR2-ratios.csv. Corrected publisher completed 24/24 serial
+  dispatches in 280 seconds; all eight medians exactly match recomputation from
+  retained raw runs. All surface/version/SQL/dataset/iteration gates passed.
+  The eight new JSON files were copied byte-for-byte to the fresh series in
+  the primary checkout; old series remain unchanged. The series is ignored by
+  benchmarks/.gitignore, so only its eight exact paths are force-added locally.
+  All 37,019 original protected primary entries remain unchanged. Measurement
+  source stays clean at the frozen commit. Host load was 10.86 before and 9.24
+  after on 16 logical CPUs: report load-sensitive local results, not controlled
+  hardware or paired improvement claims. The result commit is recorded after
+  this work unit is saved; independent BR-3 remains pending.
 - [ ] BR-3 — Independently verify results and close tracking.
   Route: independent verifier, then parent mechanical metadata closure.
   Recompute medians from raw runs, validate all eight new artifacts and seed/
@@ -120,7 +132,18 @@ historical snapshots or publishing a release.
 
 ## Progress and next step
 
-Readiness, isolated setup and preflight are complete; no measurements yet.
+Readiness, isolated setup, preflight and official measurements are complete.
 Parent read the complete setup evidence and independently checked both Git
-states. Next: save BR-1 locally, then run the unchanged official publisher from
-the frozen clean checkout, without concurrent tests or other agent workloads.
+states. BR-1 is saved locally as a5268726ab453dd75e1247663a8423251f82028d.
+The unchanged official publisher has produced all 24 raw runs and eight
+validated medians. No tests or other agent work ran concurrently with timing.
+Next: save BR-2 results locally, then independently verify medians, provenance,
+protection and full configured coverage without repeating timing.
+
+The first publisher invocation stopped before seeding or timing: its external
+results parent was named publisher-results, but the unchanged target validator
+requires the basename results. Evidence: BR2-blocked-preflight.md under the
+owned setup root. Parent approved an argument-only correction to a fresh empty
+0700 /private/tmp/core33-br1.wrp6LvAu/results directory; no source, series,
+workload or validation gate changes. Preserve the failed command/logs and use
+new invocation log paths. This is not a retry of measured samples.
