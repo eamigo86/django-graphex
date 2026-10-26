@@ -1,6 +1,6 @@
 # Rerun the current core33 SQLite comparison safely
 
-Status: IN PROGRESS. Repository locator: odd/tasks/core33-benchmark-refresh.md.
+Status: CLOSED_SCOPED. Repository locator: odd/tasks/core33-benchmark-refresh.md.
 
 ## Objective and authorization
 
@@ -118,9 +118,9 @@ historical snapshots or publishing a release.
   All 37,019 original protected primary entries remain unchanged. Measurement
   source stays clean at the frozen commit. Host load was 10.86 before and 9.24
   after on 16 logical CPUs: report load-sensitive local results, not controlled
-  hardware or paired improvement claims. The result commit is recorded after
-  this work unit is saved; independent BR-3 remains pending.
-- [ ] BR-3 — Independently verify results and close tracking.
+  hardware or paired improvement claims. Local result work-unit commit:
+  020f77f0e3c1652b19e1fd51ec8fd2c0471d2191. Independent BR-3 remains pending.
+- [x] BR-3 — Independently verify results and close tracking.
   Route: independent verifier, then parent mechanical metadata closure.
   Recompute medians from raw runs, validate all eight new artifacts and seed/
   operation/version/SQL contracts, confirm no cherry-picking or source drift,
@@ -128,7 +128,23 @@ historical snapshots or publishing a release.
   environment/database/reports/prior snapshots unchanged. Do not rerun timing
   merely to improve results. Keep selected public docs frozen pending explicit
   promotion authority. Save tracking-only closure and deliver observed numbers.
-  Rollback: metadata only. Evidence/commit: pending.
+  Rollback: metadata only. Independent result: PASS_SCOPED, no repeated timing.
+  Evidence: /private/tmp/core33-br3-eu4dwlq8/BR3-report.md and BR3-summary.json.
+  All 24 dispatches, 72 ordered journal events, eight artifacts and 248 scalar
+  medians match independent recomputation; seeds, SQL, versions and provenance
+  pass. GraphEx has the lowest p50 and separately the lowest median of means
+  in all ten operation/scale combinations in this load-sensitive local batch.
+  Contracts/docs: 366 passed; full root: 7,784 passed, 6 known skips, 4,064
+  subtests, no unasserted Python warnings; Playground: 98 passed. Pure branch
+  coverage 5,087/5,324 = 95.54846%; combined 18,516/18,974 = 97.58617%, with
+  raw/XML agreement. Mypy (84 files), standard/strict docstrings, strict docs
+  (44 HTML files) and whitespace checks pass. Ruff/diff coverage are N/A:
+  no Python or runtime lines changed. Native risk assessment was unavailable
+  because of untracked reports; it was treated as high/unassessable and this
+  independent verification fulfills the functional check, not a review receipt.
+  All 892 tracked primary files, 883 measured source blobs and inventories
+  actually present remain unchanged during verification. The preservation
+  limitation below is explicit; no unqualified original-database guarantee.
 
 ## Progress and next step
 
@@ -137,8 +153,9 @@ Parent read the complete setup evidence and independently checked both Git
 states. BR-1 is saved locally as a5268726ab453dd75e1247663a8423251f82028d.
 The unchanged official publisher has produced all 24 raw runs and eight
 validated medians. No tests or other agent work ran concurrently with timing.
-Next: save BR-2 results locally, then independently verify medians, provenance,
-protection and full configured coverage without repeating timing.
+BR-2 is saved locally as 020f77f0e3c1652b19e1fd51ec8fd2c0471d2191.
+Independent verification is complete with PASS_SCOPED. Measurements and all
+applicable checks pass; closure records the bounded historical evidence gap.
 
 The first publisher invocation stopped before seeding or timing: its external
 results parent was named publisher-results, but the unchanged target validator
@@ -147,3 +164,34 @@ owned setup root. Parent approved an argument-only correction to a fresh empty
 0700 /private/tmp/core33-br1.wrp6LvAu/results directory; no source, series,
 workload or validation gate changes. Preserve the failed command/logs and use
 new invocation log paths. This is not a retry of measured samples.
+
+## Preservation qualification and limits
+
+BR-1/BR-2 correctly proved equality for 37,019 entries actually inventoried,
+but their external reports overclaimed inclusion of original ignored assets.
+That inventory omitted benchmarks/db.sqlite3, examples/playground/db.sqlite3,
+ignored benchmark migrations and historical benchmarks/.venv-* environments.
+No pre-run hash for those omitted paths exists. BR-3 supplements them with
+29,680 entries and proves equality only from that capture onward; it cannot
+retroactively prove pre-measurement bytes. Current mtimes and isolated owned
+RunPlan paths support no observed original-path write, but do not replace the
+missing digest. This is an evidence limitation, not evidence of alteration or
+invalid timing math. Earlier reports remain intact; this section and BR-3
+explicitly qualify their preservation wording.
+
+SQLite only, ambient load 10.86 to 9.24 on 16 logical CPUs, different pinned
+graphql-core versions, no confidence intervals or paired historical comparison.
+Six skips remain five PostgreSQL-only cases and one retired assertion. No new
+Redis/PostgreSQL run; two non-fatal macOS startup diagnostics are retained.
+No selected public README/docs comparison was promoted. Prior series, original
+project environment, source and constraints remain unchanged where proven by
+inventories and isolated invocation evidence. Raw results, seeds, freezes,
+build provenance and private setup evidence are retained for traceability.
+The managed archive was requested after verification, but the app refused:
+"The task's primary checkout cannot be removed." The measuring worktree is
+therefore retained, clean at f9f4eae, together with private environments/seeds
+and evidence. Do not bypass this protection with manual removal. The active
+app worktree is the frozen measuring copy; the development branch, new results
+and completed tracker are in /Users/eamigo/Documents/Work/django-graphex.
+No further work is required to report this scoped comparison. Promoting the new
+series into public documentation or later cleanup is a separate follow-up.
