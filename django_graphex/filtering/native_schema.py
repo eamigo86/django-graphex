@@ -1233,7 +1233,15 @@ def _assert_filter_surface_published(
                 # -- the walk stops at the first non-relation segment.
                 field = owner._meta.get_field(segment)
                 last = index == len(hops) - 1
-                if last and getattr(field, "concrete", False):
+                # Django 5.2 marks a ManyToManyField concrete even though it
+                # stores no scalar column on this model. Django 6.0 does not.
+                # In either version, a direct M2M lookup traverses to the
+                # published target and checks that target's primary key.
+                if (
+                    last
+                    and getattr(field, "concrete", False)
+                    and not getattr(field, "many_to_many", False)
+                ):
                     if not publishes_column_value(current, field):
                         raise ImproperlyConfigured(
                             _refusal(model, path, segment, current, declarer)

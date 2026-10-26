@@ -27,8 +27,6 @@ from django_graphex.core.output_compiler import (
     _RANGE_INTERNAL_TO_BOUND,
     _compile_range_field,
 )
-from django_graphex.subscriptions import Subscription
-from django_graphex.subscriptions.mixins import serialize_instance
 from tests.models import ScalarKindsModel
 
 
@@ -108,6 +106,9 @@ def test_subscription_duration_event_field_is_total_seconds(
     Args:
         value: The stored duration, or None.
     """
+    pytest.importorskip("channels")
+    from django_graphex.subscriptions import Subscription
+    from django_graphex.subscriptions.mixins import serialize_instance
 
     class DurationSubscription(Subscription):
         """Expose the model's DurationField on the native event type."""

@@ -1,6 +1,6 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: WAITING_FOR_CI_CORRECTION_SCOPE. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: CORRECTING_HOSTED_FAILURES. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
 ## Objective and authority
 
@@ -30,8 +30,15 @@ review, **not** a release or merge.
   and label checks are preparation evidence, not proof that a new issue or PR
   already exists.
 - Explicitly forbidden: merge, tag, PyPI/TestPyPI publication,
-  workflow_dispatch, benchmark timing, local release-artifact build, new
-  dependency installation, and any automatic release action. Do not edit the
+  workflow_dispatch, benchmark timing, local release-artifact build,
+  modifications to original project environments, and any automatic release
+  action. On 2026-10-26 the human explicitly authorized correcting these CI
+  failures with strict TDD, official dependency downloads in disposable
+  environments and repeating all checks without reducing any threshold.
+  Consult before incompatible changes. Keep existing public support bounds;
+  do not blindly pin away real compatibility failures or relabel them passes.
+  Parent may push verified corrections to the same authorized PR and observe
+  the resulting jobs; no new PR or publication authority is inferred. Do not edit the
   completed odd/tasks/release-410-preparation.md history or the frozen
   benchmark worktree.
 
@@ -128,6 +135,71 @@ review, **not** a release or merge.
   closure pending. Parent updates the task file and Engram mirror together;
   no merge, tag or publication follows automatically.
 
+## Authorized corrective work
+
+Route: delegated direct, one bounded writer per work unit, independent final
+verification. Parent owns tracker/mirror, work-unit Conventional Commits and
+GitHub mutations. Keep the approved single-PR size exception; approximately
+400 authored lines per coherent unit remains advisory, never code golf.
+Read the prior diagnosis as evidence, not as an already-proven root cause.
+
+- [x] RDC-1 — Reproduce and restore collection across Django versions and
+  the base install. Isolate official dependencies outside the repository;
+  record exact package versions and source origin in actual test processes.
+  Capture RED for declared direct to-many filters on Django 5.2 and missing
+  Channels imports; fix classification only after reproducing, preserving
+  hidden-relation filtering protections. Keep optional subscription-only tests
+  scoped to the extra without dropping unrelated core tests. GREEN focused
+  tests on 5.2 and 6.x, related tests, locked full coverage >95.01% and docs.
+  Own filtering/native_schema.py, implicated tests, matching docs/changelog.
+  Rollback: only this relation/base-collection unit. Root cause reproduced:
+  Django 5.2 marks ManyToManyField concrete=True, unlike 6.0; exclude M2M
+  from the scalar-column arm without weakening relation/target-key guards.
+  Move optional subscription imports into only the Channels-dependent test.
+  Observed RED for collection and import; GREEN 5.2 focal 30/3 optional skips,
+  security 68; 6.1 focused 73/3 skips. Base without Channels: 7,057 passed,
+  39 justified optional/service skips, 4,064 subtests. Locked full: 7,788
+  passed, 7 skips, 4,064 subtests. The new seventh skip applies only to the
+  new no-Channels regression when Channels is installed; previous six remain.
+  Branch 95.54846%, combined 97.58617%, raw/XML agree; Ruff, mypy, docstrings,
+  Bandit, strict docs/44-page anchors and preservation passed. Parent inspected
+  all diffs and reran both new/relevant contracts on 5.2 without Channels: PASS.
+  Official disposable profiles are under /private/tmp/rdc1-YKI1Kn; originals
+  unchanged. Report: /private/tmp/rdc1-YKI1Kn/RDC1-report.md.
+  Local coherent commit: pending immediately after this evidence update.
+- [ ] RDC-2 — Restore omitted-default provenance across supported dependency
+  patches, and replace stale assertions with semantic tests. Separate actual
+  regressions from exact graphql-core patch and Python-specific type-repr
+  expectations. Reproduce Boolean-map and IntOrString defaults while varying
+  graphql-core/Pydantic deliberately; preserve explicit-invalid rejection,
+  mutable-default freshness, printed SDL and introspection. RED before minimum
+  compiler fix; no public scalar/default contract changes without approval.
+  Own core/input_compiler.py, implicated default/native-base/reserved-field
+  tests and matching docs/changelog. Verify latest isolated and locked full
+  suites plus focused cross-version cases. Evidence/commit: pending.
+- [ ] RDC-3 — Close the real Codecov patch deficit without weakening gates.
+  Read exact missing lines/denominator from hosted evidence where available,
+  add meaningful regression coverage for real branches, and retain every
+  coverage threshold and exclusions. Document the existing locked-versus-tox
+  dependency policy accurately without narrowing support or renaming away
+  existing public tox commands. Full branch/combined/diff >95.01%, existing
+  stricter Codecov target, quality/security, docs/examples/Playground checks.
+  Rollback: only new branch tests and compatibility documentation; no gate
+  reduction. Evidence/commit: pending.
+  Read-only exact-head Codecov map: /private/tmp/pr254-codecov-map-h79iOh/diagnosis.md.
+  Terminal GitHub patch check says 96.41% at 18:54:44; later public report at
+  18:55:30 says 96.95% (3,641 changed executable lines: 3,530 hits, 50 misses,
+  61 partials). Do not replace the failed check's result with later API data.
+  A fresh corrected-head check must reconcile this; no padding unrelated tests
+  or lowering thresholds. Native-schema partial lines are outside the PR diff.
+- [ ] RDC-4 — Independently verify, push and repeat all hosted checks. Verify
+  protected original/frozen data and environments before/after; no benchmark
+  regeneration. Push only the candidate branch through eamigo86 with no tags.
+  Inventory every actual check tied to the resulting exact PR head; require
+  all applicable jobs and external Codecov statuses green, with only expected
+  publication skips. Retain failed prior evidence; no retry-until-green or
+  unsupported success claim. Evidence/commit: pending, then close RD-4.
+
 ## Progress and next step
 
 Issue #253 was created under eamigo86 and its status:approved label was
@@ -140,10 +212,12 @@ change; the successful creation used the actual template headings in the body
 and existing enhancement/status labels instead. No duplicate issue was created.
 PR #254 is open and attached. Current observed head b74659f and run
 40380745811 have 9 pass/8 fail/3 expected skips/0 pending. Source diagnosis
-is read-only; no implementation correction has been authorized in this
-delivery task. Keep all quality gates intact and consult before any
-incompatible fix. This failure record may be committed locally without a
-new push: do not spend another CI run on unchanged failing implementation.
+was read-only at that stage. The human has now authorized the bounded
+corrective units above with TDD, disposable official dependencies and all
+checks repeated. RDC-1 passed locally; next RDC-2 restores omitted-default
+provenance under the actually resolved versions. Keep gates/support intact;
+consult before any incompatible change. Prior local tracking commit 6b620e0
+is unpushed and can travel with verified corrections, not a standalone rerun.
 No merge, tag, workflow dispatch or publication. Rollback for this metadata
 unit is this task file and its external draft bodies; no package source or
 measurement data is part of the unit.

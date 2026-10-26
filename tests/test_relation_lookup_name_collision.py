@@ -282,6 +282,9 @@ def test_nested_lookup_name_and_direct_pk_exact() -> None:
         "direct", "{ owners(filter: { targets: { in: [1, 2] } }) { name } }"
     ) == ["first", "second"]
     assert _post(
+        "direct", "{ owners(filter: { targets: { range: [1, 3] } }) { name } }"
+    ) == ["first", "second", "third"]
+    assert _post(
         "nested",
         '{ owners(filter: { targets: { range: { exact: "alpha" } } }) { name } }',
     ) == ["first"]

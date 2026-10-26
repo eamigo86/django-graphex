@@ -389,6 +389,9 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Fixes and changes
 
+- Keep published direct many-to-many filters available on Django 5.2 while
+  rejecting hidden relation targets. Base-install tests also collect without
+  importing the optional Channels subscription implementation.
 - Test quality: assert the category, stable message, and expected count of
   intentional input-fallback, private-field security, and Pydantic reserved-name
   warnings. Unexpected warnings remain visible; runtime behavior is unchanged.

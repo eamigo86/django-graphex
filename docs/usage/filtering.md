@@ -155,6 +155,10 @@ spelled into the key, is the same defect as the eighth:
 | `{"pk": …}`, or `{"id": …}` on a natural-key model | The name is not a field, so the entry compiled to **nothing** and the list was never filterable by its key. An option accepted and ignored is the defect every refusal here exists to prevent. |
 | `{"name__icontains": …}` — a lookup spelled into the **key** | Lookups are declared in the entry's **value**. Spelled into the key, the whole compound lands on the model's own leaves, where no field answers to it: byte-equivalent to `pk`, and refused for the same reason. Write `{"name": ("icontains",)}`. |
 
+A declared direct many-to-many filter is valid when the relation and its target
+key are published, including on Django 5.2. Hiding either still stops schema
+construction; a relation's join table is not a scalar column on the source.
+
 Each refusal opens with the `Meta` the entry has to leave — the type whose
 `Meta.filter_fields` declared it, which for a `DjangoListObjectType` that
 declares none of its own is the **node type** it inherited the declaration
