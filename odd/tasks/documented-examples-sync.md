@@ -45,7 +45,7 @@ Evidence: observation 25765 and
   omission failures before adding the guidance. Explain non-PK target changes
   without implying ordinary FK-to-PK configurations changed. Correct only the
   inaccurate cursor comment, retaining its assertions and SQLite tie regressions.
-- [ ] **T3 — Independently verify, commit evidence, and close.**
+- [x] **T3 — Independently verify, commit evidence, and close.**
   Delegated verification; parent structural readback and one command spot check.
   Verify example extraction is literal, continuations retain selections/limits,
   event assertions prove delivery, and new root tests do not require Channels or
@@ -145,8 +145,47 @@ comment. Neither rollback changes library semantics or benchmark measurements.
   mirror and whitespace checks passed. All 98 protected files remain unchanged.
   Evidence: `writer/t2/`, `verification/t2/report-initial.md`,
   `verification/t2/report-corrected.md` and `parent-spot-final.log`.
-- T2 local commit: being recorded with its docs/tests and this evidence. No
-  production implementation, API, defaults or benchmark artifacts changed.
-- T3 final root coverage, whole-Playground validation and docs build: pending.
-- Next: record T2 commit identity, then independently verify the frozen final
-  candidate. Keep all source/tests/docs bytes unchanged during final checks.
+- T2 local commit: `85ea973`, **358 additions + 6 deletions**, including its
+  tracker evidence. No production implementation, API, defaults or benchmark
+  artifacts changed. Rollback is this work unit alone.
+- T3 independent final proof on frozen `85ea973`: one fresh root run had
+  **7,782 passed, 6 unchanged skips, 18 warnings and 4,064 subtests** in 178.39s;
+  standalone Playground had **98 passed, zero skipped**. The eight new cases
+  comprise four Playground and four root documentation/model-consistency cases.
+  Root examples also pass with Channels/Daphne imports prohibited.
+- Final coverage, raw data exactly reconciled with XML: statements
+  **13,425/13,646 (98.38048%)**; pure branch arcs
+  **5,085/5,322 (95.54679%)**; combined
+  **18,510/18,968 (97.58541%)**. Both required gates exceed 95.01%.
+  Missing arcs are 237, not the terminal partial-branch count of 231.
+- Production diff coverage is **N/A**: no executable library lines changed.
+  Diff-cover exited 0 with no covered-line denominator; its empty-set numeric
+  default is not claimed as 100% coverage. Source filters were not broadened.
+- Final Ruff format/check, mypy, Bandit, configured standard/strict docstrings,
+  changelog parity and whitespace checks passed. Fresh external documentation
+  built **44 HTML pages**, all generated local links and anchors valid.
+- Runtime provenance was checked in the executing process: Python 3.12.11,
+  Django 6.0.8, graphql-core module/distribution 3.3.0 and checkout imports.
+  Full pytest configuration, branch thresholds and exclusions stayed unchanged;
+  only HTML/XML destinations differed in an external full config copy. Raw
+  PID-owned coverage was preserved before cleanup; no root reports overwritten.
+- Final preservation: all **881 tracked files**, index, HEAD/status stayed
+  unchanged during verification; all **98 protected files**, **86 library
+  files** and **84 benchmark files** match their respective baseline/freeze.
+  No benchmark measurement, canonical publisher or regeneration was run.
+- Honest limits: five PostgreSQL opt-in tests and one retired Graphene test
+  remain skipped; external services were not started. All 18 pytest warnings
+  and Bandit's nosec/comment-parsing warnings remain in the logs. The extra
+  unconfigured Redis docstring diagnostics above remain outside this scope;
+  both required docstring gates pass. No dependency/network audit was run.
+- T3 proof: `verification/final/report.md`, `full/proof.json`,
+  `preservation-and-counts.json`, `commands-and-results.json` and raw/log/JUnit
+  artifacts under `/private/tmp/graphex-sync-fix-20261025-judoi459/`.
+- T3 functional evidence is captured by the verified T1/T2 work-unit commits;
+  this final tracker-only commit records closure without changing verified
+  examples, tests or documentation bytes. Full Engram mirror is read back.
+- RDD disposition for all tasks: **disabled/unmanaged**. No native review,
+  consent, PR, push, tag, publication, package build or benchmark regeneration.
+- Status: **CLOSED**; all five authorized findings corrected, no incompatible
+  change needed. Future release work and official benchmark measurements remain
+  deferred. No automatic remote next step.
