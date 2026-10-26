@@ -1457,6 +1457,10 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
   Whole-stack graphql-core versions differ; host load fell 10.86 to 9.24 on
   16 logical CPUs. These observations are not a paired historical comparison,
   PostgreSQL timing result, or statistical-significance claim.
+- Keep manual workflow dispatch in staging and TestPyPI even when its selected
+  ref is a version tag. Production PyPI, GitHub Release and Pages actions now
+  require both a push event and a version-tag ref; regression tests cover the
+  manual tag-ref boundary without changing the build-once release gates.
 
 - Playground example: describe the closed draft and `internalNote` leaks as
   closed; scope `postSubscription` for anonymous subscribers with

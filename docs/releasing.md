@@ -31,6 +31,16 @@ This build-once flow means the bytes that were tested are the bytes that get
 published. If a consumer job fails, rerun the workflow for the same immutable
 tag; never replace an already published tag or artifact.
 
+## Production event boundary
+
+A manual dispatch from a branch or version tag stays in staging and publishes
+only to TestPyPI. A manual dispatch from a version tag is not a production
+release. Production PyPI publication, the GitHub Release and Pages deployment
+require both a push event and a version-tag ref. The same condition selects
+the production environment and the tagged Pages artifact; a tag name alone
+cannot promote a manual run. The version-match check still rejects a tag that
+does not match the package metadata before an artifact is built.
+
 ## Cumulative release-branch diff check
 
 Every release run finds the shared merge base of `origin/main` and `HEAD`, then

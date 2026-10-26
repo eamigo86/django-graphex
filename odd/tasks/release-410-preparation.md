@@ -75,7 +75,7 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
 
 ## Tasks
 
-- [ ] RP-1 — Promote the measured series with executable docs contracts.
+- [x] RP-1 — Promote the measured series with executable docs contracts.
   Route: delegated writer; six meaningful documentation/test files.
   Add/adjust selector and meaningful caveat/value contracts, capture RED before
   editing prose/tables, then update README.md, docs/why.md and benchmark README
@@ -94,7 +94,12 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
   /private/tmp/core33-rp1-proof-20261026/red-final.log and stable.log.
   Only the six owned docs/test files changed; benchmark JSON, runtime and frozen
   measurement checkout remain unchanged. Parent spot-checked diff and coverage.
-- [ ] RP-2 — Prepare and audit local release metadata/readiness.
+  Local work-unit commit: 98715cf0838fa56c773cce1ef8b55824ebced177
+  (454 authored lines including the initial committed tracker), under the
+  explicit local size exception. Read-only risk assessment was unavailable
+  because of untracked reports; treat as high/unassessable, with independent
+  RP-3 required. RDD remains OFF and no review transaction was started.
+- [x] RP-2 — Prepare and audit local release metadata/readiness.
   Route: the same delegated worker; bounded source/workflow inspection and
   existing installed checks. Keep version 4.1.0 and notes Unreleased until
   actual release authorization; no invented completed-release date. Consolidate
@@ -104,8 +109,39 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
   advisory/network checks, wheel/sdist smoke/audit/checksum and maintainer OK.
   No artifact build, tag, push or PR. If metadata is already correct, this is
   verification-only (RED N/A), not an unnecessary version/source change.
-  Rollback: only release-note/checklist metadata. Save local evidence commit.
-  Evidence/commit: pending.
+  Initial read-only audit passed 45 focused contracts and installed offline
+  quality/doc checks; report: /private/tmp/core33-rp2-proof-20261026/RP2-release-readiness.md.
+  It found overlapping production/manual conditions: a manual dispatch on a
+  version-tag ref can satisfy both PyPI and TestPyPI predicates and downstream
+  Release/Pages guards. No publication was observed. GitHub's public dispatch
+  documentation confirms its ref can name a branch or tag.
+  Bounded corrective scope is authorized by the existing manual-only-TestPyPI
+  release policy: require a push event AND version tag for production selection,
+  PyPI, GitHub Release and Pages. Preserve all existing gates, environments,
+  single-artifact/checksum flow and staging dispatch. No runtime/API change.
+  Same writer owns .github/workflows/cicd.yaml, tests/test_release_workflow.py,
+  the existing release maintainer guide and both mirrored changelog notes only.
+  Observe a meaningful RED for manual tag dispatch and production-only guards
+  before the minimum YAML fix; then focused/related/full proof and docs checks.
+  Rollback: only these policy-hardening tests/YAML/docs and tracking metadata;
+  never benchmark data or public library code. Save one coherent local commit.
+  Corrective proof: /private/tmp/core33-rp2-corrective-proof-20261026/RP2-corrective-release-readiness.md.
+  RED: 2 failures on the missing push guards. GREEN: 2 passed; focused: 36
+  passed; related: 49 passed. Full root: 7,787 passed, 6 known skips, 4,064
+  subtests. Pure branch 5,087/5,324 = 95.54846%; combined 97.58617%; raw/XML
+  agree. Ruff, mypy, standard/strict docstrings, Bandit, strict docs/44-page
+  anchors and cumulative diff pass; cumulative changed-line coverage is 98%.
+  Parent inspected all five source diffs and reran both boundary tests: PASS.
+  Production selection and all PyPI/Release/Pages paths now require push AND
+  version-tag ref; manual tag/branch runs stay staging/TestPyPI. All predecessor
+  gates, single artifacts, checksums and environment names remain intact.
+  Preservation proof: only five owned source files differ; 56,139 protected
+  DEVELOPMENT entries, 35,846 supported-environment files, and all frozen
+  measurement entries unchanged. Benchmark JSON/runtime/version untouched.
+  Hosted CI, dependency advisories, built artifact smoke/audit/checksum,
+  remote state and final maintainer release decision remain pending.
+  Local work-unit commit: pending immediately after this evidence update.
+  RDD remains OFF; independent RP-3 is required, not a claimed native approval.
 - [ ] RP-3 — Independently verify and close local preparation.
   Route: independent verifier, then parent mechanical tracking closure.
   Recompute all published table/ratio claims from the selected JSON, verify no
@@ -118,8 +154,10 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
 
 ## Progress and next step
 
-Version 4.1.0 is confirmed. The six-file documentation promotion is implemented
-and writer-verified; the human approved the local size exception. Next: save
-RP-1, then continue RP-2 and independent RP-3 without PR, tags, publication,
-new timing or local package artifacts. No incompatible behavior change is
-involved. The frozen measurement checkout and JSON remain immutable.
+Version 4.1.0 is confirmed. RP-1 is committed locally as
+98715cf0838fa56c773cce1ef8b55824ebced177 with the approved size exception.
+RP-2 and its manual tag-dispatch hardening passed local TDD/checks and are ready
+for their coherent local commit. Next: independent RP-3. No PR, tags,
+publication, new timing or local package artifacts. This enforces the existing
+release policy, not an incompatible public API change. The frozen measurement
+checkout and JSON remain immutable. Hosted release gates are still pending.
