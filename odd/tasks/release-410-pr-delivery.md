@@ -61,17 +61,27 @@ review, **not** a release or merge.
 
 ## Tasks
 
-- [ ] RD-1 — Establish the approved issue and local delivery record. Create
+- [x] RD-1 — Establish the approved issue and local delivery record. Create
   the issue using the actual feature-request headings, verify its identity and
   status:approved, then commit this task record as a Conventional Commit work
   unit. Record issue URL/number, approval evidence, commit and exact HEAD.
   Do not mark complete from a drafted body or from human approval alone.
-- [ ] RD-2 — Push and open the linked, typed integration PR. Confirm the local
+  Issue: https://github.com/eamigo86/django-graphex/issues/253, author eamigo86;
+  status:approved confirmed before PR creation, needs-review removed.
+  Initial tracking commit: 414df951840f74cb0e475769c3e86f50683284e6.
+  Structural readback and diff check passed; no executable change (RED N/A).
+- [x] RD-2 — Push and open the linked, typed integration PR. Confirm the local
   candidate and push only its explicit HEAD to the retained branch under the
   authorized account/destination. Create one PR to main with a real approved
   issue reference replacing the draft placeholder; apply exactly one
   type:breaking-change label and size:exception; attach its URL to the task.
   Record pushed SHA, PR URL/number and label/readback evidence. No merge.
+  Explicit-head push of 414df951840f74cb0e475769c3e86f50683284e6 succeeded
+  through the authorized gh credential helper with push.followTags=false.
+  PR: https://github.com/eamigo86/django-graphex/pull/254, open, non-draft,
+  author eamigo86, target main, retained codex head. Closing issue #253 and
+  exactly type:breaking-change plus size:exception verified on readback.
+  PR attachment succeeded. This evidence is saved in the RD-2 metadata commit.
 - [ ] RD-3 — Observe applicable hosted checks for that exact PR head until
   terminal. Inventory the matrix, base-install, quality/security, coverage,
   PostgreSQL, docs, Playground, artifact and PR-policy jobs that actually run.
@@ -91,11 +101,15 @@ review, **not** a release or merge.
 Issue #253 was created under eamigo86 and its status:approved label was
 confirmed before PR creation: https://github.com/eamigo86/django-graphex/issues/253.
 The obsolete status:needs-review label was removed under the human's explicit
-approval. RD-1 awaits this record's local commit; other tasks remain pending.
+approval. RD-1 and RD-2 are complete; RD-3 and RD-4 remain pending.
 The CLI rejected combining --template with --body-file before making a remote
 change; the successful creation used the actual template headings in the body
 and existing enhancement/status labels instead. No duplicate issue was created.
-Parent next commits the record and pushes only the intended branch head.
+PR #254 is open and attached. Initial pull-request run:
+https://github.com/eamigo86/django-graphex/actions/runs/40380622029,
+head 414df951840f74cb0e475769c3e86f50683284e6. Its jobs have started, not passed.
+The metadata evidence update will advance the PR head; only terminal checks
+for the resulting exact head can establish completion. No merge or release.
 Hosted CI, release artifacts, advisory results and remote publication remain
 unknown until separately observed or authorized. Rollback for this metadata
 unit is this task file and its external draft bodies; no package source or
