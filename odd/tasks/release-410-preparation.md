@@ -140,8 +140,11 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
   measurement entries unchanged. Benchmark JSON/runtime/version untouched.
   Hosted CI, dependency advisories, built artifact smoke/audit/checksum,
   remote state and final maintainer release decision remain pending.
-  Local work-unit commit: pending immediately after this evidence update.
-  RDD remains OFF; independent RP-3 is required, not a claimed native approval.
+  Local work-unit commit: 25f49999c93bcbd24e0f6ea12ad1096d642deccd
+  (139 authored lines including tracking updates; cumulative feature 593).
+  Read-only risk assessment again returned high/unassessable due to untracked
+  audit reports. RDD remains globally OFF; independent RP-3 is required, not a
+  claimed native approval. No review transaction or mode change was invoked.
 - [ ] RP-3 — Independently verify and close local preparation.
   Route: independent verifier, then parent mechanical tracking closure.
   Recompute all published table/ratio claims from the selected JSON, verify no
@@ -150,14 +153,45 @@ prepare the declared 4.1.0 release locally, without executing remote delivery.
   BEFORE execution, including databases, migrations and historical envs; do not
   repeat the earlier inventory gap. Record unavailable CI/remote/artifact gates
   honestly and the exact next authorized delivery step. Save tracking closure.
-  Rollback: tracking metadata only. Evidence/commit: pending.
+  First independent verification: PARTIAL, report
+  /private/tmp/core33-rp3-229n29ci/RP3-report.md. All executed checks passed:
+  root 7,787/6 skips/4,064 subtests; branch 95.54846%, combined 97.58617%;
+  focal 28, related 82, benchmark contracts 358, Playground 98, strict docs,
+  quality/security and cumulative diff coverage 98.62675%. All 248 medians,
+  current tables and production guards were independently verified. Explicit
+  before/after inventories, including ignored assets, were identical.
+  RP3-DOC-1 (P2): docs/why.md's historical 4.0.0 paragraph still claimed p50
+  differences versus the current series were within noise after its referent
+  changed. Separate-session summaries establish neither noise nor significance.
+  Correction stays within authorized benchmark-doc promotion: same writer owns
+  docs/why.md and tests/test_docs_core33_migration.py only; add a narrow RED
+  assertion, remove the unsupported interpretation, preserve factual SQL
+  equality/source/history and state the comparison limitation. No data changes.
+  Run focused/related/full/doc proof, then independent targeted readback/tests
+  for this correction; do not repeat unaffected measurements or environments.
+  Rollback: only this documentary/test correction and tracking metadata.
+  Writer correction PASS: /private/tmp/core33-rp3-doc-correction-ILY8F7/RP3-DOC-1-corrective-report.md.
+  RED: 1 expected failure/14 passing; final focal: 15 passed; related: 454
+  passed. New regression validates the historical subsection and all 40 SQL
+  equalities from immutable artifacts. Full normalized suite: 7,788 passed,
+  6 known skips, 4,064 subtests; pure branch 95.54846%, combined 97.58617%,
+  raw/XML reconciled. Strict docs/44-page anchors, Ruff, mypy, both docstring
+  gates, Bandit and diff checks pass. One initial full run was interrupted to
+  fix the new test's docstring style before the successful normalized run;
+  failed/interrupted proof remains available, not represented as passing.
+  Only two owned files changed; all protected data/environments/frozen bytes
+  unchanged. Parent inspected diff and reran the regression: PASS.
+  Corrective local commit and independent targeted closure: pending.
+  Hosted gates remain pending, not failed/passed.
 
 ## Progress and next step
 
 Version 4.1.0 is confirmed. RP-1 is committed locally as
 98715cf0838fa56c773cce1ef8b55824ebced177 with the approved size exception.
-RP-2 and its manual tag-dispatch hardening passed local TDD/checks and are ready
-for their coherent local commit. Next: independent RP-3. No PR, tags,
+RP-2 and its manual tag-dispatch hardening are committed locally as 25f4999
+after TDD/checks. RP-3 passed local functional/arithmetic/preservation checks
+but returned PARTIAL for one stale historical noise claim. Next: bounded
+TDD documentary correction and independent targeted verification. No PR, tags,
 publication, new timing or local package artifacts. This enforces the existing
 release policy, not an incompatible public API change. The frozen measurement
 checkout and JSON remain immutable. Hosted release gates are still pending.

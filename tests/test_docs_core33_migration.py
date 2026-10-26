@@ -47,6 +47,43 @@ def test_comparison_intro_names_all_six_retained_series() -> None:
         assert label in intro
 
 
+def test_historical_400_comparison_preserves_sql_without_noise_inference() -> None:
+    """Keep factual SQL equality separate from unsupported timing inference.
+
+    Separate sessions do not establish measurement noise or significance.
+    """
+    page = (ROOT / "docs/why.md").read_text(encoding="utf-8")
+    historical = page.split("### Historical core33 4.0.0 comparison", 1)[1].split(
+        "### Historical core33 4.0.0 pre-fragment comparison", 1
+    )[0]
+    assert "within the noise" not in historical
+    assert (
+        "SQL counts match the current series for all operations and libraries."
+        in historical
+    )
+    assert (
+        "not a paired baseline or evidence about whether latency differences are meaningful"
+        in historical
+    )
+    assert "core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e" in historical
+    assert "measured prepared 4.0.0 source" in historical
+    for authors in (1000, 2000):
+        prefix = "2x_" if authors == 2000 else ""
+        for library in LIBRARIES:
+            old_path = (
+                ROOT
+                / "benchmarks/results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e"
+                / f"{prefix}{library}.json"
+            )
+            old = json.loads(old_path.read_text(encoding="utf-8"))
+            current = _load_result(library, authors)
+            for operation in OPERATIONS:
+                assert (
+                    old["operations"][operation]["sql_queries"]
+                    == current["operations"][operation]["sql_queries"]
+                )
+
+
 def test_current_comparison_table_is_derived_from_eight_artifacts() -> None:
     """Keep every published latency and SQL cell bound to committed data.
 

@@ -171,7 +171,7 @@ baseline for the current batch.
 
 ### Historical core33 4.0.0 comparison
 
-The previous [eight portable artifacts](https://github.com/eamigo86/django-graphex/tree/826d5bae87ed7bbe705cf309d46a16d3ad3cdf33/benchmarks/results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/) measured prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. Against the current series the SQL counts are identical and the GraphEx p50 differences are within the noise of two separate sessions; they remain available as historical evidence, not a paired baseline.
+The previous [eight portable artifacts](https://github.com/eamigo86/django-graphex/tree/826d5bae87ed7bbe705cf309d46a16d3ad3cdf33/benchmarks/results/core33-4.0.0-bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e/) measured prepared 4.0.0 source `bf6e1ed6ccb6d3940d253c9c83b19a436f01aa4e`. SQL counts match the current series for all operations and libraries. The separate-session timings remain historical evidence, not a paired baseline or evidence about whether latency differences are meaningful.
 
 ### Historical core33 4.0.0 pre-fragment comparison
 
