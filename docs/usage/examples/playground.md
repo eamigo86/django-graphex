@@ -247,7 +247,7 @@ work anonymously.
           comments {
             totalCount
             results(first: 2) { authorName text }
-            pageInfo { hasNextPage endCursor }
+            pageInfo(first: 2) { hasNextPage endCursor }
           }
         }
       }
@@ -258,10 +258,14 @@ work anonymously.
       comments {
         totalCount
         results(first: 3) { text }
-        pageInfo { hasNextPage endCursor }
+        pageInfo(first: 3) { hasNextPage endCursor }
       }
     }
     ```
+
+    To continue either cursor list, send its `endCursor` as `cursor` to both
+    `results` and `pageInfo`, with the same `first` value on each. Otherwise
+    cursor metadata can advance beyond rows the results did not show.
 
 === "Custom filter + optimizer"
 
@@ -475,14 +479,16 @@ to watch them work is the built-in browser client:
 
     ```graphql
     mutation {
-      postCreate(newPost: { title: "Live update", author: 1 }) {
+      postCreate(newPost: { title: "Live update", author: 1, status: PUBLISHED }) {
         ok
         post { id title }
       }
     }
     ```
 
-    The client streams the `next` event with the new post instantly. Both
+    The client streams the `next` event with the new post instantly. The
+    explicit published status is required for an anonymous subscriber;
+    omitting it creates a draft that this stream intentionally hides. Both
     playground subscriptions set `payload_mode = "full"`, so the whole
     serialized instance is deliverable — not just the `id`.
 

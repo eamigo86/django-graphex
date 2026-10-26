@@ -552,7 +552,7 @@ as `editor` from [section 6](#6-a-schema-pruned-to-the-caller-22)).
       comments {
         totalCount
         results(first: 2) { text }
-        pageInfo { hasNextPage endCursor }
+        pageInfo(first: 2) { hasNextPage endCursor }
       }
     }
   }
@@ -571,10 +571,14 @@ as `editor` from [section 6](#6-a-schema-pruned-to-the-caller-22)).
   comments {
     totalCount
     results(first: 3) { text }
-    pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+    pageInfo(first: 3) { hasNextPage hasPreviousPage startCursor endCursor }
   }
 }
 ```
+
+For a cursor continuation, pass the returned `endCursor` as `cursor` to both
+`results` and `pageInfo`, keeping their `first` values equal. A different
+`pageInfo` size can point past rows that `results` did not return.
 
 ### 2. Query optimization (N+1 avoidance)
 
@@ -1077,9 +1081,12 @@ Trigger a change from GraphiQL:
 
 ```graphql
 mutation {
-  postCreate(newPost: { title: "Live update", author: 1 }) { ok post { id } }
+  postCreate(newPost: { title: "Live update", author: 1, status: PUBLISHED }) { ok post { id } }
 }
 ```
+
+The explicit published status matters for an anonymous subscription: a post
+created without it is a draft, and this stream intentionally hides drafts.
 
 The socket delivers a standard GraphQL result frame:
 

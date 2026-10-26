@@ -1425,6 +1425,10 @@ Each item links to its migration note in the [4.1 upgrade guide](UPGRADE-4.1.md)
 
 ### Docs and tests
 
+- Correct both Playground cursor walkthroughs to match `pageInfo(first: ...)`
+  with `results(first: ...)`, and publish a post in the anonymous subscription
+  walkthroughs. Executable tests now run the copied operations and their
+  continuations over the Playground transports; library behavior is unchanged.
 - Ship the root files that test modules read (`CHANGELOG.md`, the two 4.0.0
   remediation reports, `tox.ini`, `uv.lock` and `zensical.yml`) in the sdist, and
   guard the allowlist with a static test. Directories such as `benchmarks/` and

@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -37,6 +39,8 @@ if TYPE_CHECKING:
 pytest.importorskip("channels")
 
 from channels.db import database_sync_to_async  # noqa: E402
+
+from tests._documented_operations import GUIDE, README, operation_under_heading
 
 # A Channels consumer touches the DB connection registry on every dispatched
 # message, and the producer-side broadcast fires from a real transaction commit,
@@ -181,6 +185,117 @@ async def test_ws_subscription_delivers_post_create(author: Author) -> None:
     assert msg["payload"].get("errors") in (None, [])
 
     await communicator.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("path", "heading"),
+    [(README, "## Subscriptions"), (GUIDE, "## Try subscriptions live")],
+    ids=["readme", "guide"],
+)
+async def test_documented_anonymous_subscription_receives_its_mutation(
+    author: Author, path: Path, heading: str
+) -> None:
+    """Run the documented subscribe and HTTP mutation as anonymous clients.
+
+    Args:
+        author: The persisted author whose identifier replaces the sample id.
+        path: The published Markdown file with the literal operations.
+        heading: The existing section containing both operations.
+    """
+    from blog.consumers import AppWSConsumer
+    from channels.testing import WebsocketCommunicator
+    from django.test import Client
+    from graphql import parse, print_ast
+    from graphql.language.ast import IntValueNode
+
+    from django_graphex.subscriptions.transports import ws as ws_module
+
+    subscription = operation_under_heading(path, heading)
+    mutation = operation_under_heading(path, heading, 1)
+    assert "postSubscription" in subscription
+    assert "postCreate" in mutation
+    document = parse(mutation)
+    post_create = document.definitions[0].selection_set.selections[0]
+    payload = post_create.arguments[0].value
+    fields = tuple(
+        replace(field, value=IntValueNode(value=str(author.pk)))
+        if field.name.value == "author"
+        else field
+        for field in payload.fields
+    )
+    mutation = print_ast(
+        replace(
+            document,
+            definitions=(
+                replace(
+                    document.definitions[0],
+                    selection_set=replace(
+                        document.definitions[0].selection_set,
+                        selections=(
+                            replace(
+                                post_create,
+                                arguments=(
+                                    replace(
+                                        post_create.arguments[0],
+                                        value=replace(payload, fields=fields),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    communicator = WebsocketCommunicator(
+        AppWSConsumer.as_asgi(), "/ws/graphql/", subprotocols=["graphql-transport-ws"]
+    )
+    connected, protocol = await communicator.connect()
+    assert connected and protocol == "graphql-transport-ws"
+    try:
+        await communicator.send_json_to({"type": "connection_init"})
+        assert (await communicator.receive_json_from(timeout=3))["type"] == (
+            "connection_ack"
+        )
+        await communicator.send_json_to(
+            {
+                "id": "documented",
+                "type": "subscribe",
+                "payload": {"query": subscription},
+            }
+        )
+        await _await_started_group(ws_module, communicator, "documented")
+
+        @database_sync_to_async
+        def _post_documented_mutation() -> tuple[int, dict[str, object]]:
+            """Submit the copied operation with a fresh anonymous HTTP client.
+
+            Returns:
+                The HTTP status and decoded GraphQL response body.
+            """
+            response = Client().post(
+                "/graphql/",
+                data=json.dumps({"query": mutation}),
+                content_type="application/json",
+            )
+            return response.status_code, response.json()
+
+        status, body = await _post_documented_mutation()
+        assert status == 200, body
+        assert body.get("errors") in (None, []), body
+        assert body["data"]["postCreate"]["ok"] is True, body
+        assert not await communicator.receive_nothing(timeout=0.35)
+        frame = await communicator.receive_json_from(timeout=3)
+        assert frame["type"] == "next", frame
+        assert frame["id"] == "documented"
+        assert (
+            frame["payload"]["data"]["postSubscription"]["id"]
+            == body["data"]["postCreate"]["post"]["id"]
+        )
+        assert frame["payload"].get("errors") in (None, [])
+    finally:
+        await communicator.disconnect()
 
 
 async def test_ws_refuses_a_subscribe_past_the_shipped_cap(author: Author) -> None:
