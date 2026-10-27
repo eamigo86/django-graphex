@@ -1,6 +1,6 @@
 # Post-release 4.1.0 maintenance
 
-Status: CORE_VERIFIED_FINAL_LEDGER_DELIVERY_PENDING. Repository locator: odd/tasks/post-release-410-maintenance.md.
+Status: COMPLETE. Repository locator: odd/tasks/post-release-410-maintenance.md.
 
 ## Objective and authority
 
@@ -153,9 +153,12 @@ Do not run publish again merely to demonstrate the absence of these warnings.
   deletions total. Origin tracking refs were reduced from 153 to two by a
   heads-only prune; only origin/HEAD and origin/main remain. All 15 tags
   stayed unchanged.
-  Unique/unmerged recovery branches, current maintenance branch, local main
-  and worktree branches remain protected; maintenance-branch removal and any
-  safe fast-forward synchronization of local main are post-delivery only.
+  After closure run 40447754509 succeeded, local main was safely fast-forwarded
+  and the merged maintenance branch was removed with an exact-SHA guard.
+  final-local-sync/results.json records PASS: 52 distinct local branches removed
+  in total; main and 34 unique/unmerged recovery branches remain. The active
+  frozen benchmark checkout is preserved. An additional verified incremental
+  delivery bundle preserves the maintenance commits beyond the baseline bundle.
 - [x] M41-5 — Remove only exact owned disposable environment/cache directories
   after durable evidence verification. Preserve proof roots, reports, logs,
   artifacts, databases, constraints/freezes, shared/original environments and
@@ -195,8 +198,13 @@ cache guard, so disabling caching alone is insufficient. References:
 https://github.com/astral-sh/setup-uv/blob/fac544c07dec837d0ccb6301d7b5580bf5edae39/src/setup-uv.ts#L69-L119
 https://github.com/astral-sh/setup-uv/blob/fac544c07dec837d0ccb6301d7b5580bf5edae39/src/cache/restore-cache.ts#L68-L97
 
-Next: parent commits and mirrors this reconciled ledger, pushes it by normal
-fast-forward, then observes that documentation-only head's applicable CI.
-Only after that delivery should the parent freshly validate any safe local-main
-fast-forward and removal of this now-merged maintenance branch. Do not claim
-those post-closure steps complete before observing them.
+Closure commit 2451c664662cc9554b090a43c25bf7a0a718520c was uploaded and its
+run 40447754509 succeeded: 15 validation jobs and both Codecov statuses passed;
+publish, create-release and deploy-docs correctly skipped. The separate
+final-tracker-ci/ evidence directory and 14-file checksum manifest preserve
+that result. The subsequent local-main fast-forward and last temporary-branch
+removal are independently recorded in final-local-sync/results.json.
+
+No maintenance action remains. This final passive completion record is uploaded
+with ordinary validation, not a release. The next publication still requires
+separate maintainer authorization; no new tag or publishing run was created.
