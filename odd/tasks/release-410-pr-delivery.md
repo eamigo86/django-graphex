@@ -1,6 +1,6 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: LOCAL_COMPAT_FIX_VERIFIED_WAITING_NEW_HEAD_CHECKS. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: READY_FOR_AUTHORIZED_TAG. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
 ## Current 4.1.0 release authority and plan (2026-10-27 UTC)
 
@@ -111,8 +111,10 @@ for PR #254 remains historical and does not waive the new checks.
   The local RED duration remains writer-reported (tool output only, not a
   retained proof file); the earlier exact-head CI RED was independently
   verified. No full-suite or coverage acceptance follows from focal proof.
-  Commit, new exact-head hosted checks and tag remain pending.
-- [ ] R41-2 — Commit the documentation-only closure, fast-forward it to the
+  Correction commit `c576baa241b999693c9cf14d70d101751ed83fcd` was
+  normally fast-forward pushed to `main`; remote readback matches. New
+  exact-head hosted checks and tag remain pending.
+- [x] R41-2 — Commit the documentation-only closure, fast-forward it to the
   authorized `main`, then observe every applicable fresh Actions and classic
   status context on that exact commit until terminal. Record success, failure
   and expected skip separately. Any failed, missing or pending required check
@@ -122,11 +124,20 @@ for PR #254 remains historical and does not waive the new checks.
   matches. Automatic run
   https://github.com/eamigo86/django-graphex/actions/runs/40435107342 is
   terminal FAILURE: 8 failed, 7 passed, 3 expected skips. This failed head
-  cannot be tagged. Local R41-1b proof passed; the parent will commit its
-  compatible correction
-  and fast-forward a new head, then inspect a fresh exact-head Actions and
-  classic-status inventory. This task remains unchecked; no blind rerun or
-  reuse of the earlier PR exception is allowed.
+  cannot be tagged. The verified R41-1b correction was normally pushed as
+  `c576baa241b999693c9cf14d70d101751ed83fcd`. Its fresh automatic run
+  https://github.com/eamigo86/django-graphex/actions/runs/40437276472 is
+  terminal SUCCESS; the read-only watcher session `69197` completed with
+  exit 0. Fresh readback confirms all 15 applicable Actions jobs succeeded,
+  with 3 expected publication skips and 0 pending. Both classic statuses are
+  successful: Codecov project `96.72%`, and patch "Coverage not affected"
+  against `2fcdbd1`. Total: 17 success, 0 fail, 3 expected skips, 0 pending.
+  Remote `main` is exactly `c576baa241b999693c9cf14d70d101751ed83fcd`,
+  whose metadata version is `4.1.0`. Local and remote tag `v4.1.0` remain
+  absent at this pre-tag check. This corrected exact commit, not a later
+  local tracking checkpoint, is the authorized tag target. The prior failed
+  `72808056` run remains historical; no blind rerun or reuse of its earlier
+  PR exception was needed.
 - [ ] R41-3 — Only after R41-2 has all required checks passing, create and
   push annotated tag `v4.1.0` on the checked exact `main` commit. Record tag
   target and push evidence. Do not infer publication from a tag request.
