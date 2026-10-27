@@ -1,6 +1,6 @@
 # Post-release 4.1.0 maintenance
 
-Status: LOCAL_FIX_VERIFIED_DELIVERY_AND_CLEANUP_PENDING. Repository locator: odd/tasks/post-release-410-maintenance.md.
+Status: MAIN_CHECKS_AND_SAFE_CLEANUP_PENDING. Repository locator: odd/tasks/post-release-410-maintenance.md.
 
 ## Objective and authority
 
@@ -93,6 +93,7 @@ Do not run publish again merely to demonstrate the absence of these warnings.
   publisher setup-uv inputs, document the no-checkout/no-cache rationale, and
   verify focused GREEN plus formatting/type/structural checks. Keep no-publish
   gates intact. Record exact commands, results and coherent commit.
+  Coherent implementation commit: af3bcc81966ebb2bafa160b10fe7e2f7983808d7.
   RED: both new focused tests failed before the workflow edit for the two
   missing inputs. Raw commands, exit codes and RED/GREEN logs are retained
   at /private/tmp/maintenance410-cachefix-9KZlQ7/. GREEN: both new tests and
@@ -108,10 +109,39 @@ Do not run publish again merely to demonstrate the absence of these warnings.
   normal fast-forward main push using eamigo86 and push.followTags=false.
   Observe all applicable exact-head Actions and Codecov checks. Publication
   jobs must skip on this branch push; do not dispatch or create another tag.
+  Normal fast-forward push completed to main at af3bcc8, carrying the
+  existing release-closure commits cf44cfb/06ece90 and the tested fix.
+  Fresh main ref matches. Automatic run 40444456259 is in progress:
+  https://github.com/eamigo86/django-graphex/actions/runs/40444456259.
+  Parent read-only watcher session: 99243. No publication was dispatched.
+  Initial hosted validation found two DOC002 violations in the newly added
+  test docstrings: both were single-line instead of the required multi-line
+  Google style. Ruff/mypy/focal success did not cover this omitted check.
+  The failed quality and diff jobs remain evidence; do not weaken the checker.
+  Cleanup is still gated while this bounded documentation correction is made.
+- [x] M41-2a — Reproduce those two DOC002 failures with the real checker,
+  expand only the two test docstrings, run the strict/content checker and
+  related workflow contracts, then submit a corrected head for fresh CI.
+  Preserve the cache fix, all warning contracts and publication guards.
+  Observed checker RED: exactly two DOC002 diagnostics, exit 1, retained at
+  /private/tmp/maintenance410-docstrings-red.log. Expanded only those two
+  docstrings. Strict/content checking of all 705 tracked Python files now
+  reports TOTAL 0, exit 0; retained GREEN log is alongside the RED log.
+  The workflow module passed 16/16; Ruff lint/format and diff check passed.
+  Independent readback also reports TOTAL 0 and 16 passed, with identical
+  executable ASTs before/after the docstring-only correction: PASS_SCOPED.
+  No checker setting or public behavior changed; fresh hosted CI is required.
 - [ ] M41-4 — Clean only freshly verified merged temporary local/remote
   branches. Back up exact tips first, retain main/current/worktree branches,
   every tag and every unique/unmerged recovery or tracking branch. Check
   current remote PR/ref state and prevent deletion of a changed remote tip.
+  Durable cleanup-plan.json currently lists 50 strictly merged local heads,
+  37 protected/unique heads, 7 actual remote heads with exact matching merged
+  PRs and zero open PRs. Actual remote branches total 8; the 158 cached
+  origin refs were stale inventory, not an authorization to delete remotely.
+  The independent verifier recovered every remote candidate object from an
+  isolated bundle unpack; two are ancestors rather than named bundle heads.
+  Fresh tip/PR/root validation and deletion have not happened yet.
 - [ ] M41-5 — Remove only exact owned disposable environment/cache directories
   after durable evidence verification. Preserve proof roots, reports, logs,
   artifacts, databases, constraints/freezes, shared/original environments and

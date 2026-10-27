@@ -121,7 +121,10 @@ def test_release_consumers_download_and_verify_the_same_artifact() -> None:
 
 
 def test_checkout_free_publisher_does_not_restore_a_package_cache() -> None:
-    """Avoid cache dependency lookup when the publisher has no checkout."""
+    """Avoid cache dependency lookup when the publisher has no checkout.
+
+    Only jobs that install project dependencies should restore a package cache.
+    """
     publish = _job("publish")
     setup_uv = publish.split("    - name: Install uv\n", 1)[1].split(
         "\n    - name:", 1
@@ -139,7 +142,10 @@ def test_checkout_free_publisher_does_not_restore_a_package_cache() -> None:
 
 
 def test_checkout_free_publisher_allows_its_intentionally_empty_workdir() -> None:
-    """Skip only the expected empty-workdir warning in the publisher."""
+    """Skip only the expected empty-workdir warning in the publisher.
+
+    The publisher consumes immutable artifacts without checking out source.
+    """
     publish = _job("publish")
     setup_uv = publish.split("    - name: Install uv\n", 1)[1].split(
         "\n    - name:", 1
