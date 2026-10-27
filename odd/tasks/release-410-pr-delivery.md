@@ -1,6 +1,6 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: READY_FOR_AUTHORIZED_TAG. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: RELEASED_4.1.0_VERIFIED. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
 ## Current 4.1.0 release authority and plan (2026-10-27 UTC)
 
@@ -138,13 +138,63 @@ for PR #254 remains historical and does not waive the new checks.
   local tracking checkpoint, is the authorized tag target. The prior failed
   `72808056` run remains historical; no blind rerun or reuse of its earlier
   PR exception was needed.
-- [ ] R41-3 — Only after R41-2 has all required checks passing, create and
+- [x] R41-3 — Only after R41-2 has all required checks passing, create and
   push annotated tag `v4.1.0` on the checked exact `main` commit. Record tag
   target and push evidence. Do not infer publication from a tag request.
-- [ ] R41-4 — Verify the immutable PyPI package, GitHub Release and
+  Created the annotated tag only after the full corrected-head check
+  inventory passed and a fresh official PyPI preflight returned HTTP 404.
+  Local tracked tree was clean after the local-only metadata checkpoint
+  `cf44cfbafad8c8d2c38f04c93b777cdb9c2d9824`; that checkpoint was not
+  tagged or pushed. Tag object `eb2bef230c3e4987064faba5214f7f4c6461e78c`
+  points exactly to checked commit
+  `c576baa241b999693c9cf14d70d101751ed83fcd`, with annotation
+  `django-graphex 4.1.0`. Pushed only `refs/tags/v4.1.0` through the
+  authorized account, without force or following other tags; remote tag
+  object and peeled target were read back and match. Automatic push run
+  https://github.com/eamigo86/django-graphex/actions/runs/40438229620 is
+  now completed SUCCESS: all 18 jobs succeeded, including production PyPI,
+  GitHub Release and Pages deployment. No workflow/job retry was required.
+  GitHub Release `424974975` is published, stable and not a draft, at
+  `2026-10-27T02:32:07Z`; it attaches the single wheel, sdist and checksum
+  manifest. Production documentation URL from the Pages API is
+  https://eamigo86.github.io/django-graphex/. Independent public artifact,
+  clean installation and served-documentation verification remains R41-4.
+  Never move, delete or recreate this tag if a subsequent job fails.
+- [x] R41-4 — Verify the immutable PyPI package, GitHub Release and
   production documentation artifacts, including independent installation
   evidence where applicable. Record artifact identities and any failures;
   do not claim the release complete from a triggered workflow alone.
+  The tag workflow passed all 18 jobs, and its coverage job reports 7,794
+  passed, 7 skipped and 4,064 subtests passed, combined coverage `97.62%`
+  and pure branches `5,095/5,332 = 95.5551%` at unchanged `95.01%` gates.
+  Independent post-publication verdict: PASS_SCOPED, with no remaining
+  failed or unavailable scoped check. Downloaded PyPI and GitHub wheel and
+  sdist bytes are identical; both metadata digests and the exact two-entry
+  `SHA256SUMS` agree. Wheel SHA256:
+  `f0485628b9ed4944ec4203c311ac52bc60603395a60015e1a36b5b54240cd740`;
+  sdist SHA256:
+  `fcd104038024fd197e3b6af73eae767a92f050899b3db361a30877138a943efa`.
+  Official PyPI uploads occurred at `2026-10-27T02:31:47Z` and `02:31:49Z`.
+  A fresh external Python 3.12.11 base-wheel environment resolves 4.1.0 from
+  site-packages, includes `py.typed`, has no Channels installation, and
+  passes the dependency check for all 13 installed packages. Resolved Django
+  6.1.2 and graphql-core 3.3.1; the immutable release helper initializes
+  Django, builds a schema and returns `{"hello": "wheel-ok"}`. Parent
+  independently reran that installed-wheel smoke: PASS, exit 0.
+  Live home, changelog and 4.1 upgrade-guide pages were fetched; the served
+  changelog has the actual dated heading, compatibility/behavior sections
+  and working migration navigation. Proof:
+  `/private/tmp/release410-postpublish.uhyZIa/report.md` and `status.json`.
+  An initial restricted-network DNS failure was resolved through the
+  authorized network-enabled retry; no final network failure remains.
+  Fresh Codecov project and patch statuses on the released exact commit
+  remain successful; the remote annotated tag object is unchanged.
+  Only nonblocking CI annotations remain: runner-label migration and uv
+  cache/empty-workdir notices in the deliberately checkout-free publisher.
+  No post-release source/config change, workflow retry, tag move, manual
+  upload or benchmark regeneration occurred. Frozen evidence checkout
+  remains clean at `f9f4eae81954959ab71e4a9037d5ba06486d6a8e`.
+  This is scoped publication/install proof, not a claim of zero library bugs.
 
 ## Historical merge result and prior release boundary (2026-10-26)
 
