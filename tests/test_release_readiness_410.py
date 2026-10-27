@@ -52,13 +52,13 @@ def test_install_snippets_name_the_current_version() -> None:
 def test_changelog_declares_the_compatibility_policy() -> None:
     """State the policy and list behavior changes first.
 
-    Both changelog copies carry the same 4.1.0 section header.
+    Both changelog copies carry the dated 4.1.0 section header.
     """
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
         notes = (ROOT / relative).read_text(encoding="utf-8")
-        section = notes.split(f"## {VERSION} — Unreleased", maxsplit=1)[1].split(
-            "\n## 4.0.0", maxsplit=1
-        )[0]
+        heading = f"## {VERSION} — 2026-10-27\n"
+        assert notes.count(heading) == 1
+        section = notes.split(heading, maxsplit=1)[1].split("\n## 4.0.0", maxsplit=1)[0]
         assert "### Compatibility policy" in section
         assert "### Behavior changes" in section
         assert "UPGRADE-4.1.md" in section

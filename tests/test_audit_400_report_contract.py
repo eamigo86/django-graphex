@@ -329,15 +329,18 @@ def test_examples_and_decision_queue_do_not_turn_boundaries_into_fixes() -> None
     assert "ResourceWarning" in limits
 
 
-def test_report_is_navigable_and_release_notes_do_not_claim_release() -> None:
-    """Link the local audit outcome without claiming publication or closure.
+def test_report_is_navigable_and_audit_disposition_does_not_claim_closure() -> None:
+    """Link the audit outcome without claiming its issues are all closed.
 
-    Both changelogs point to the same report without announcing a release.
+    Both dated changelogs identify the report as an audit disposition, not a
+    separate release or a claim that every original issue is resolved.
     """
     assert "audit-4.0.0.md" in (ROOT / "zensical.yml").read_text(encoding="utf-8")
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
         text = (ROOT / relative).read_text(encoding="utf-8")
-        unreleased = text.split("## 4.1.0 — Unreleased\n", 1)[1].split("\n## ", 1)[0]
-        assert "100 original audit claims" in unreleased
-        assert "audit-4.0.0.md" in unreleased
-        assert "not a release" in unreleased
+        heading = "## 4.1.0 — 2026-10-27\n"
+        assert text.count(heading) == 1
+        release_notes = text.split(heading, 1)[1].split("\n## ", 1)[0]
+        assert "100 original audit claims" in release_notes
+        assert "audit-4.0.0.md" in release_notes
+        assert "not a release" in release_notes

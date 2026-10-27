@@ -1,6 +1,6 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: FINAL_RELEASE_AUTHORIZED_PENDING_DATED_NOTES_AND_CHECKS. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: LOCAL_COMPAT_FIX_VERIFIED_WAITING_NEW_HEAD_CHECKS. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
 ## Current 4.1.0 release authority and plan (2026-10-27 UTC)
 
@@ -29,6 +29,26 @@ for PR #254 remains historical and does not waive the new checks.
   immutable artifact verification. Do not change thresholds, exclusions,
   configuration, runtime code, support bounds or benchmark evidence. No
   local package build or installation is part of this documentation unit.
+- Dated closure was committed as
+  `72808056f1cc16e99a29a792597452a315fbaa1c`
+  (`docs(release): finalize 4.1.0 changelog date`) and normally
+  fast-forward pushed through the verified `eamigo86` account with
+  `push.followTags=false`. Fresh readback shows remote `main` at exactly
+  that SHA. The commit changes only the two dated headings and this
+  tracker history. No tag or publication occurred. Its automatic run
+  https://github.com/eamigo86/django-graphex/actions/runs/40435107342 is
+  terminal **FAILURE** on this dated head: 8 Actions failures (six matrix,
+  base-install and coverage), 7 passes and 3 expected skips. A representative
+  Python 3.12/Django 6 job reported 5 failed, 7,789 passed, 7 skipped and
+  4,064 subtests. Base-install also reported the same five failures with
+  7,058 passed, 39 skipped and 4,064 subtests; coverage reported the same
+  five with 7,789 passed, 7 skipped and 4,064 subtests. The failures were
+  stale assertions or release-section splits that assumed the 4.1.0 heading
+  was always `Unreleased`. The initial four passing changelog-consistency
+  tests did not exercise those contracts. The official PyPI 4.1.0 JSON
+  preflight returned 404; no tag or publication has occurred. Tagging stays
+  blocked until a new exact head passes every applicable check. No source,
+  threshold, exclusion or configuration change is authorized by this failure.
 - Route: delegated direct because the coordinated tracker restoration and
   two-document release closure span multiple files. Forecast under 400
   authored lines. Strict TDD remains enabled, but RED/GREEN and a runtime
@@ -41,8 +61,9 @@ for PR #254 remains historical and does not waive the new checks.
 
 - [x] R41-1 — Date only the two 4.1.0 changelog headings to `2026-10-27`,
   verify the existing focused documentation contracts and preserve every
-  note, anchor and prior release section. Exact comparison to `HEAD` shows
-  one heading substitution per file and no other changelog byte changes.
+  note, anchor and prior release section. Precommit comparison to merged
+  baseline `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb` showed one heading
+  substitution per file and no other changelog byte changes.
   Focused check command:
 
   ```sh
@@ -55,12 +76,57 @@ for PR #254 remains historical and does not waive the new checks.
   PASS.
   Runtime harness: N/A, metadata only. Rollback boundary: these two dated
   headings and this tracker update, without touching source or prior proof.
-  Commit and hosted verification remain R41-2, not part of this checkbox.
+  Parent accepted the canonical focal proof and independently spot-checked
+  the same contracts: 4/4 passed. Documentation closure commit:
+  `72808056f1cc16e99a29a792597452a315fbaa1c`. Hosted verification
+  remains R41-2, not part of this checkbox.
+- [x] R41-1b — Reproduce and correct only the five existing documentation
+  contracts invalidated by the authorized dated 4.1.0 headings. Observe RED
+  on the exact failing tests before editing, then GREEN and REFACTOR, while
+  retaining meaningful assertions for release notes, migration guidance,
+  4.0 history, root/docs parity and audit-report navigation. Own only the
+  five implicated test modules and this tracker. Run those five modules plus
+  the existing changelog-consistency module; record exact results and
+  applicable style checks. Do not change changelog content, runtime behavior
+  or any release gate. Rollback boundary: these compatibility-test edits.
+  Observed RED on the five exact named tests: 5 failed in 0.19s, each at the
+  stale `Unreleased` heading or dependent split. Updated only their test
+  contracts to require the single exact dated 4.1.0 heading while retaining
+  compatibility-policy order, migration links, GraphQL-core floor and 3.1.1
+  patch history, 4.0 dated notes, audit-report navigation and audit-scope
+  claims, root/docs parity and documentation-only behavior boundaries.
+  Renamed the obsolete audit test to describe audit scope rather than
+  incorrectly suggesting 4.1.0 itself is unpublished. Focused GREEN:
+  5 passed in 0.16s. After one Ruff formatting normalization, the five full
+  modules plus `tests/test_docs_changelog_consistency.py` passed 38/38 in
+  the final normalized run (0.40s). Ruff check and format check passed for
+  all five changed test files;
+  mypy found no issues in those five files. The canonical pytest invocations
+  used the verified Python 3.12 interpreter, `--no-cov`,
+  `-p no:cacheprovider`, and no `addopts` override. Runtime harness: N/A,
+  tests validate documentation contracts only. Parent independently reran
+  the six-module command: 38 passed in 0.43s. A fresh-context functional
+  verifier also passed all 38 in 0.41s and inspected all three retained CI
+  failure logs: PASS_SCOPED, no weakened assertions, skips or exclusions.
+  The local RED duration remains writer-reported (tool output only, not a
+  retained proof file); the earlier exact-head CI RED was independently
+  verified. No full-suite or coverage acceptance follows from focal proof.
+  Commit, new exact-head hosted checks and tag remain pending.
 - [ ] R41-2 — Commit the documentation-only closure, fast-forward it to the
   authorized `main`, then observe every applicable fresh Actions and classic
   status context on that exact commit until terminal. Record success, failure
   and expected skip separately. Any failed, missing or pending required check
-  blocks tagging; the earlier PR exception is not a substitute.
+  blocks tagging; the earlier PR exception is not a substitute. Commit and
+  normal fast-forward push completed as
+  `72808056f1cc16e99a29a792597452a315fbaa1c`; remote `main` readback
+  matches. Automatic run
+  https://github.com/eamigo86/django-graphex/actions/runs/40435107342 is
+  terminal FAILURE: 8 failed, 7 passed, 3 expected skips. This failed head
+  cannot be tagged. Local R41-1b proof passed; the parent will commit its
+  compatible correction
+  and fast-forward a new head, then inspect a fresh exact-head Actions and
+  classic-status inventory. This task remains unchecked; no blind rerun or
+  reuse of the earlier PR exception is allowed.
 - [ ] R41-3 — Only after R41-2 has all required checks passing, create and
   push annotated tag `v4.1.0` on the checked exact `main` commit. Record tag
   target and push evidence. Do not infer publication from a tag request.

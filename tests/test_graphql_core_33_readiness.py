@@ -58,7 +58,7 @@ def test_current_guidance_distinguishes_the_floor_from_patch_history() -> None:
     assert "runtime dependency floor is now 3.3" in " ".join(views.lower().split())
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         notes = path.read_text(encoding="utf-8")
-        assert "## 4.1.0 — Unreleased" in notes
+        assert notes.count("## 4.1.0 — 2026-10-27\n") == 1
         assert FLOOR in notes.split("## 3.1.1 — 2026-10-01", maxsplit=1)[0]
         patch = notes.split("## 3.1.1 — 2026-10-01", maxsplit=1)[1]
         assert "3.2.13" in patch

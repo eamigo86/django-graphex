@@ -142,7 +142,7 @@ def test_both_changelogs_scope_these_clarifications_to_documentation() -> None:
     as a newly fixed implementation behavior.
     """
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
-        body = section(relative, "## 4.1.0 — Unreleased")
+        body = section(relative, "## 4.1.0 — 2026-10-27")
         assert (
             "Document current subscription, timezone, cache-cookie, partial-update"
             in body

@@ -14,13 +14,15 @@ DATE = "2026-10-05"
 def test_400_notes_are_dated_and_describe_version_requirements() -> None:
     """Keep dated migration notes independent of publication status.
 
-    The two earlier dated release sections remain intact below the new notes.
+    The two earlier dated release sections remain intact below the 4.1 notes.
     """
     for path in (ROOT / "CHANGELOG.md", ROOT / "docs/changelog.md"):
         notes = path.read_text(encoding="utf-8")
-        after_unreleased = notes.split("## 4.1.0 — Unreleased", maxsplit=1)[1]
+        heading = "## 4.1.0 — 2026-10-27\n"
+        assert notes.count(heading) == 1
+        after_410 = notes.split(heading, maxsplit=1)[1]
         first_release_heading = next(
-            line for line in after_unreleased.splitlines() if line.startswith("## ")
+            line for line in after_410.splitlines() if line.startswith("## ")
         )
         assert first_release_heading == f"## {VERSION} — {DATE}"
         current = notes.split(f"## {VERSION} — {DATE}", maxsplit=1)[1].split(
