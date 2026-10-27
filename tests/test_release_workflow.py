@@ -120,6 +120,35 @@ def test_release_consumers_download_and_verify_the_same_artifact() -> None:
     assert "dist/*" in create_release
 
 
+def test_checkout_free_publisher_does_not_restore_a_package_cache() -> None:
+    """Avoid cache dependency lookup when the publisher has no checkout."""
+    publish = _job("publish")
+    setup_uv = publish.split("    - name: Install uv\n", 1)[1].split(
+        "\n    - name:", 1
+    )[0]
+
+    assert "        enable-cache: false\n" in setup_uv
+    assert "cache-suffix:" not in setup_uv
+    for job_name, suffix in (
+        ("release-artifact", "release-artifact"),
+        ("docs-build", "docs-build"),
+    ):
+        producer = _job(job_name)
+        assert "        enable-cache: true\n" in producer
+        assert f"        cache-suffix: {suffix}\n" in producer
+
+
+def test_checkout_free_publisher_allows_its_intentionally_empty_workdir() -> None:
+    """Skip only the expected empty-workdir warning in the publisher."""
+    publish = _job("publish")
+    setup_uv = publish.split("    - name: Install uv\n", 1)[1].split(
+        "\n    - name:", 1
+    )[0]
+
+    assert "        ignore-empty-workdir: true\n" in setup_uv
+    assert "actions/checkout@" not in publish
+
+
 def test_immutable_artifact_contract_is_published_in_the_docs() -> None:
     """Verify maintainers can discover the build-once release contract.
 

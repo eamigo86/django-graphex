@@ -27,6 +27,12 @@ The PyPI publisher and GitHub Release jobs download `python-dist`, verify
 attaches the wheel, source distribution, and checksum manifest that passed the
 release checks.
 
+The publisher intentionally does not check out the repository: it only installs
+`uv`, downloads the immutable distribution and verifies its checksums before
+uploading. Its `setup-uv` step disables the package cache because there are no
+project dependency files to key it, and explicitly allows the expected empty
+working directory. Other jobs that install project dependencies keep caching.
+
 This build-once flow means the bytes that were tested are the bytes that get
 published. If a consumer job fails, rerun the workflow for the same immutable
 tag; never replace an already published tag or artifact.
