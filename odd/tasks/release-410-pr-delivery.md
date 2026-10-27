@@ -1,8 +1,180 @@
 # Deliver the prepared 4.1.0 integration for review
 
-Status: LOCAL_CORRECTIONS_VERIFIED_AWAITING_HOSTED_CHECKS. Repository locator: odd/tasks/release-410-pr-delivery.md.
+Status: FINAL_RELEASE_AUTHORIZED_PENDING_DATED_NOTES_AND_CHECKS. Repository locator: odd/tasks/release-410-pr-delivery.md.
 
-## Objective and authority
+## Current 4.1.0 release authority and plan (2026-10-27 UTC)
+
+The maintainer has now given final, conditional approval: close both 4.1.0
+changelogs with the real UTC release date, verify the documentation-only
+change, and create/push tag `v4.1.0` **only after every check on the dated
+`main` commit passes**. That tag is intended to trigger PyPI publication,
+the GitHub Release and production documentation deployment. No further
+approval is needed for this same conditional publication; a failing,
+missing or pending check blocks the tag rather than becoming an exception.
+The earlier approval-pending statements below are historical and superseded
+only by this explicit final authorization. The one-time Codecov exception
+for PR #254 remains historical and does not waive the new checks.
+
+- Date: `2026-10-27` UTC, confirmed by the official clock before editing.
+  New local branch `codex/release-4.1.0-close` starts at verified merged
+  `main` SHA `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb`. The old
+  `codex/audit-400-remediation` branch retains local metadata commit
+  `5ca9d6e659f35a5f873142761f5ab1db6c274980`; this tracker was restored
+  exactly from that commit before dated-note edits, preserving prior proof.
+  `pyproject.toml` still declares version `4.1.0` (read-only confirmation).
+- Scope: change only the 4.1.0 headings in root and docs changelogs from
+  `Unreleased` to the confirmed UTC date, preserving all notes and anchors.
+  The parent owns the Conventional Commit, normal fast-forward push to the
+  authorized `main`, complete fresh check inventory, annotated tag push and
+  immutable artifact verification. Do not change thresholds, exclusions,
+  configuration, runtime code, support bounds or benchmark evidence. No
+  local package build or installation is part of this documentation unit.
+- Route: delegated direct because the coordinated tracker restoration and
+  two-document release closure span multiple files. Forecast under 400
+  authored lines. Strict TDD remains enabled, but RED/GREEN and a runtime
+  harness are N/A because no executable behavior changes. Applicable local
+  evidence is the existing focused docs/changelog contracts, exact-heading
+  and preservation readback, and `git diff --check`. Delivery uses the
+  existing approved release scope, not a newly invented pull request.
+
+### Release tasks
+
+- [x] R41-1 — Date only the two 4.1.0 changelog headings to `2026-10-27`,
+  verify the existing focused documentation contracts and preserve every
+  note, anchor and prior release section. Exact comparison to `HEAD` shows
+  one heading substitution per file and no other changelog byte changes.
+  Focused check command:
+
+  ```sh
+  PYTHONDONTWRITEBYTECODE=1 /private/tmp/claude-501/-Users-eamigo-Documents-Work-django-graphex/beff4e6e-3a6e-47db-be34-debf3cc0d12e/scratchpad/venv-head/bin/python -m pytest tests/test_docs_changelog_consistency.py --no-cov -p no:cacheprovider
+  ```
+
+  Canonical result: 4 passed in 0.09s. An earlier invocation with a blank
+  `addopts` override also passed but was not accepted as verification
+  evidence; this recorded run used the configured options. `git diff --check`:
+  PASS.
+  Runtime harness: N/A, metadata only. Rollback boundary: these two dated
+  headings and this tracker update, without touching source or prior proof.
+  Commit and hosted verification remain R41-2, not part of this checkbox.
+- [ ] R41-2 — Commit the documentation-only closure, fast-forward it to the
+  authorized `main`, then observe every applicable fresh Actions and classic
+  status context on that exact commit until terminal. Record success, failure
+  and expected skip separately. Any failed, missing or pending required check
+  blocks tagging; the earlier PR exception is not a substitute.
+- [ ] R41-3 — Only after R41-2 has all required checks passing, create and
+  push annotated tag `v4.1.0` on the checked exact `main` commit. Record tag
+  target and push evidence. Do not infer publication from a tag request.
+- [ ] R41-4 — Verify the immutable PyPI package, GitHub Release and
+  production documentation artifacts, including independent installation
+  evidence where applicable. Record artifact identities and any failures;
+  do not claim the release complete from a triggered workflow alone.
+
+## Historical merge result and prior release boundary (2026-10-26)
+
+The maintainer explicitly approved a **one-time Codecov patch exception** for
+PR #254 and authorized merging its exact current head into `main`, without
+changing coverage thresholds. Approval to tag or publish 4.1.0 remains
+separate and must be requested before either action. The prior
+`WAITING_FOR_CODECOV_READ_ACCESS` status and earlier no-merge scope below are
+historical; they do not override this later, narrower merge authority. The
+maintainer declined contacting Codecov support. Do not send a support request.
+
+- Merged target: PR https://github.com/eamigo86/django-graphex/pull/254,
+  head `acf61d08fc79a5f048c03a5fa16e1346d12bc1bf`, base
+  `5a155a059a4d3995ead1b639f08136e5d7619aec`. The SHA-locked standard
+  merge completed without admin override, force or squash. The API returned
+  `merged: true`; fresh readback shows `MERGED` by `eamigo86` at
+  `2026-10-26T22:31:24Z`, with merge SHA
+  `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb`. Remote `main` points to
+  exactly that SHA. The remote PR head and merge tree both equal
+  `010473ce05f1a038ce185432b2e370dfd7819463`. Linked issue #253 closed
+  automatically at `2026-10-26T22:31:26Z`. The Conventional merge title is
+  `feat(release)!: integrate audited 4.1.0 changes (#254)`; its body links
+  the exception and disclaims tag/publication authority.
+- The exception applies only to existing failed Codecov patch check
+  `121851206201`: `96.12403%` against `96.43%`. A later authenticated
+  dashboard reading of `96.97%` does not establish why this check failed and
+  does not turn it green. Codecov project passes at `96.72%`.
+- The exact-head rollup remains **16 pass, 1 fail, 3 expected skips, 0
+  pending**. Its 15 GitHub Actions jobs and Codecov project pass; only the
+  named patch check fails. The hosted coverage job independently enforced
+  pure branch coverage `95.5551%` and changed-line coverage `98%`, both
+  passing unchanged `95.01%` gates.
+  Historical PR run:
+  https://github.com/eamigo86/django-graphex/actions/runs/40401439029.
+  Do not assert that all PR checks were green or that Codecov has a proven
+  defect. The later green `main` statuses neither retroactively change the
+  failed PR check nor establish the cause of its calculation mismatch.
+- The automatic `main` push run
+  https://github.com/eamigo86/django-graphex/actions/runs/40413092948 is
+  terminal **SUCCESS** for exact head
+  `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb`. All 15 Actions jobs
+  succeeded; publish, create-release and deploy-docs are the three expected
+  skips, with zero pending. The 18 GitHub check-run records are Actions only;
+  the separate classic commit-status API reports two successful contexts:
+  `codecov/project` `96.72%` (+0.29 versus base `5a155a0`) and
+  `codecov/patch` `96.96%` against `96.43%`. Combined `main` rollup:
+  **17 success, 0 fail, 3 expected skips, 0 pending**. Fresh coverage job
+  `121888492000` reports 7,794 passed, 7 skipped, 4,064 subtests passed in
+  419.61 seconds; combined coverage `97.62%`, pure branches
+  `5,095/5,332 = 95.5551%` against the unchanged `95.01%` gate, PASS.
+  The changed-line enforcement job also succeeded; no exact `main` diff
+  percentage is claimed. Release artifact build, smoke, audit and checksum
+  passed, with no publication.
+- Scope: the exception was documented, the factual PR comment was posted,
+  the exact head was merged and `main` checks were verified. Final explicit
+  human approval remains required before tag or publication. No threshold,
+  exclusion, configuration, source or status-forgery change; no Codecov
+  rerun, workflow dispatch, support contact, or production publication is
+  authorized here.
+  The automatic `main` checks are not release approval.
+- Route: delegated direct for an operational documentation edit because
+  preparation and evidence reconciliation precede writing. The parent owns
+  the mirror, Conventional Commit, PR comment, merge and remote readback.
+  Delivery strategy remains `exception-ok` for the existing integration PR;
+  there is no new source implementation or PR. Forecast: approximately 80
+  authored lines. Strict TDD stays enabled, but RED/GREEN and a runtime
+  harness are N/A for this documentation-only unit. Structural readback and
+  `git diff --check` are the applicable local checks.
+- Release boundary: tag `v4.1.0` is absent. The root and docs 4.1.0 changelog
+  headings remain `Unreleased`, as previously required. Close both with the
+  actual publication date and validate that documentation-only closure only
+  after final human release approval; the merge consent authorizes neither
+  tagging nor publishing.
+
+### Merge tasks
+
+- [x] RD-M1 — Record the exact one-time exception in this tracker and a
+  public-English PR comment before merge. Keep the failed patch status and
+  calculation mismatch visible, with source links and no private evidence.
+  Authenticated comment/body readback as `eamigo86`:
+  https://github.com/eamigo86/django-graphex/pull/254#issuecomment-6428876354.
+  Local Conventional documentation commit
+  `526156a58ccb3cd154b4de04a18ec12fcec10e59` records this evidence;
+  it is unpushed, alongside prior local metadata commit
+  `69989e587457b5c6fad87a4445d0f0c1009b8b7e`.
+  Remote merged `main` remains `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb`.
+- [x] RD-M2 — Reconfirm PR #254's exact head/base and merge only that head
+  into `main` through the authorized `eamigo86` account. Record merge method,
+  resulting merge SHA and remote readback. Do not infer completion from
+  approval or a merge request alone. SHA-locked standard merge, no override,
+  force or squash; `merged: true` and fresh `MERGED` readback at
+  `2026-10-26T22:31:24Z`. Merge SHA and `main` ref:
+  `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb`. PR head and merge tree
+  both `010473ce05f1a038ce185432b2e370dfd7819463`.
+- [x] RD-M3 — Verify post-merge `main` state and observed checks without
+  calling them release gates. Preserve RDC-3's unresolved Codecov patch
+  calculation mismatch as an accepted one-time exception, not a fix. Remote
+  `main` ref and linked issue readback passed. Automatic `main` run
+  `40413092948` and both classic Codecov statuses are terminal successful:
+  17 success, 0 fail, 3 expected skips, 0 pending. The final human release
+  approval question is **PENDING**, not answered by this verification. Before
+  any tag, release, PyPI upload or production documentation publication, seek
+  explicit approval; then close both `Unreleased` 4.1.0 changelog headings
+  with the actual publication date and validate the documentation-only
+  closure. No tag or publication has occurred.
+
+## Historical PR-delivery objective and authority
 
 Create one reviewable integration pull request for the locally prepared
 4.1.0 work and observe its hosted checks. This task is remote delivery for
@@ -128,14 +300,18 @@ review, **not** a release or merge.
   blindly, lower coverage gates or narrow public support without approval.
   Public status comment records the failed candidate without private logs:
   https://github.com/eamigo86/django-graphex/pull/254#issuecomment-6424751980.
-- [ ] RD-4 — Close the delivery record without releasing. When checks are
-  green, record the exact head, PR/issue identities, terminal check evidence,
-  remaining release gates and a next-step boundary for maintainer review.
-  If a check fails or access blocks monitoring, record the blocker and leave
-  closure pending. Parent updates the task file and Engram mirror together;
-  no merge, tag or publication follows automatically.
+- [x] RD-4 — Close the PR-delivery record without releasing. The original
+  CI-green condition was not met; closure instead rests on the maintainer's
+  explicit one-time exception for failed Codecov patch check `121851206201`
+  on head `acf61d08fc79a5f048c03a5fa16e1346d12bc1bf`. The full PR rollup
+  remained 16 pass, 1 fail, 3 expected skips, 0 pending. PR #254 merged as
+  `2fcdbd1f960ecbcf2695d6242c08ce260e26b8fb`; RD-M3 retains the
+  post-merge checks and final release-approval boundary.
+  Superseded historical rule: close only with green checks; otherwise leave
+  closure pending and do not merge. The later explicit exception changed only
+  this PR's merge decision, not any coverage gate or release approval.
 
-## Authorized corrective work
+## Historical corrective work and exception disposition
 
 Route: delegated direct, one bounded writer per work unit, independent final
 verification. Parent owns tracker/mirror, work-unit Conventional Commits and
@@ -240,7 +416,12 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   pending; no gate has been lowered. Local coherent commit:
   0bd7c908b0484ee595e87ed97b8136120d62c458. Parent spot-check: 7 passed on
   Django 6.1 with the deprecation promoted to error.
-- [ ] RDC-4 — Independently verify, push and repeat all hosted checks. Verify
+  Current disposition: the Codecov patch calculation mismatch remains
+  unresolved, not fixed or green. The maintainer accepted this exact failed
+  check as a one-time merge exception for PR #254; the compatible JSONNull
+  test and dependency-policy documentation portions passed as recorded above.
+  No future check waiver or threshold change follows from this exception.
+- [x] RDC-4 — Independently verify, push and repeat all hosted checks. Verify
   protected original/frozen data and environments before/after; no benchmark
   regeneration. Push only the candidate branch through eamigo86 with no tags.
   Inventory every actual check tied to the resulting exact PR head; require
@@ -266,27 +447,61 @@ Read the prior diagnosis as evidence, not as an already-proven root cause.
   native risk assessment was not substituted for independent proof.
   Parent next commits this metadata and pushes the verified correction batch;
   all actual hosted checks on the resulting new head remain PENDING.
+  Verified batch was pushed as acf61d08fc79a5f048c03a5fa16e1346d12bc1bf.
+  New run https://github.com/eamigo86/django-graphex/actions/runs/40401439029
+  is terminal SUCCESS for Actions: all six matrix jobs, base-install,
+  lint/security, diff, coverage, PostgreSQL, version, docs, Playground and
+  release-artifact passed. Coverage branches 95.5551%, changed-line 98%;
+  artifact build/smoke/audit/checksum/upload passed. No publication occurred.
+  Full exact-head PR rollup is NOT green: 16 pass, 1 fail, 3 expected skips,
+  0 pending. Codecov project passes at 96.72%; patch check 121851206201 fails
+  at 96.12% versus 96.43%. Later public exact-head data reports 96.97%
+  (3,550 hits, 50 misses, 61 partials), not a substitute for the failed check.
+  Evidence: /private/tmp/pr254-ci-corrected-pSXkTp/ci-report.md and status.json.
+  A bounded read-only investigation must establish the check's actual basis
+  and supported re-request behavior before any retry; no coverage padding,
+  threshold change, forged green check or indiscriminate rerun is allowed.
+  Bounded diagnosis complete, no safe retry recommended. Report:
+  /private/tmp/pr254-codecov-discrepancy-20261026T2119Z/diagnosis.md.
+  Check output says 96.12403% with 75 missing lines, but the public API's
+  line-level totals do not expose that calculation's denominator/aggregation.
+  Exact head/base match and sessions=1; neither stale data nor a backend defect
+  is proven. No Codecov YAML exists at either tracked base or head. The
+  observed Codecov app does not subscribe to check_run, so the documented
+  GitHub rerequest webhook has no supported recomputation route here.
+  Final GitHub readback still confirms 16 pass/1 fail/3 expected skips on acf61d0.
+  Need the human's explicit authorization for read-only Codecov account/admin
+  diagnostics; no Codecov authenticated session/credential was inspected.
+  Public status: https://github.com/eamigo86/django-graphex/pull/254#issuecomment-6427683770.
+  Closure is under the explicit one-time Codecov patch exception in RD-M1,
+  not under the original all-green criterion. This failed status remains
+  recorded and does not waive any future gate. The automatic `main` run
+  `40413092948` later reached terminal SUCCESS, with both classic Codecov
+  statuses successful on the merge SHA, as reconciled in RD-M3.
 
-## Progress and next step
+## Historical progress before merge approval
 
 Issue #253 was created under eamigo86 and its status:approved label was
 confirmed before PR creation: https://github.com/eamigo86/django-graphex/issues/253.
 The obsolete status:needs-review label was removed under the human's explicit
 approval. RD-1/RD-2 delivery and RD-3 terminal observation are complete;
-RD-4 CI-green closure is pending because eight checks failed.
+RD-4 CI-green closure is pending because Codecov patch still fails.
 The CLI rejected combining --template with --body-file before making a remote
 change; the successful creation used the actual template headings in the body
 and existing enhancement/status labels instead. No duplicate issue was created.
-PR #254 is open and attached. Current observed head b74659f and run
-40380745811 have 9 pass/8 fail/3 expected skips/0 pending. Source diagnosis
+PR #254 is open and attached. Initially head b74659f and run
+40380745811 had 9 pass/8 fail/3 expected skips/0 pending. Source diagnosis
 was read-only at that stage. The human has now authorized the bounded
 corrective units above with TDD, disposable official dependencies and all
 checks repeated. RDC-1/RDC-2 and RDC-3's test/docs portion passed locally;
-independent normalized full verification also passed. Next push the verified
-batch and observe every hosted check, including fresh Codecov, before closure.
-Keep gates/support intact;
-consult before any incompatible change. Prior local tracking commit 6b620e0
-is unpushed and can travel with verified corrections, not a standalone rerun.
+independent normalized full verification also passed. The verified batch was
+pushed as acf61d0: all Actions jobs passed, but Codecov patch still fails.
+Current rollup: 16 pass/1 fail/3 expected skips/0 pending. Public data cannot
+explain the discrepancy; ask for read-only Codecov account diagnostics before
+proceeding. Keep gates/support intact and consult before incompatible changes.
+Prior local tracking commit 6b620e0 traveled with the verified correction batch.
+The final blocker record is saved locally only; do not start another identical
+CI run solely for bookkeeping while the external check remains unexplained.
 No merge, tag, workflow dispatch or publication. Rollback for this metadata
 unit is this task file and its external draft bodies; no package source or
 measurement data is part of the unit.

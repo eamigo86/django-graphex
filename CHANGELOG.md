@@ -1,6 +1,6 @@
 # Changelog
 
-## 4.1.0 — Unreleased
+## 4.1.0 — 2026-10-27
 
 ### Compatibility policy
 

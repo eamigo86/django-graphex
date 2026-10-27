@@ -12,7 +12,7 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## 4.1.0 — Unreleased
+## 4.1.0 — 2026-10-27
 
 ### Compatibility policy
 
