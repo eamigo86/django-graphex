@@ -12,6 +12,21 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+### Fixes and changes
+
+- Cost analysis counts each paginated list level once
+  ([#255](https://github.com/eamigo86/django-graphex/issues/255)). A
+  `DjangoListObjectType` container was treated as a list on top of its `results`
+  field, so every level was multiplied by `MAX_PAGE_SIZE` once more: a nested
+  query grew by `MAX_PAGE_SIZE ** depth`, `first`/`limit` on a top-level list did
+  not change the estimate, and no single `MAX_QUERY_COST` fit both nested and
+  wide queries. Only real GraphQL lists multiply now, so the page size on
+  `results` is the one multiplier of its level. Estimates for queries over
+  paginated containers drop; review `MAX_QUERY_COST` if it was raised to admit
+  nested queries.
+
 ## 4.1.0 — 2026-10-27
 
 ### Compatibility policy

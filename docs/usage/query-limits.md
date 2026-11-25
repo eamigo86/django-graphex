@@ -109,9 +109,11 @@ cost(field) = own_cost + multiplier × Σ cost(children)
   `first` / `last` argument), clamped to `0` at the low end and capped at
   `MAX_PAGE_SIZE`; `1` otherwise. A zero or negative page size is rejected at
   runtime, so it contributes no children — and it can never *subtract* cost
-  from a sibling field. Those argument names multiply only real GraphQL lists
-  and django-graphex list containers; a singular business field may use an
-  argument such as `limit` without being treated as a list.
+  from a sibling field. Those argument names multiply only real GraphQL lists;
+  a singular business field may use an argument such as `limit` without being
+  treated as a list. A `DjangoListObjectType` container is an object, not a
+  list: its `results` field is the list that carries the page size, so each
+  paginated level multiplies once.
 
 It follows fragments, so they can't be used to under-count.
 
