@@ -346,6 +346,17 @@ does **not** require `Base64FileInput` or any upload feature.
 | `MAX_REPLACE_OUTPUT_LENGTH` | `1_000_000` | Maximum **Unicode characters** in each `@replace` result, not encoded bytes; the request-wide budget is `MAX_DIRECTIVE_OUTPUT_TOTAL`. The exact Python replacement length (including empty-substring insertions and `count`) is checked **before** replacement allocation; results above the cap produce a GraphQL field error with normal null propagation. A result at the cap is allowed. Must be a positive integer; `None` restores the former uncapped behavior, which is unsafe without another output limit. |
 | `MAX_DIRECTIVE_OUTPUT_TOTAL` | `10_000_000` | Per-**request** budget, in Unicode characters, for text that directives **add**. Every custom directive is charged the amount by which its result is longer than its input, summed over all fields, aliases, rows and chained directives of the execution (all items of a batch share the budget of their HTTP request, whatever `get_context` returns -- the counter travels in a context variable, never in the context; a subscription event is its own execution; an execution started outside a GraphQL view request is counted per execution, while one nested inside a request -- a resolver calling `graphql_sync` -- draws on that request's budget). Once the budget is spent, each further directive use is a GraphQL field error naming this setting and produces no text; a single field can overshoot by at most its own per-field cap. Normal requests are unaffected; directives that do not lengthen the text (`@uppercase`, `@truncate`, ...) are free. Must be a positive integer; `None` removes the budget. It complements `MAX_REPLACE_OUTPUT_LENGTH`, which still bounds each `@replace` result. |
 
+!!! note "Resolver threads and the request directive budget"
+
+    The request budget travels in a context variable, and a thread that a
+    resolver starts itself (for example a `concurrent.futures.ThreadPoolExecutor`
+    worker) does not inherit context variables. A nested `graphql_sync` call run
+    in such a thread therefore counts on its own per-execution budget, not on the
+    request's, so work done there can add more than `MAX_DIRECTIVE_OUTPUT_TOTAL`
+    in total. To share the request budget, submit `contextvars.copy_context().run`
+    (`pool.submit(contextvars.copy_context().run, work)`), or use asgiref's
+    `sync_to_async`, which copies the context for you.
+
 ## File uploads
 
 These settings cover received multipart files and `Base64FileInput`, the opt-in

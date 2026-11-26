@@ -27,6 +27,11 @@ All notable changes to this library are documented here. The format is based on
   keeps the trailing `NULL` rows. The database path dropped them after a
   non-`NULL` boundary, while the in-memory path and the documented rule (`NULL`
   last ascending, first descending) include them. Descending order is unchanged.
+- Documented that work a resolver hands to its own thread (for example a
+  `ThreadPoolExecutor` worker) does not inherit context variables, so a nested
+  `graphql_sync` there counts on its own `MAX_DIRECTIVE_OUTPUT_TOTAL` budget
+  instead of the request's; submit `contextvars.copy_context().run` to share it.
+  See [Settings](usage/settings.md). Tests pin both behaviors.
 
 ## 4.2.0 — 2026-11-26
 
