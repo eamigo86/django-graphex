@@ -25,8 +25,8 @@ def test_new_profile_pins_compatible_complete_stacks() -> None:
     """
     profile = _profile()
     expected = {
-        "graphex": ("3.3.0", "source"),
-        "strawberry": ("3.3.0", "source-independent"),
+        "graphex": ("3.3.2", "source"),
+        "strawberry": ("3.3.2", "source-independent"),
         "graphene": ("3.2.13", "source-independent"),
         "ariadne": ("3.2.13", "source-independent"),
     }

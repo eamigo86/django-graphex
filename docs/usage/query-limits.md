@@ -109,9 +109,11 @@ cost(field) = own_cost + multiplier × Σ cost(children)
   `first` / `last` argument), clamped to `0` at the low end and capped at
   `MAX_PAGE_SIZE`; `1` otherwise. A zero or negative page size is rejected at
   runtime, so it contributes no children — and it can never *subtract* cost
-  from a sibling field. Those argument names multiply only real GraphQL lists
-  and django-graphex list containers; a singular business field may use an
-  argument such as `limit` without being treated as a list.
+  from a sibling field. Those argument names multiply only real GraphQL lists;
+  a singular business field may use an argument such as `limit` without being
+  treated as a list. A `DjangoListObjectType` container is an object, not a
+  list: its `results` field is the list that carries the page size, so each
+  paginated level multiplies once.
 
 It follows fragments, so they can't be used to under-count.
 
@@ -325,6 +327,17 @@ deeply to be parsed/validated") instead of an HTTP 500, whether or not
 too deeply to coerce get the same code ("Variables are nested too deeply to be
 coerced.") over HTTP, SSE and WebSocket.
 
+graphql-core 3.3.2 and later enforce limits of their own instead of raising
+`RecursionError`: the parser refuses documents nested more than 200 levels
+("Document is nested too deeply"), validation refuses fragment chains nested more
+than 200 selection levels, and coercion refuses variables that deep ("Variable
+values are nested too deeply."). The library answers each with the same HTTP 400
+`QUERY_TOO_DEEP`, and the same code on SSE and WebSocket. Because that limit
+applies first, a document deeper than 200 selection levels is refused by
+graphql-core before the 100-level ceiling above can run; the code and status are
+the same either way. When validation aborts without a depth reason (the fragment
+work or complexity budget ran out) the code is `QUERY_TOO_COMPLEX`.
+
 ### Cyclic fragments and direct callers
 
 The cost and depth rules now inspect the named-fragment reference graph before
@@ -384,7 +397,7 @@ machine-readable `extensions.code`:
 | Code | Raised by |
 |------|-----------|
 | `QUERY_TOO_DEEP` | `DepthLimitValidationRule`, and documents too deep for graphql-core's parser/validator |
-| `QUERY_TOO_COMPLEX` | `CostLimitValidationRule` |
+| `QUERY_TOO_COMPLEX` | `CostLimitValidationRule`, and a validation abort from graphql-core's work or complexity budget |
 
 ```json
 { "errors": [{ "message": "Query exceeds the maximum nesting depth of 2 for 'CategoryGenericType'.",

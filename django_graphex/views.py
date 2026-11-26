@@ -47,6 +47,7 @@ from django.views.generic import View
 from graphql import (
     ExecutionResult,
     GraphQLError,
+    GraphQLSyntaxError,
     OperationType,
     execute,
     get_operation_ast,
@@ -804,6 +805,14 @@ def _parse_or_depth_error(query: str) -> Any:
     try:
         return parse(query)
     except RecursionError as exc:
+        raise GraphQLError(
+            "Query is nested too deeply to be parsed.",
+            extensions={"code": "QUERY_TOO_DEEP"},
+        ) from exc
+    except GraphQLSyntaxError as exc:
+        # graphql-core 3.3.2+ enforces its own nesting limit with a syntax error.
+        if "Document is nested too deeply" not in exc.message:
+            raise
         raise GraphQLError(
             "Query is nested too deeply to be parsed.",
             extensions={"code": "QUERY_TOO_DEEP"},

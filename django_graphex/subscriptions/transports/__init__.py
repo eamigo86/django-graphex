@@ -152,7 +152,7 @@ async def _start_source_event_stream(
             ),
         )
 
-    # "Executor" exists in every supported graphql-core (>=3.3.0, <3.4), so the
+    # "Executor" exists in every supported graphql-core (>=3.3.1, <3.4), so the
     # fallback branch is reachable only on an unsupported runtime.
     executor_class = getattr(graphql_execution, "Executor", None)
     if executor_class is None:

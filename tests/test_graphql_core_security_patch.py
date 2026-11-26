@@ -42,16 +42,21 @@ def test_overlapping_field_comparisons_have_a_budget(
     Args:
         monkeypatch: Pytest helper for lowering the upstream comparison limit.
     """
+    # 3.3.2+ replaced the comparison counter with a complexity budget that
+    # aborts validation; 3.3.1 reports the exceeded comparisons as an error.
+    budget = hasattr(overlapping_fields_can_be_merged, "MAX_COMPLEXITY_BUDGET")
     monkeypatch.setattr(
         overlapping_fields_can_be_merged,
-        "MAX_FIELD_COMPARISONS",
+        "MAX_COMPLEXITY_BUDGET" if budget else "MAX_FIELD_COMPARISONS",
         2,
-        raising=False,
     )
 
     errors = validate(SCHEMA, parse("{ hello hello hello hello }"))
 
-    assert any("comparison" in error.message.lower() for error in errors)
+    if budget:
+        assert [type(error).__name__ for error in errors] == ["ValidationAbortedError"]
+    else:
+        assert any("comparison" in error.message.lower() for error in errors)
 
 
 @pytest.mark.parametrize(

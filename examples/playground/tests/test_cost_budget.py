@@ -1,12 +1,10 @@
 """The cost budget the README suggests lets its own examples run.
 
 Uncommenting a "MAX_QUERY_COST" in "config/settings.py" is only useful if the
-documented example queries still pass under it. A budget of 200 (the value the
-README used to suggest) rejects even "{ posts { results(limit: 1) { id } } }",
-because the cost model charges an unspecified nested page at "MAX_PAGE_SIZE".
-These tests measure instead of guessing: every plain query the README shows runs
-under the suggested budget and reports its cost, while an unbounded nested list
-is refused.
+documented example queries still pass under it. These tests measure instead of
+guessing: every plain query the README shows runs under the suggested budget and
+reports its cost, the costs the README table quotes are the measured ones, and an
+unbounded nested list is refused.
 
 Run from this directory:
 
@@ -31,11 +29,11 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.django_db
 
-BUDGET = 10_000_000
+BUDGET = 10_000
 DEPTH = 6
 _README = Path(__file__).resolve().parent.parent / "README.md"
 
-# 3 levels of unbounded nested lists: 100 * 100 * 100 and beyond.
+# 3 levels of unbounded nested lists: 100 * 100 rows and beyond.
 _ABUSIVE = (
     "{ authors { results { posts { results { comments { results { text } } } } } } }"
 )
@@ -132,15 +130,21 @@ def test_an_unbounded_nested_list_is_refused(budgeted: Client) -> None:
     assert "exceeds the maximum" in body["errors"][0]["message"]
 
 
-def test_the_old_suggestion_blocked_every_list_query(budgeted: Client) -> None:
-    """Assert why 200 was a bad suggestion: it refuses a one-row list query.
+def test_the_readme_cost_table_quotes_measured_costs(budgeted: Client) -> None:
+    """Assert every literal query in the README cost table costs what it says.
 
     Args:
-        budgeted: The logged-in client; the budget is lowered inside the test.
+        budgeted: The logged-in client with the suggested cost settings applied.
     """
-    namespace = dict(settings.DJANGO_GRAPHEX)
-    namespace["MAX_QUERY_COST"] = 200
-    with override_settings(DJANGO_GRAPHEX=namespace):
-        body = _run(budgeted, "{ posts { results(limit: 1) { id } } }")
+    rows = re.findall(r"^\| `(\{.*\})` \| ([0-9,]+) \|$", _README.read_text(), re.M)
+    assert len(rows) >= 3, "the README cost table extraction found too few rows"
 
-    assert "exceeds the maximum of 200" in body["errors"][0]["message"], body
+    for query, quoted in rows:
+        namespace = dict(settings.DJANGO_GRAPHEX)
+        namespace["MAX_QUERY_COST"] = 10**9
+        with override_settings(DJANGO_GRAPHEX=namespace):
+            body = _run(budgeted, query)
+        assert not body.get("errors"), (query, body["errors"])
+        assert body["extensions"]["cost"]["requestedCost"] == int(
+            quoted.replace(",", "")
+        ), query

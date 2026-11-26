@@ -294,7 +294,7 @@ Log out of `/admin` to test anonymous (public) behaviour.
 | `CostLimitValidationRule` | wired, **off by default** | Wired in `GraphQLView` but enforces nothing until `MAX_QUERY_COST` is set (commented in `config/settings.py`); `PostType.Meta.complexity = 2` weights `Post` fields |
 | `analyze_cost` / `CostReport` | wired, **off by default** | Used internally by `GraphQLView.get_query_cost`; enable `EXPOSE_QUERY_COST` to see it |
 | `MAX_QUERY_DEPTH` setting | ✅ | **Active at depth 6** in `config/settings.py` (the `DJANGO_GRAPHEX` block) — the playground rejects any query nested more than 6 levels |
-| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note (off by default) | Commented in `config/settings.py` with a measured `10_000_000` budget — uncomment to block expensive queries and expose cost; see [Query depth and cost limits](#query-depth-and-cost-limits) |
+| `MAX_QUERY_COST` / `EXPOSE_QUERY_COST` | note (off by default) | Commented in `config/settings.py` with a measured `10_000` budget — uncomment to block expensive queries and expose cost; see [Query depth and cost limits](#query-depth-and-cost-limits) |
 | **Queryset optimization** | | |
 | `OPTIMIZE_QUERYSET` | ✅ | Enabled by default; `select_related`/`prefetch_related` derived from the selection. Commented in `config/settings.py` to show how to flip it |
 | `OPTIMIZE_ONLY_FIELDS` | ✅ | Enabled by default; `.only()` column narrowing (root span + inside each `Prefetch` child) |
@@ -954,21 +954,22 @@ with `"MAX_QUERY_DEPTH": 6`, so any query nested more than 6 levels deep is
 rejected immediately with a `QUERY_TOO_DEEP` error.
 
 **`MAX_QUERY_COST`** is **off by default** (the playground comments it out, so no
-budget is enforced). Pick the number by measuring: the cost model charges a list
-with no explicit page size at `MAX_PAGE_SIZE` (100) and multiplies per nested
-list. Measured with `analyze_cost` on the seeded schema:
+budget is enforced). Pick the number by measuring: each paginated level
+multiplies its children by its page size, and a list with no explicit page size
+is charged at `MAX_PAGE_SIZE` (100). Measured with `analyze_cost` on the seeded
+schema:
 
 | Query | Cost |
 |---|---|
-| `{ posts { results(limit: 1) { id } } }` | 201 |
-| `{ post(id: 1) { id title author { name } comments { results(first: 5) { text } } } }` | 104 |
-| README example 1 (three paginators, nested tags and comments) | 2,162,003 |
-| README example 2(b) (`authors → posts` with filter and `category`) | 4,010,101 |
-| `{ authors { results { posts { results { comments { results { text } } } } } } }` | 10,102,010,101 |
+| `{ posts { results(limit: 1) { id } } }` | 3 |
+| `{ post(id: 1) { id title author { name } comments { results(first: 5) { text } } } }` | 5 |
+| README example 1 (three paginators, nested tags and comments) | 338 |
+| README example 2(b) (`authors → posts` with filter and `category`) | 502 |
+| `{ authors { results { posts { results { comments { results { text } } } } } } }` | 20,302 |
 
-So the commonly suggested `200` blocks every list query, and the richest README
-example needs about 4 million. This playground suggests **10 million**, which
-lets every README example run while refusing three unbounded nested lists.
+So a budget of `200` lets small list queries through but already refuses the
+two richest README examples. This playground suggests **10,000**, which lets
+every README example run while refusing three unbounded nested lists.
 Uncomment both lines in `config/settings.py` to try it; `MAX_QUERY_DEPTH` is
 already active at 6:
 
@@ -976,14 +977,14 @@ already active at 6:
 DJANGO_GRAPHEX = {
     ...
     # MAX_QUERY_DEPTH is already active at 6 — change or remove to adjust.
-    "MAX_QUERY_COST": 10_000_000,  # reject queries with estimated cost > 10M
+    "MAX_QUERY_COST": 10_000,      # reject queries with estimated cost > 10,000
     "EXPOSE_QUERY_COST": True,     # add extensions.cost to every response
 }
 ```
 
 Then watch `extensions.cost` (`requestedCost` / `maxCost`) on any response and
 tune the budget to what your own clients send. A rejected query answers
-`Query cost … exceeds the maximum of 10000000.` with code `QUERY_TOO_COMPLEX`.
+`Query cost … exceeds the maximum of 10000.` with code `QUERY_TOO_COMPLEX`.
 `tests/test_cost_budget.py` runs every query this README shows under these
 settings.
 

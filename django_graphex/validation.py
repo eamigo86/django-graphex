@@ -16,6 +16,7 @@ fragment spreads (cyclic documents are rejected up front) -- a fragment cannot b
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -23,8 +24,10 @@ from graphql import GraphQLError, OperationType, get_named_type
 from graphql.language import (
     DocumentNode,
     FieldNode,
+    FragmentDefinitionNode,
     FragmentSpreadNode,
     InlineFragmentNode,
+    visit,
 )
 from graphql.validation import ValidationRule
 
@@ -46,6 +49,18 @@ if TYPE_CHECKING:
 #: rule enforces this value for them too. 100 leaves a safety margin below the
 #: measured execution failure point.
 _MAX_STRUCTURAL_DEPTH = 100
+
+#: Message of the abort graphql-core 3.3.2+ appends when the nesting, fragment
+#: work or complexity budget runs out. Its error-limit abort reads differently.
+_VALIDATION_ABORTED = "Validation aborted."
+
+#: graphql-core 3.3.2's fragment nesting visitor, used to tell a depth abort from
+#: a budget abort; 3.3.1 has neither the visitor nor a bare abort.
+_FRAGMENT_NESTING_VISITOR = getattr(
+    importlib.import_module("graphql.validation.validate"),
+    "FragmentNestingVisitor",
+    None,
+)
 
 __all__ = ("DepthLimitValidationRule", "StackDepthError", "run_validation")
 
@@ -79,7 +94,7 @@ def run_validation(
         The validation errors, or one depth error when the stack ran out.
     """
     try:
-        return list(validate_fn(*args, **kwargs))
+        errors = list(validate_fn(*args, **kwargs))
     except RecursionError:
         return [
             StackDepthError(
@@ -87,6 +102,61 @@ def run_validation(
                 extensions={"code": "QUERY_TOO_DEEP"},
             )
         ]
+    return [
+        _coded_abort(error, args[1]) if _is_budget_abort(error) else error
+        for error in errors
+    ]
+
+
+def _is_budget_abort(error: GraphQLError) -> bool:
+    """Return whether an error is graphql-core 3.3.2+'s bare validation abort.
+
+    Args:
+        error: One validation error.
+
+    Returns:
+        True for a "ValidationAbortedError" reading "Validation aborted." on a
+        graphql-core that has the nesting visitor to classify it (3.3.2+, the
+        only versions that send that abort).
+    """
+    return (
+        _FRAGMENT_NESTING_VISITOR is not None
+        and type(error).__name__ == "ValidationAbortedError"
+        and error.message == _VALIDATION_ABORTED
+    )
+
+
+def _coded_abort(error: GraphQLError, document: DocumentNode) -> GraphQLError:
+    """Answer a bare validation abort with the matching coded client error.
+
+    The abort carries the same message whether the document nested fragments
+    past graphql-core's limit or ran out of fragment or complexity work, so the
+    document is measured again with graphql-core's own nesting visitor.
+
+    Args:
+        error: The abort graphql-core returned.
+        document: The document that was validated.
+
+    Returns:
+        A "QUERY_TOO_DEEP" error for over-deep nesting, otherwise a
+        "QUERY_TOO_COMPLEX" error.
+    """
+    fragments = {
+        node.name.value: node
+        for node in document.definitions
+        if isinstance(node, FragmentDefinitionNode)
+    }
+    try:
+        visit(document, _FRAGMENT_NESTING_VISITOR(fragments))
+    except RecursionError:
+        return GraphQLError(
+            "Query is nested too deeply to be validated.",
+            extensions={"code": "QUERY_TOO_DEEP"},
+        )
+    return GraphQLError(
+        "Query is too complex to be validated.",
+        extensions={"code": "QUERY_TOO_COMPLEX"},
+    )
 
 
 class _Constraint(NamedTuple):

@@ -43,7 +43,7 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
         lambda *_: {
             "python": "3.12.11",
             "django": "6.0.8",
-            "graphql-core": "3.3.0",
+            "graphql-core": "3.3.2",
             "backend_path": str(root / "django_graphex/__init__.py"),
         },
     )
@@ -105,7 +105,7 @@ def test_seed_plan_is_pinned_and_has_no_writes(
     assert (plan.python_version, plan.django_version, plan.graphql_core_version) == (
         "3.12.11",
         "6.0.8",
-        "3.3.0",
+        "3.3.2",
     )
     assert plan.backend_path == root / "django_graphex/__init__.py"
     assert plan.freeze == freeze

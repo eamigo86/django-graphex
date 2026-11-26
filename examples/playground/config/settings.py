@@ -195,15 +195,15 @@ DJANGO_GRAPHEX = {
     # Reject queries whose estimated cost exceeds the budget; report cost in
     # extensions.cost so clients can see the estimate. None = no budget.
     #
-    # Pick the budget by measuring, not guessing. A list field with no explicit
-    # page size is charged at MAX_PAGE_SIZE (100) and costs multiply per nested
-    # list, so even { posts { results(limit: 1) { id } } } costs 201 and the
-    # README's richest example costs about 4,000,000. 10_000_000 lets every
-    # README example run and refuses three unbounded nested lists (about
-    # 100,000,000 and up); tests/test_cost_budget.py pins both. Lower it once you
-    # know what your own clients send (EXPOSE_QUERY_COST shows the number).
+    # Pick the budget by measuring, not guessing. Each paginated level multiplies
+    # its children by its page size, and a list with no explicit page size is
+    # charged at MAX_PAGE_SIZE (100). { posts { results(limit: 1) { id } } }
+    # costs 3 and the README's richest example costs 502. 10_000 lets every
+    # README example run and refuses three unbounded nested lists (20,302);
+    # tests/test_cost_budget.py pins both. Lower it once you know what your own
+    # clients send (EXPOSE_QUERY_COST shows the number).
     # Uncomment these to see cost analysis in action:
-    #   "MAX_QUERY_COST": 10_000_000,
+    #   "MAX_QUERY_COST": 10_000,
     #   "EXPOSE_QUERY_COST": True,
     # ---------------------------------------------------------------------------
     # Queryset optimization (N+1 avoidance). All five default to the values shown

@@ -144,7 +144,8 @@ For the current JSON endpoint, a field execution error returns HTTP 200 with
 Syntax, validation, and variable-coercion errors remain HTTP 400 without a
 `data` member. A server fault outside field execution (for example a failing
 `get_root_value` hook) is masked as above and answers HTTP 500 instead of 400.
-Variables nested so deeply that coercing them exhausts the stack answer HTTP 400
+Variables nested so deeply that coercing them exhausts the stack, or past
+graphql-core 3.3.2+'s own nesting limit, answer HTTP 400
 `QUERY_TOO_DEEP` without an ERROR log, and the SSE and WebSocket subscription
 transports frame the same error ("Variables are nested too deeply to be
 coerced."); a `RecursionError` raised by a resolver is still masked and logged. A `query` that is not a string, or `variables` that are not a JSON object, answer

@@ -5,7 +5,8 @@ The four constraint files are exact freezes observed from isolated Python
 Graphex uses current source with its runtime dependencies, including Pydantic,
 dateutil, and unidecode; Graphene retains the django-filter package imported
 by its unchanged benchmark adapter. Graphex and Strawberry use GraphQL-core
-3.3.0; Graphene and Ariadne use their compatible GraphQL-core 3.2.13.
+3.3.2 (3.3.0 is below the graphql-core>=3.3.1 floor); Graphene and Ariadne use
+their compatible GraphQL-core 3.2.13.
 
 The historical eight result files and shared constraints remain unchanged.
 Bootstrap with `benchmarks/setup_envs.sh --profile core33` after reviewing the

@@ -332,22 +332,18 @@ class _CostAnalyzer:
         return None
 
     def _is_list_field(self, field_def: Any) -> bool:
-        """Whether a field returns a list (plain list or paginated wrapper)."""
+        """Whether a field returns a GraphQL list.
+
+        A DjangoListObjectType wrapper is an object container, not a list: its
+        "results" field is the list that carries the page-size argument and
+        multiplies the rows, so the wrapper must not multiply them again.
+        """
         node_type = field_def.type
         while hasattr(node_type, "of_type"):
             if isinstance(node_type, GraphQLList):
                 return True
             node_type = node_type.of_type
-        if isinstance(node_type, GraphQLList):
-            return True
-        # A DjangoListObjectType is an object container (results + count), not a
-        # GraphQLList. Its native metadata identifies that wrapper explicitly;
-        # an arbitrary business field named ``limit`` must not imply list shape.
-        try:
-            meta = _native_gdx_meta(node_type)
-        except AttributeError:
-            return False
-        return bool(getattr(meta, "results_field_name", None))
+        return False
 
     @staticmethod
     def _warn_unbounded() -> None:

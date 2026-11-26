@@ -12,6 +12,39 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+### Fixes and changes
+
+- Cost analysis counts each paginated list level once
+  ([#255](https://github.com/eamigo86/django-graphex/issues/255)). A
+  `DjangoListObjectType` container was treated as a list on top of its `results`
+  field, so every level was multiplied by `MAX_PAGE_SIZE` once more: a nested
+  query grew by `MAX_PAGE_SIZE ** depth`, `first`/`limit` on a top-level list did
+  not change the estimate, and no single `MAX_QUERY_COST` fit both nested and
+  wide queries. Only real GraphQL lists multiply now, so the page size on
+  `results` is the one multiplier of its level. Estimates for queries over
+  paginated containers drop; review `MAX_QUERY_COST` if it was raised to admit
+  nested queries.
+- The graphql-core floor is now `graphql-core>=3.3.1,<3.4`: 3.3.0 is affected by
+  CVE-2026-119286, fixed in 3.3.1. Both locks move to 3.3.2.
+- graphql-core 3.3.2 enforces limits of its own instead of raising
+  `RecursionError`, and the library maps each one to the coded client error it
+  already used, over HTTP, SSE and WebSocket:
+  - a document past the parser's nesting limit ("Document is nested too deeply"),
+    variables past the coercion limit ("Variable values are nested too deeply.")
+    and an execution that aborts on nested selections answer `QUERY_TOO_DEEP`;
+  - a bare "Validation aborted." caused by fragment nesting is `QUERY_TOO_DEEP`,
+    and one caused by the fragment-work or complexity budget is
+    `QUERY_TOO_COMPLEX`.
+
+  The upstream limit (200 selection levels) now refuses very deep documents
+  before the library's own ceiling of 100 object levels can run; the code and
+  status are the same either way. On 3.3.2 the overlapping-fields budget is
+  `MAX_COMPLEXITY_BUDGET`, and `MAX_FIELD_COMPARISONS` is deprecated upstream.
+  graphql-core 3.3.1 still raises `RecursionError`, which the library already
+  answered with `QUERY_TOO_DEEP`.
+
 ## 4.1.0 — 2026-10-27
 
 ### Compatibility policy
