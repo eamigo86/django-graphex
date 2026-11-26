@@ -9,6 +9,8 @@ from unittest.mock import ANY
 
 import pytest
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -130,6 +132,7 @@ def test_release_audit_rejects_missing_or_non_wheel_input(tmp_path: Path) -> Non
     assert audit.main([str(archive)]) == 2
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml")
 def test_ci_smoke_installs_and_audits_one_external_wheel() -> None:
     """Run the hosted wheel contract outside the checkout.
 

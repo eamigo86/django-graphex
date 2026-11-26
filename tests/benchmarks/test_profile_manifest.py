@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
+from tests._repo_only import requires_repo_paths
+
+pytestmark = requires_repo_paths("benchmarks")
 
 BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 

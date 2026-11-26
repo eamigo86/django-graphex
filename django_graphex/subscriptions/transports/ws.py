@@ -92,6 +92,7 @@ from ...security import (
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
+    OPERATION_NOT_SUPPORTED,
     _is_too_deep,
     _parse_subscription_document,
     _start_source_event_stream,
@@ -721,7 +722,12 @@ def subscription_ws_consumer(
             ):
                 await self._send_error(
                     op_id,
-                    [{"message": "The WS transport only serves subscriptions."}],
+                    [
+                        {
+                            "message": "The WS transport only serves subscriptions.",
+                            "extensions": {"code": OPERATION_NOT_SUPPORTED},
+                        }
+                    ],
                 )
                 return
 

@@ -28,11 +28,16 @@ from pathlib import Path
 
 import pytest
 
+from tests._repo_only import requires_repo_paths
+
 # The module must collect without the optional playground transport dependency.
-pytestmark = pytest.mark.skipif(
-    find_spec("daphne") is None,
-    reason="requires daphne from the subscriptions development stack",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        find_spec("daphne") is None,
+        reason="requires daphne from the subscriptions development stack",
+    ),
+    requires_repo_paths("examples/playground"),
+]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _PLAYGROUND = _REPO_ROOT / "examples" / "playground"
@@ -55,9 +60,6 @@ for line in sdl.splitlines():
 
 def _build_playground_mutation_sdl() -> list[str]:
     """Run the playground schema build in a subprocess; return the arg SDL lines."""
-    if not _PLAYGROUND.exists():
-        pytest.skip("playground example not present")
-
     env = dict(os.environ)
     env["DJANGO_SETTINGS_MODULE"] = "config.settings"
 

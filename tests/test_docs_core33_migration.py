@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).resolve().parents[1]
 SERIES = "core33-4.1.0-f9f4eae81954959ab71e4a9037d5ba06486d6a8e"
 PREVIOUS_SERIES = "core33-4.1.0-460efb9b7c29b097f2939c05e79514f2fda3242c"
@@ -47,6 +49,7 @@ def test_comparison_intro_names_all_six_retained_series() -> None:
         assert label in intro
 
 
+@requires_repo_paths("benchmarks/results")
 def test_historical_400_comparison_preserves_sql_without_noise_inference() -> None:
     """Keep factual SQL equality separate from unsupported timing inference.
 
@@ -84,6 +87,7 @@ def test_historical_400_comparison_preserves_sql_without_noise_inference() -> No
                 )
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_comparison_table_is_derived_from_eight_artifacts() -> None:
     """Keep every published latency and SQL cell bound to committed data.
 
@@ -119,6 +123,7 @@ def test_current_comparison_table_is_derived_from_eight_artifacts() -> None:
     assert match.group(1).strip() == "\n".join(rows)
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_write_mean_table_uses_run_mean_medians() -> None:
     """Bind the write mean comparison to the separate run-mean statistic.
 
@@ -146,6 +151,7 @@ def test_current_write_mean_table_uses_run_mean_medians() -> None:
     assert match.group(1).strip() == "\n".join(rows)
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_results_guidance_distinguishes_provenance_and_statistics() -> None:
     """Distinguish the new whole-stack comparison from historical releases.
 
@@ -180,6 +186,7 @@ def test_current_results_guidance_distinguishes_provenance_and_statistics() -> N
     assert "benchmarks/run_publish_core33.py" in current
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_public_summary_uses_new_artifact_values() -> None:
     """Keep the current public summary aligned with the new measured series.
 
@@ -222,6 +229,7 @@ def test_current_public_summary_uses_new_artifact_values() -> None:
         assert "local SQLite" in current
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_batch_ranking_is_scoped_to_both_statistics() -> None:
     """Require the local-only ranking to match both published statistics.
 
@@ -248,6 +256,7 @@ def test_current_batch_ranking_is_scoped_to_both_statistics() -> None:
     assert "only in this local batch" in current
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_cold_import_table_is_derived_from_eight_artifacts() -> None:
     """Keep the current cold-import medians bound to the committed data.
 
@@ -274,6 +283,7 @@ def test_current_cold_import_table_is_derived_from_eight_artifacts() -> None:
     assert match.group(1).strip() == "\n".join(rows)
 
 
+@requires_repo_paths("benchmarks/results")
 def test_current_stack_versions_match_committed_results() -> None:
     """Bind the documented version split to the artifact metadata.
 
@@ -329,6 +339,7 @@ def test_upgrade_guide_and_changelogs_cover_the_actual_migration() -> None:
             assert token in notes
 
 
+@requires_repo_paths("examples/playground/README.md")
 def test_playground_banner_targets_current_checkout() -> None:
     """Avoid presenting the example as a v3.1-only application.
 

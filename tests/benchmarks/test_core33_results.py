@@ -9,6 +9,9 @@ import re
 from pathlib import Path
 
 import pytest
+from tests._repo_only import requires_repo_paths
+
+pytestmark = requires_repo_paths("benchmarks/results/core33")
 
 RESULTS = Path(__file__).resolve().parents[2] / "benchmarks/results/core33"
 LIBRARIES = ("graphex", "graphene", "strawberry", "ariadne")

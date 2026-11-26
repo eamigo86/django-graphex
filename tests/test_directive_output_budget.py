@@ -1251,3 +1251,88 @@ def test_a_root_value_holding_its_info_does_not_leak_a_table_entry() -> None:
         assert not result.errors
     gc.collect()
     assert len(middleware._EXECUTIONS) <= before + 1
+
+
+def _nested_runs_in_thread(shared: bool) -> list[bool]:
+    """Run three nested executions in a resolver-owned thread.
+
+    A resolver hands the work to its own "ThreadPoolExecutor". A plain submit
+    starts the thread with an empty context; submitting "copy_context().run"
+    gives it the request's context variables.
+
+    Args:
+        shared: Whether the thread runs inside a copy of the request context.
+
+    Returns:
+        For each nested execution, whether it produced an error.
+    """
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django_graphex._execution_state import request_budget_scope
+
+    inner = _budget_schema().graphql_schema
+
+    def nested() -> list[bool]:
+        """Execute the nested queries.
+
+        Returns:
+            One error flag per execution.
+        """
+        return [
+            bool(
+                graphql_sync(
+                    inner,
+                    "{ a @center(width: 100) }",
+                    middleware=[GraphQLDirectiveMiddleware()],
+                ).errors
+            )
+            for _ in range(3)
+        ]
+
+    def resolver(*_args: Any) -> str:
+        """Run the nested executions in a worker thread.
+
+        Returns:
+            An empty string; the flags are kept in "flags".
+        """
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = (
+                pool.submit(contextvars.copy_context().run, nested)
+                if shared
+                else pool.submit(nested)
+            )
+            flags.extend(future.result())
+        return ""
+
+    flags: list[bool] = []
+    outer = GraphQLSchema(
+        query=GraphQLObjectType(
+            "Q", {"a": GraphQLField(GraphQLString, resolve=resolver)}
+        )
+    )
+    with request_budget_scope():
+        assert not graphql_sync(outer, "{ a }").errors
+    return flags
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_a_plain_resolver_thread_gets_its_own_budget() -> None:
+    """A plain thread loses the request's context, so each run counts alone.
+
+    This pins the documented limit: nothing here is ever refused.
+    """
+    assert _nested_runs_in_thread(shared=False) == [False, False, False]
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_DIRECTIVE_OUTPUT_TOTAL": 150})
+def test_a_copied_context_thread_shares_the_request_budget() -> None:
+    """A thread run through copy_context().run draws on the request budget.
+
+    This pins the documented fix: the nested runs spend one shared budget, so
+    the later ones are refused.
+    """
+    flags = _nested_runs_in_thread(shared=True)
+
+    assert flags[0] is False
+    assert flags[-1] is True

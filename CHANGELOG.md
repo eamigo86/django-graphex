@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The subscriptions client page (`SubscriptionClientView`) has a Stop control and
+  context-aware completion. While an operation is active the Send button becomes
+  Stop (`Ctrl/Cmd+Enter` toggles it): on WebSocket it sends a client `complete`
+  for that operation and keeps the socket, on SSE it aborts the stream, and a
+  server `complete` or `error` returns it to Send. Suggestions follow the cursor:
+  keywords at the top level, the Subscription root fields inside the operation,
+  the resolved type's fields deeper, and argument names inside parentheses.
+- A query or mutation sent over the WebSocket or SSE subscription transport now
+  carries `extensions.code` `OPERATION_NOT_SUPPORTED`; the message text is
+  unchanged. Over SSE the HTTP 400 body is now a JSON `{"errors": [...]}`
+  envelope (`application/json`) instead of plain text. The client page shows a
+  pointer to GraphiQL when it arrives. See
+  [Subscriptions](docs/usage/subscriptions.md#operation_not_supported).
+
+### Fixes and changes
+
+- The SSE tab of the client page logs one terminal entry per stream. A stream
+  that ended after an `event: complete` frame showed both "Stream complete." and
+  "Stream ended."; a stop or an error no longer adds a second one.
+
+- A subscriber filter value outside the database integer range is refused at
+  subscribe time. A relation `exact` or `in` filter, or an `id__in` list, such as
+  `tags: {exact: "99999999999999999999"}`, used to open the stream and raise
+  `OverflowError` at delivery: the client got `INTERNAL_SERVER_ERROR`, one ERROR
+  log was written and the stream ended. It now fails with a public validation
+  error and no group is joined.
+- The "is not a valid database lookup" message no longer ends with two periods.
+- A value-only (pk-less) cursor on an ascending order over a nullable field
+  keeps the trailing `NULL` rows. The database path dropped them after a
+  non-`NULL` boundary, while the in-memory path and the documented rule (`NULL`
+  last ascending, first descending) include them. Descending order is unchanged.
+- Documented that work a resolver hands to its own thread (for example a
+  `ThreadPoolExecutor` worker) does not inherit context variables, so a nested
+  `graphql_sync` there counts on its own `MAX_DIRECTIVE_OUTPUT_TOTAL` budget
+  instead of the request's; submit `contextvars.copy_context().run` to share it.
+  See [Settings](docs/usage/settings.md). Tests pin both behaviors.
+- The published sdist's own test suite now passes. About 190 tests read
+  repository-only inputs (`.github/`, `benchmarks/`, `examples/`,
+  `docs-overrides/`) that the sdist does not ship, and failed when run from the
+  extracted tarball. They now skip with a clear reason through
+  `requires_repo_paths` in `tests/_repo_only.py`, and only when the input is
+  absent: a repository checkout skips nothing. The sdist guard now covers every
+  root-anchored path a test reads, nested ones included, not only root files.
+
 ## 4.2.0 — 2026-11-26
 
 ### Added
@@ -10,7 +58,7 @@
   queries and mutations keep using HTTP. Before this, running a subscription
   failed inside GraphiQL with "createFetcher is not properly configured for
   websocket subscriptions yet". See [GraphiQL](docs/usage/views.md#graphiql) and
-  [Upgrading to 4.2.0](docs/UPGRADE-4.1.md#upgrading-to-420)
+  [Upgrading to 4.2.0](docs/UPGRADE-4.2.md#upgrading-to-420)
   ([#258](https://github.com/eamigo86/django-graphex/pull/258)).
 
 ## 4.1.1 — 2026-11-26

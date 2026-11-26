@@ -5,11 +5,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = ROOT / "examples" / "playground" / "config" / "settings.py"
 GUIDE = ROOT / "docs" / "usage" / "examples" / "playground.md"
 
 
+@requires_repo_paths("examples/playground/config/settings.py")
 def test_guide_quotes_the_measured_playground_cost_budget() -> None:
     """The guide names the commented MAX_QUERY_COST of the Playground settings.
 

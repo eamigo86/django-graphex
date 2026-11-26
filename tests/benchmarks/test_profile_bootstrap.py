@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._repo_only import requires_repo_paths
+
+pytestmark = requires_repo_paths("benchmarks")
 
 ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = ROOT / "benchmarks"

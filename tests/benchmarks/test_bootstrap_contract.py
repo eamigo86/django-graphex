@@ -13,6 +13,9 @@ import pytest
 
 from benchmarks import harness
 from benchmarks.verify_freeze import render_verified_freeze
+from tests._repo_only import requires_repo_paths
+
+pytestmark = requires_repo_paths("benchmarks")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = REPO_ROOT / "benchmarks"

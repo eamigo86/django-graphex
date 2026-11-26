@@ -2268,7 +2268,8 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
 
         The composite keyset predicate needs a pk tiebreak; a legacy value-only
         cursor has none, so this reproduces the historical plain-value boundary
-        (field > value ascending, field < value descending). A NULL
+        (field > value ascending, field < value descending), plus the trailing
+        NULL rows when ascending. A NULL
         boundary value can never satisfy a > / < comparison, so it selects the
         appropriate NULL-relative group instead (the trailing NULL group when
         ascending with NULLs last; the whole non-NULL body when descending with
@@ -2292,10 +2293,18 @@ class CursorGraphqlPagination(BaseDjangoGraphqlPagination):
             return Q(**{f"{field_name}__isnull": False}) if descending else Q(pk__in=[])
         if bounds is not None and not bounds[2]:
             lookup = f"{field_name}__{'lte' if descending else 'gte'}"
-            return Q(**{lookup: bounds[1] if descending else bounds[0]})
-        lookup = f"{field_name}__{'lt' if descending else 'gt'}"
-        boundary = value if bounds is None else bounds[0]
-        return Q(**{lookup: boundary})
+            boundary = bounds[1] if descending else bounds[0]
+        else:
+            lookup = f"{field_name}__{'lt' if descending else 'gt'}"
+            boundary = value if bounds is None else bounds[0]
+        predicate = Q(**{lookup: boundary})
+        # Ascending puts NULL last, so the trailing NULL rows follow a non-NULL
+        # boundary; descending puts NULL first, so none do.
+        return (
+            predicate
+            if descending
+            else predicate | Q(**{f"{field_name}__isnull": True})
+        )
 
     @staticmethod
     def _inmemory_keyset_order(

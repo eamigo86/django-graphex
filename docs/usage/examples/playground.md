@@ -493,6 +493,9 @@ to watch them work is the built-in browser client:
     playground subscriptions set `payload_mode = "full"`, so the whole
     serialized instance is deliverable — not just the `id`.
 
+4. While the subscription runs, the ▶ button turns into **Stop**. Press it to
+   end the operation; over WebSocket the connection stays open for the next run.
+
 To try the **SSE** transport instead, switch the client's toggle to **SSE**
 and set the SSE endpoint to `http://127.0.0.1:8000/graphql/stream` (the
 playground mounts the SSE view on that route) before connecting.

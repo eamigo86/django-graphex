@@ -6,6 +6,8 @@ import re
 from fnmatch import fnmatchcase
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).parents[1]
 WORKFLOW = ROOT / ".github/workflows/cicd.yaml"
 MANUAL_DOCS = ROOT / ".github/workflows/docs.yml"
@@ -30,6 +32,7 @@ def _job(name: str) -> str:
     return match.group(1)
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_security_patch_child_pr_runs_ci_without_widening_release_triggers() -> None:
     """Run CI for the selected child base without changing release triggers.
 
@@ -47,6 +50,7 @@ def test_security_patch_child_pr_runs_ci_without_widening_release_triggers() -> 
     assert "    - 'codex/v3.1.1-*'" not in triggers.split("  pull_request:\n", 1)[0]
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_graphql_core_migration_branches_run_ci_without_widening_publish() -> None:
     """Admit only the migration integration and child bases to CI.
 
@@ -84,6 +88,7 @@ def test_graphql_core_migration_branches_run_ci_without_widening_publish() -> No
     )
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_release_artifact_builds_and_validates_one_distribution_pair() -> None:
     """Verify one job builds and validates the distribution pair.
 
@@ -102,6 +107,7 @@ def test_release_artifact_builds_and_validates_one_distribution_pair() -> None:
     assert "actions/upload-artifact@" in artifact
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_release_consumers_download_and_verify_the_same_artifact() -> None:
     """Verify every publisher reuses the checksummed artifact.
 
@@ -120,6 +126,7 @@ def test_release_consumers_download_and_verify_the_same_artifact() -> None:
     assert "dist/*" in create_release
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_checkout_free_publisher_does_not_restore_a_package_cache() -> None:
     """Avoid cache dependency lookup when the publisher has no checkout.
 
@@ -141,6 +148,7 @@ def test_checkout_free_publisher_does_not_restore_a_package_cache() -> None:
         assert f"        cache-suffix: {suffix}\n" in producer
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_checkout_free_publisher_allows_its_intentionally_empty_workdir() -> None:
     """Skip only the expected empty-workdir warning in the publisher.
 
@@ -172,6 +180,7 @@ def test_immutable_artifact_contract_is_published_in_the_docs() -> None:
         assert requirement in documentation
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_publish_waits_for_every_release_gate() -> None:
     """Publication cannot bypass tests, packaging, docs, or example-project gates.
 
@@ -195,6 +204,7 @@ def test_publish_waits_for_every_release_gate() -> None:
     }
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_release_branch_has_a_cumulative_diff_check_gate() -> None:
     """Reject whitespace errors accumulated anywhere on the release branch.
 
@@ -226,6 +236,7 @@ def test_release_branch_has_a_cumulative_diff_check_gate() -> None:
     assert all(item in documentation for item in requirements.split("|"))
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_docs_are_built_before_publish_and_deployed_afterward() -> None:
     """Pages deploys the documentation artifact already validated before PyPI.
 
@@ -243,6 +254,7 @@ def test_docs_are_built_before_publish_and_deployed_afterward() -> None:
     assert "actions/checkout@" not in deploy
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_pages_deployment_exists_only_in_tag_release_workflow() -> None:
     """The manual docs check cannot bypass successful tagged publication.
 
@@ -254,6 +266,7 @@ def test_pages_deployment_exists_only_in_tag_release_workflow() -> None:
     assert "name: docs-preview" in manual
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_manual_publish_is_testpypi_only_and_tags_are_production_only() -> None:
     """Manual runs stay in staging even when dispatched from a version tag.
 
@@ -289,6 +302,7 @@ def test_manual_publish_is_testpypi_only_and_tags_are_production_only() -> None:
     )
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_release_and_pages_require_a_pushed_version_tag() -> None:
     """Keep manual tag dispatches out of downstream production actions.
 
@@ -310,6 +324,7 @@ def test_release_and_pages_require_a_pushed_version_tag() -> None:
     assert f"    if: {PRODUCTION_REF_GUARD}\n" in deploy
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_tag_version_is_rejected_before_the_artifact_build() -> None:
     """A mismatched tag fails in get-version before any releasable bytes exist.
 
@@ -326,6 +341,7 @@ def test_tag_version_is_rejected_before_the_artifact_build() -> None:
     )
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml", ".github/workflows/docs.yml")
 def test_codecov_upload_pins_pypi_cli_and_fails_closed() -> None:
     """Use the pinned supported acquisition route without swallowing errors.
 

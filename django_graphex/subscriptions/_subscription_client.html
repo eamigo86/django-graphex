@@ -71,6 +71,8 @@
   .gdsx-fab:active{transform:translate(-50%,-50%) scale(.96)}
   .gdsx-fab[disabled]{opacity:.4;cursor:not-allowed;filter:grayscale(.4)}
   .gdsx-fab svg{width:24px;height:24px;margin-left:3px}
+  .gdsx-fab.stop{background:linear-gradient(135deg,#e5534b,#9b1c1c);box-shadow:0 6px 20px rgba(229,83,75,.45)}
+  .gdsx-fab.stop svg{margin-left:0}
   @media(max-width:720px){.gdsx-main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}.gdsx-pane+.gdsx-pane{border-left:none;border-top:1px solid var(--line)}.gdsx-fab{top:50%;bottom:auto}}
 </style>
 </head>
@@ -124,7 +126,7 @@
         <div class="gdsx-panehead"><span>output</span><span class="gdsx-time" id="gdsx-count">0 events</span></div>
         <div class="gdsx-out" id="gdsx-out"><div class="gdsx-empty">Choose WS or SSE, connect, then press &#9654; to start your subscription.</div></div>
       </div>
-      <button class="gdsx-fab" id="gdsx-run" title="Send subscription (Ctrl/Cmd+Enter)" disabled>
+      <button class="gdsx-fab" id="gdsx-run" title="Send subscription (Ctrl/Cmd+Enter)" aria-label="Send subscription" disabled>
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
       </button>
     </div>
@@ -144,9 +146,11 @@
   var sseActive=false;// true while an SSE stream (fetch POST) is live
   var sseAbort=null;  // AbortController for the active SSE fetch stream
   var opId=null;      // current WS subscription id (string)
+  var running=false;  // true while an operation is active (Send is a Stop control)
+  var sseFinish=null; // finishStream() of the active SSE run, used by Stop
   var wsAcked=false;  // true after connection_ack received
   var count=0;
-  var schemaCandidates=[];
+  var schemaModel=null; // built from introspection by buildSchemaModel()
   var opCounter=0;    // monotonic op id generator
   var wsCounter=0;    // monotonic WebSocket-connection id generator (RANK 4 guard)
 
@@ -174,6 +178,20 @@
   function setStatus(state,label){
     statusEl.setAttribute("data-state",state);
     statusTxt.textContent=label;
+  }
+  var PLAY_SVG='<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  var STOP_SVG='<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+  // The run button is Send while idle and Stop while an operation is active.
+  // Turning it ON enables the button (Stop is always available); callers turn it
+  // OFF and decide whether Send is enabled (connected) or not (closed).
+  function setRunning(on){
+    running=on;
+    var label=on?"Stop subscription":"Send subscription";
+    runBtn.className="gdsx-fab"+(on?" stop":"");
+    runBtn.title=label+" (Ctrl/Cmd+Enter)";
+    runBtn.setAttribute("aria-label",label);
+    runBtn.innerHTML=on?STOP_SVG:PLAY_SVG;
+    if(on) runBtn.disabled=false;
   }
   function esc(s){
     return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -219,6 +237,14 @@
     return payload;
   }
 
+  // Both transports refuse a query or mutation with this code. This page only
+  // runs subscriptions, so point at the HTTP endpoint instead.
+  function hintIfNotSupported(errors){
+    if(!Array.isArray(errors)) return;
+    var hit=errors.some(function(e){return e&&e.extensions&&e.extensions.code==="OPERATION_NOT_SUPPORTED";});
+    if(hit) log("notify","Hint","This page runs subscriptions; use GraphiQL at "+$("gdsx-http").value+" for queries and mutations.");
+  }
+
   // ---- Mode selector ---------------------------------------------------------
   function setMode(m){
     mode=m;
@@ -230,7 +256,7 @@
     // handler is guarded by a monotonic connection id (RANK 4), so a stale
     // close firing after a later reconnect cannot null the live socket.
     if(ws){ws.close();}
-    if(sseActive){sseStop();setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;}
+    if(sseActive){sseStop();setRunning(false);setStatus("closed","Disconnected");connectBtn.textContent="Connect";connectBtn.disabled=false;runBtn.disabled=true;}
   }
   $("gdsx-mode-ws").addEventListener("click",function(){setMode("ws");});
   $("gdsx-mode-sse").addEventListener("click",function(){setMode("sse");});
@@ -279,6 +305,8 @@
       var msg;
       try{msg=JSON.parse(ev.data);}catch(_){log("notify","Frame",ev.data);return;}
       var t=msg&&msg.type;
+      // A frame for an operation the user already stopped is not ours any more.
+      if((t==="next"||t==="complete"||t==="error")&&msg.id!==undefined&&msg.id!==opId) return;
       if(t==="connection_ack"){
         wsAcked=true;
         connectBtn.textContent="Disconnect"; connectBtn.disabled=false;
@@ -289,11 +317,12 @@
         log("notify","next",msg.payload||msg);
       } else if(t==="complete"){
         log("complete","complete",msg);
-        runBtn.disabled=false;
+        setRunning(false); runBtn.disabled=false;
         opId=null; opIdEl.textContent="";
       } else if(t==="error"){
         log("error","error",msg.payload||msg);
-        runBtn.disabled=false;
+        hintIfNotSupported(msg.payload);
+        setRunning(false); runBtn.disabled=false;
         opId=null; opIdEl.textContent="";
       } else if(t==="ping"){
         // Respond to server pings with a pong (graphql-transport-ws §4.5).
@@ -315,7 +344,7 @@
       if(myId!==wsCounter) return;
       setStatus("closed","Disconnected");
       connectBtn.textContent="Connect"; connectBtn.disabled=false;
-      runBtn.disabled=true;
+      setRunning(false); runBtn.disabled=true;
       wsAcked=false; opId=null; opIdEl.textContent="";
       ws=null;
       if(ev.code!==1000&&ev.code!==1001){
@@ -332,6 +361,17 @@
     }
   }
 
+  // Stop only the active operation: graphql-transport-ws client "complete"
+  // (section 4.3). The socket stays open and Send comes back.
+  function wsStop(){
+    if(opId&&wsAcked){
+      wsSend({type:"complete",id:opId});
+      log("complete","complete (client)",{type:"complete",id:opId});
+    }
+    opId=null; opIdEl.textContent="";
+    setRunning(false);
+  }
+
   function wsRun(){
     if(!wsAcked){log("error","Error","WS not connected — connect first.");return;}
     var payload=buildPayload(); if(!payload) return; // invalid variables JSON
@@ -340,7 +380,7 @@
     opIdEl.textContent="op: "+opId;
     wsSend({type:"subscribe",id:opId,payload:payload});
     log("sent","subscribe",{id:opId,query:query.substring(0,120)+(query.length>120?"…":""),variables:payload.variables||null,operationName:payload.operationName||null});
-    runBtn.disabled=true;
+    setRunning(true);
   }
 
   // ==========================================================================
@@ -370,6 +410,13 @@
     sseAbort=null; sseActive=false;
   }
 
+  // Stop the active run: abort its fetch and log the one terminal entry.
+  function sseCancel(){
+    if(sseAbort){try{sseAbort.abort();}catch(_){/* ignore */}}
+    sseAbort=null;
+    if(sseFinish) sseFinish("Stream stopped.");
+  }
+
   function sseConnect(){
     var url=$("gdsx-sse").value.trim(); if(!url) return;
     loadSchema();
@@ -385,6 +432,7 @@
 
   function sseDisconnect(){
     sseStop();
+    setRunning(false);
     setStatus("closed","Disconnected");
     connectBtn.textContent="Connect"; connectBtn.disabled=false;
     runBtn.disabled=true;
@@ -399,11 +447,31 @@
     var query=payload.query;
     // Abort any previous in-flight stream before starting a new one.
     sseStop(); sseActive=true;
+    var ended=false; // exactly one terminal entry per stream
     var ctrl=(typeof AbortController!=="undefined")?new AbortController():null;
     sseAbort=ctrl;
     log("sent","subscribe",{query:query.substring(0,120)+(query.length>120?"…":""),variables:payload.variables||null,operationName:payload.operationName||null});
-    runBtn.disabled=true;
+    setRunning(true);
     setStatus("connecting","Streaming…");
+
+    // The single place a stream ends: complete frame, natural end or Stop.
+    function finishStream(text){
+      if(ended) return;
+      ended=true; if(sseFinish===finishStream) sseFinish=null;
+      log("complete","complete",text);
+      setRunning(false); runBtn.disabled=false;
+      setStatus("open","Connected (SSE)");
+    }
+    // An error ends the stream without a terminal entry on top of its own.
+    function failStream(label,text,errors){
+      if(ended) return;
+      ended=true; if(sseFinish===finishStream) sseFinish=null;
+      log("error",label,text);
+      hintIfNotSupported(errors);
+      setRunning(false); runBtn.disabled=false;
+      setStatus("closed","Connection Error");
+    }
+    sseFinish=finishStream;
 
     // Parse a single SSE frame (event:/data: lines) and log it.
     function flushFrame(frame){
@@ -424,16 +492,12 @@
         var data;try{data=JSON.parse(raw);}catch(_){data=raw;}
         log("notify","next",data);
       } else if(eventType==="complete"){
-        log("complete","complete","Stream complete.");
-        runBtn.disabled=false;
-        setStatus("open","Connected (SSE)");
+        finishStream("Stream complete.");
       } else {
         // Anything else is a server that is NOT speaking graphql-sse on this
         // endpoint (typically the JSON GraphQL view answering a subscription
         // POST). Surface it instead of dropping it silently.
-        log("error","Unexpected SSE frame ("+eventType+")",raw||frame);
-        runBtn.disabled=false;
-        setStatus("closed","Connection Error");
+        failStream("Unexpected SSE frame ("+eventType+")",raw||frame);
       }
     }
 
@@ -444,7 +508,10 @@
       signal:ctrl?ctrl.signal:undefined
     }).then(function(resp){
       if(!resp.ok){
-        return resp.text().then(function(t){log("error","HTTP "+resp.status,t);runBtn.disabled=false;setStatus("closed","Connection Error");});
+        return resp.text().then(function(t){
+          var errors=null; try{errors=JSON.parse(t).errors;}catch(_){/* plain-text body */}
+          failStream("HTTP "+resp.status,errors?errors:t,errors);
+        });
       }
       setStatus("open","Streaming (SSE)");
       // Read the streaming SSE response body frame by frame.
@@ -459,9 +526,7 @@
             buf+=decoder.decode(); // flush any multi-byte tail
             if(buf.trim()){flushFrame(buf);}
             buf="";
-            log("complete","complete","Stream ended.");
-            runBtn.disabled=false;
-            setStatus("open","Connected (SSE)");
+            finishStream("Stream ended.");
             return;
           }
           buf+=decoder.decode(chunk.value,{stream:true});
@@ -474,17 +539,13 @@
           if(err&&err.name==="AbortError") return; // user disconnected — not an error
           // RANK 15: a read error after the 200 must NOT re-assert a healthy
           // "Connected (SSE)" status — surface the failure instead.
-          log("error","Stream Error",String(err));
-          runBtn.disabled=false;
-          setStatus("closed","Connection Error");
+          failStream("Stream Error",String(err));
         });
       }
       pump();
     }).catch(function(err){
       if(err&&err.name==="AbortError") return;
-      log("error","Fetch Error",String(err));
-      runBtn.disabled=false;
-      setStatus("closed","Connection Error");
+      failStream("Fetch Error",String(err));
     });
   }
 
@@ -495,29 +556,25 @@
   function disconnect(){
     if(mode==="ws"){wsDisconnect();}else{sseDisconnect();}
   }
+  function stopRun(){
+    if(mode==="ws"){wsStop();}else{sseCancel();}
+  }
+  // One entry point for the button and Ctrl/Cmd+Enter: Send, or Stop when active.
   function run(){
+    if(running){stopRun();return;}
     if(mode==="ws"){wsRun();}else{sseRun();}
   }
 
   // ---- Schema introspection (autocomplete) -----------------------------------
   function loadSchema(){
     var endpoint=$("gdsx-http").value.trim(); if(!endpoint) return;
-    var q="{__schema{subscriptionType{name fields{name}}types{name kind fields{name args{name}}inputFields{name}enumValues{name}}}}";
+    var ref="type{name ofType{name ofType{name ofType{name}}}}";
+    var q="{__schema{queryType{name}mutationType{name}subscriptionType{name fields{name}}types{name kind fields{name args{name "+ref+"}"+ref+"}inputFields{name}enumValues{name}}}}";
     fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({query:q})})
       .then(function(r){return r.json();})
       .then(function(j){
         if(!j||!j.data||!j.data.__schema) return;
-        var seen={}, cands=[];
-        function add(name,kind){ if(!name||/^__/.test(name)) return; var k=name+"|"+kind; if(seen[k]) return; seen[k]=1; cands.push({name:name,kind:kind}); }
-        (j.data.__schema.types||[]).forEach(function(t){
-          if(/^__/.test(t.name)) return;
-          add(t.name,"type");
-          (t.fields||[]).forEach(function(f){ add(f.name,"field"); (f.args||[]).forEach(function(a){ add(a.name,"arg"); }); });
-          (t.inputFields||[]).forEach(function(f){ add(f.name,"input"); });
-          (t.enumValues||[]).forEach(function(v){ add(v.name,"enum"); });
-        });
-        ["subscription","mutation","query","fragment"].forEach(function(k){ add(k,"keyword"); });
-        schemaCandidates=cands;
+        schemaModel=buildSchemaModel(j.data.__schema);
         // Name the placeholder document after a subscription this schema really
         // serves, so the run button works on first press. Only while the editor
         // still holds the shipped default — never overwrite the user's typing.
@@ -529,6 +586,141 @@
       })
       .catch(function(){ /* introspection optional */ });
   }
+
+  // ---- Context-aware completion (pure: no DOM, no network) --------------------
+  // BEGIN gdsx-completion
+  function baseTypeName(t){
+    while(t&&!t.name&&t.ofType){ t=t.ofType; }
+    return (t&&t.name)||null;
+  }
+  // Turn the introspection "__schema" into lookup tables. Dictionaries are
+  // prototype-less so a typed name such as "constructor" never hits Object.
+  function buildSchemaModel(sch){
+    var m={types:Object.create(null),roots:{},typeNames:[],fallback:[]};
+    m.roots.query=sch.queryType&&sch.queryType.name;
+    m.roots.mutation=sch.mutationType&&sch.mutationType.name;
+    m.roots.subscription=sch.subscriptionType&&sch.subscriptionType.name;
+    var seen=Object.create(null);
+    (sch.types||[]).forEach(function(t){
+      if(/^__/.test(t.name)) return;
+      var info={kind:t.kind,fields:Object.create(null),order:[],enums:(t.enumValues||[]).map(function(v){return v.name;})};
+      (t.fields||[]).forEach(function(f){
+        info.fields[f.name]={type:baseTypeName(f.type),args:(f.args||[]).map(function(a){return {name:a.name,type:baseTypeName(a.type)};})};
+        info.order.push(f.name);
+        // Unresolvable path fallback: object-type fields, minus Query/Mutation roots.
+        if(t.kind==="OBJECT"&&t.name!==m.roots.query&&t.name!==m.roots.mutation&&!seen[f.name]){ seen[f.name]=1; m.fallback.push(f.name); }
+      });
+      m.types[t.name]=info;
+      if(t.kind==="OBJECT"||t.kind==="INTERFACE"||t.kind==="UNION") m.typeNames.push(t.name);
+    });
+    return m;
+  }
+  function fieldInfo(m,type,name){
+    var t=type&&m.types[type];
+    return (t&&name&&t.fields[name])||null;
+  }
+  function items(names,kind){ return names.map(function(n){ return {name:n,kind:kind}; }); }
+
+  // Suggestions for the cursor, given the document text BEFORE the word being
+  // typed. A small brace/paren walker, not a GraphQL parser: it tracks the
+  // selection path (field names resolved through the introspection types), skips
+  // strings and comments, and answers by what encloses the cursor.
+  function completionItems(text,schema){
+    var m=schema||{types:Object.create(null),roots:{},typeNames:[],fallback:[]};
+    var doc={kind:"doc"}, stack=[doc], dw=[];
+    var spread=false, onSeen=false, inlineType=null, directive=false;
+    var i=0, n=text.length, c;
+    function top(){ return stack[stack.length-1]; }
+    while(i<n){
+      c=text.charAt(i);
+      if(c==="#"){
+        while(i<n&&text.charAt(i)!=="\n") i++;
+        if(i>=n) return []; // the cursor is inside a comment
+        continue;
+      }
+      if(c==='"'){
+        if(text.substr(i,3)==='"""'){
+          var e=text.indexOf('"""',i+3);
+          if(e<0) return [];
+          i=e+3;
+        } else {
+          i++;
+          while(i<n&&text.charAt(i)!=='"'&&text.charAt(i)!=="\n"){ if(text.charAt(i)==="\\") i++; i++; }
+          if(i>=n) return []; // the cursor is inside a string
+          i++;
+        }
+        continue;
+      }
+      if(/[A-Za-z_]/.test(c)){
+        var st=i; while(i<n&&/[A-Za-z0-9_]/.test(text.charAt(i))) i++;
+        var w=text.substring(st,i), f=top();
+        if(directive){ directive=false; continue; }
+        if(spread){
+          if(w==="on"&&!onSeen){ onSeen=true; continue; }
+          if(onSeen){ inlineType=w; onSeen=false; }
+          spread=false; continue;
+        }
+        if(f.kind==="doc"){ dw.push(w); }
+        else if(f.kind==="sel"){ f.last=w; }
+        else if(f.kind==="args"){
+          var k=i; while(k<n&&/\s/.test(text.charAt(k))) k++;
+          if(text.charAt(k)===":") f.arg=w;
+        }
+        continue;
+      }
+      if(c==="."&&text.substr(i,3)==="..."){ spread=true; onSeen=false; i+=3; continue; }
+      if(c==="@"){ directive=true; }
+      else if(c==="{"){
+        var p=top(), t=null, kind="sel";
+        if(p.kind==="doc"){
+          if(dw[0]==="fragment") t=dw[dw.length-1];
+          else t=m.roots[dw[0]==="mutation"||dw[0]==="subscription"?dw[0]:"query"];
+        } else if(p.kind==="sel"){
+          if(inlineType) t=inlineType;
+          else if(spread) t=p.type;
+          else { var fd=fieldInfo(m,p.type,p.last); t=fd?fd.type:null; }
+        } else { kind="obj"; }
+        inlineType=null; spread=false; directive=false;
+        stack.push({kind:kind,type:t,last:null});
+      }
+      else if(c==="}"){
+        if(stack.length>1) stack.pop();
+        if(stack.length===1) dw=[]; else top().last=null;
+      }
+      else if(c==="("){
+        var o=top();
+        stack.push({kind:"args",field:o.kind==="sel"?o.last:null,parent:o.type,arg:null});
+      }
+      else if(c===")"){
+        for(var j=stack.length-1;j>0;j--){ if(stack[j].kind==="args"){ stack.length=j; break; } }
+      }
+      i++;
+    }
+    var cur=top(), before=text.replace(/\s+$/,""), pc=before.charAt(before.length-1);
+    if(directive) return [];
+    if(spread) return onSeen?items(m.typeNames,"type"):[];
+    if(cur.kind==="doc"){
+      if(dw.length===0) return items(["subscription","fragment"],"keyword");
+      if(dw[0]==="fragment"&&dw[dw.length-1]==="on") return items(m.typeNames,"type");
+      return [];
+    }
+    if(cur.kind==="sel"){
+      var ti=cur.type&&m.types[cur.type];
+      return items(ti&&ti.order.length?ti.order:m.fallback,"field");
+    }
+    if(cur.kind==="args"){
+      var af=fieldInfo(m,cur.parent,cur.field);
+      if(!af) return [];
+      if(pc===":"){
+        var at=null; af.args.forEach(function(a){ if(a.name===cur.arg) at=a.type; });
+        var et=at&&m.types[at];
+        return et&&et.kind==="ENUM"?items(et.enums,"enum"):[];
+      }
+      return items(af.args.map(function(a){return a.name;}),"arg");
+    }
+    return [];
+  }
+  // END gdsx-completion
 
   // ---- Caret pixel position (for autocomplete popup) -------------------------
   function caretCoords(){
@@ -555,7 +747,7 @@
     var w=currentWord();
     if(!w){ closeAc(); return; }
     var ql=w.word.toLowerCase();
-    acItems=schemaCandidates.filter(function(c){ return c.name.toLowerCase().indexOf(ql)===0 && c.name!==w.word; }).slice(0,14);
+    acItems=completionItems(editor.value.substring(0,w.start),schemaModel).filter(function(c){ return c.name.toLowerCase().indexOf(ql)===0 && c.name!==w.word; }).slice(0,14);
     if(!acItems.length){ closeAc(); return; }
     acSel=0; acStart=w.start;
     ac.innerHTML=acItems.map(function(c,i){ return '<div class="gdsx-ac-item'+(i===0?' sel':'')+'" data-i="'+i+'">'+esc(c.name)+'<span class="gdsx-ac-kind">'+c.kind+'</span></div>'; }).join("");

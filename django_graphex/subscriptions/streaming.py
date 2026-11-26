@@ -300,9 +300,66 @@ def _assert_orm_accepts(model: Any, client_filters: "Mapping[str, Any]") -> None
     except Exception as exc:  # noqa: BLE001 - re-raised as the module's own error
         raise ClientFilterError(
             "Subscription filter {} is not a valid database lookup on {}: {}.".format(
-                ", ".join(sorted(client_filters)), model.__name__, exc
+                ", ".join(sorted(client_filters)),
+                model.__name__,
+                str(exc).rstrip("."),
             )
         ) from exc
+    _assert_integers_in_range(model, client_filters)
+
+
+def _assert_integers_in_range(model: Any, client_filters: "Mapping[str, Any]") -> None:
+    """Raise when an integer filter value overflows the database column.
+
+    Building the query accepts any integer, however large, but binding it at
+    delivery raises "OverflowError" for a relation "exact"/"in" filter (or an
+    "id__in" list) whose value is outside the database range. That would end
+    the stream with an internal error, so the value is refused at subscribe time.
+
+    Each key is resolved to its target field, a relation following to the
+    related primary key. Only "IntegerField" subclasses are checked, because
+    some backends report a range for every column type. A "None" bound means
+    the backend sets no limit on that side.
+
+    Args:
+        model: The subscribed Django model.
+        client_filters: The raw filters supplied by the subscriber.
+
+    Raises:
+        ClientFilterError: When a value is outside the column's integer range.
+    """
+    from django.core.exceptions import FieldDoesNotExist
+    from django.db import connections, models, router
+
+    ops = connections[router.db_for_read(model)].ops
+    for key, value in client_filters.items():
+        parts = key.split("__")
+        lookup, target, field = parts[-1], model, None
+        for part in parts:
+            try:
+                field = target._meta.get_field(part)
+            except FieldDoesNotExist:
+                break  # the remaining part is the lookup name
+            target = field.related_model
+            if target is None:
+                break  # a plain column: the rest is a lookup
+        while getattr(field, "related_model", None):
+            field = field.related_model._meta.pk
+        if lookup == "isnull" or not isinstance(field, models.IntegerField):
+            continue
+        low, high = ops.integer_field_range(field.get_internal_type())
+        for item in value if lookup in ("in", "range") else (value,):
+            if item is None:
+                continue
+            number = field.get_prep_value(item)
+            if (low is not None and number < low) or (
+                high is not None and number > high
+            ):
+                raise ClientFilterError(
+                    "Subscription filter {} value {} is out of range for {}.{}.".format(
+                        key, item, field.model.__name__, field.name
+                    )
+                )
 
 
 def _validate_client_filters(

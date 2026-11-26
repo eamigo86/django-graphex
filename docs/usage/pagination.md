@@ -696,7 +696,9 @@ page's last row — so it stays fast and stable. The list type also exposes a
     `field > value` filter jump over every other row tied at that same value.
     Nullable ordering fields are supported with deterministic placement:
     `NULL` values sort **last** when ascending and **first** when descending,
-    and pages cross a `NULL` boundary without dropping rows.
+    and pages cross a `NULL` boundary without dropping rows. A value-only
+    (pk-less) cursor from an older release follows the same rule: after a
+    non-`NULL` boundary an ascending page still ends with the `NULL` rows.
 
     A cursor emitted for a FloatField, DecimalField, or UUIDField ordering
     value can be reused on a nested list that has been materialized in memory.

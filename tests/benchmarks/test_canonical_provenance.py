@@ -10,6 +10,9 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks import run_publish
+from tests._repo_only import requires_repo_paths
+
+pytestmark = requires_repo_paths("benchmarks", ".github/workflows/cicd.yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = REPO_ROOT / "benchmarks"

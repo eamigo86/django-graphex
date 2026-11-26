@@ -1054,6 +1054,8 @@ The easiest way to try them is the built-in browser client at
    says `yourSubscription` and you replace it by hand.
 3. Trigger a change (create a `Post` via `postCreate`) — the event arrives
    instantly.
+4. Press **Stop** (the run button while a subscription is active) to end it;
+   over WebSocket the connection stays open for the next run.
 
 Manual WebSocket flow (`wscat -c ws://127.0.0.1:8000/ws/graphql/ -s graphql-transport-ws -o http://127.0.0.1:8000`):
 

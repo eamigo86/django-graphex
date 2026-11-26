@@ -165,6 +165,11 @@ def iter_ids(limit: int) -> Iterator[int]:
   rounded branch-rate attribute. CI runs it after the full suite has written
   fresh XML, alongside the unchanged combined and changed-line 95.01% gates.
 - Use descriptive test names
+- A test that reads a path the sdist does not ship (`.github/`, `benchmarks/`,
+  `examples/`, `docs-overrides/`) must declare it with
+  `requires_repo_paths(...)` from `tests/_repo_only.py`, as a decorator or a
+  module `pytestmark`, so it skips when run from the published tarball.
+  `tests/test_sdist_includes_test_inputs.py` fails otherwise.
 - Follow the existing test structure
 - When a test calls a view directly with a `RequestFactory` multipart request,
   close the test-owned request after dispatch so Django can close temporary

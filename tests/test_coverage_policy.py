@@ -5,9 +5,12 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).parents[1]
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml")
 def test_root_and_patch_coverage_are_strictly_above_95_percent() -> None:  # noqa: DOC002
     """The suite and changed-line gates both enforce the agreed 95.01% floor."""
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())

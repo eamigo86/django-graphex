@@ -37,6 +37,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 __all__ = ["sse", "ws"]
 
+#: "extensions.code" both transports answer when the operation is not a
+#: subscription (a query or mutation), so a client can branch on it.
+OPERATION_NOT_SUPPORTED = "OPERATION_NOT_SUPPORTED"
+
 _VALIDATE_SUPPORTS_HIDE_SUGGESTIONS = (
     "hide_suggestions" in signature(validate).parameters
 )

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
 UV_VERSION = "0.12.9"
@@ -45,6 +47,7 @@ def _setup_uv_steps() -> list[tuple[Path, int, list[str]]]:
     return steps
 
 
+@requires_repo_paths(".github/workflows")
 def test_setup_uv_uses_one_exact_reproducible_version() -> None:
     """Require every setup-uv step to use the same exact uv release.
 

@@ -21,6 +21,7 @@ from benchmarks.run_publish_core33 import (
     run_publication,
 )
 from tests.benchmarks.test_comparison_publish import _fixture
+from tests._repo_only import requires_repo_paths
 
 
 def test_command_requires_explicit_run_or_replay_mode() -> None:
@@ -926,6 +927,7 @@ def test_failed_batch_retains_raw_and_does_not_publish(
     assert not (results / "core33").exists()
 
 
+@requires_repo_paths("benchmarks")
 def test_direct_script_and_module_help_do_not_run_a_workload() -> None:
     """Both documented entry points require an explicit subcommand.
 
@@ -945,6 +947,7 @@ def test_direct_script_and_module_help_do_not_run_a_workload() -> None:
         assert "run" in result.stdout and "replay" in result.stdout
 
 
+@requires_repo_paths("benchmarks")
 def test_help_uses_the_executing_test_interpreter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

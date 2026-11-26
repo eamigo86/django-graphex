@@ -3,6 +3,8 @@
 import tomllib
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -31,6 +33,7 @@ def _package(lock: dict, name: str) -> dict:
     return next(package for package in lock["package"] if package["name"] == name)
 
 
+@requires_repo_paths("examples/playground/uv.lock")
 def test_patch_history_and_playground_lock_are_consistent() -> None:
     """Preserve the dated patch dependency history and Playground runtime.
 
@@ -89,6 +92,7 @@ def test_security_guidance_distinguishes_upstream_and_view_limits() -> None:
         assert term in guidance
 
 
+@requires_repo_paths("benchmarks")
 def test_benchmark_versions_remain_historical() -> None:
     """Keep reproducible 3.1.0 measurements separate from current patches.
 

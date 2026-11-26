@@ -14,10 +14,12 @@ other row that also had "value == V". These tests pin the composite keyset
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from django.db import models
 from django.db.models import Model
 from django.test import TestCase
 from graphql import GraphQLError
@@ -622,3 +624,104 @@ class CursorLegacyNullValuePredicateTest(TestCase):
         )
         # NULLs sort first descending, so the entire non-NULL body follows.
         assert sorted(r.pk for r in page) == sorted([self.v10.pk, self.v20.pk])
+
+
+# ---------------------------------------------------------------------------
+# A pk-less (legacy) cursor keeps the trailing NULL rows on an ascending order.
+# NULL sorts last ascending and first descending, so the rows after a non-NULL
+# boundary include the NULL group only when ascending. The DB path, the
+# in-memory path and an independent oracle must agree.
+# ---------------------------------------------------------------------------
+
+
+class LegacyNullableModel(models.Model):
+    """A table of nullable int, date and decimal columns for legacy cursors.
+
+    The test app syncs it, so the legacy-cursor tests only create rows.
+    """
+
+    i = models.IntegerField(null=True)
+    d = models.DateField(null=True)
+    dec = models.DecimalField(max_digits=8, decimal_places=2, null=True)
+
+    class Meta:
+        """Attach the model to the test app.
+
+        Attributes:
+            app_label: The app that owns the table.
+        """
+
+        app_label = "tests"
+
+
+_LEGACY_ROWS = [
+    (1, _day(1), Decimal("1.00")),
+    (None, None, None),
+    (3, _day(3), Decimal("3.00")),
+    (None, None, None),
+    (2, _day(2), Decimal("2.00")),
+]
+
+
+@pytest.fixture
+def legacy_rows(db: Any) -> None:
+    """Create five rows, two of them NULL, in the table the test app syncs.
+
+    Args:
+        db: Gives the test a rolled-back database.
+    """
+    for i, d, dec in _LEGACY_ROWS:
+        LegacyNullableModel.objects.create(i=i, d=d, dec=dec)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize(
+    ("field", "boundary", "typed"),
+    [
+        ("i", "2", 2),
+        ("d", "2020-01-02", _day(2)),
+        ("dec", "2.00", Decimal("2.00")),
+        ("dec", "2.005", Decimal("2.005")),  # finer than the column: the gte branch
+    ],
+)
+def test_legacy_cursor_keeps_trailing_nulls_ascending(
+    legacy_rows: None, field: str, boundary: str, typed: Any, descending: bool
+) -> None:
+    """A pk-less cursor pages NULLs like the documented rule, in both paths.
+
+    Args:
+        legacy_rows: Creates the table.
+        field: The nullable ordering field.
+        boundary: The cursor value.
+        typed: The boundary as the Python value the oracle compares.
+        descending: Whether the ordering is descending.
+    """
+    paginator = CursorGraphqlPagination(
+        ordering=("-" if descending else "") + field, page_size=10
+    )
+    cursor = CursorGraphqlPagination.encode_cursor(boundary)
+    queryset = LegacyNullableModel.objects.all()
+
+    in_db = [
+        r.pk for r in paginator.paginate_queryset(queryset, first=10, cursor=cursor)
+    ]
+    in_memory = [
+        r.pk
+        for r in paginator.paginate_queryset(list(queryset), first=10, cursor=cursor)
+    ]
+
+    def follows(row: Any) -> bool:
+        value = getattr(row, field)
+        if value is None:
+            return not descending  # NULL last ascending, first descending
+        return value < typed if descending else value > typed
+
+    rows = sorted(queryset, key=lambda r: r.pk, reverse=descending)
+    rows = sorted(
+        rows,
+        key=lambda r: (getattr(r, field) is None, getattr(r, field) or 0),
+        reverse=descending,
+    )
+    oracle = [r.pk for r in rows if follows(r)]
+    assert in_db == in_memory == oracle
+    assert oracle
