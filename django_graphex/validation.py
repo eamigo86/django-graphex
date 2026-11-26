@@ -115,10 +115,13 @@ def _is_budget_abort(error: GraphQLError) -> bool:
         error: One validation error.
 
     Returns:
-        True for a "ValidationAbortedError" reading "Validation aborted.".
+        True for a "ValidationAbortedError" reading "Validation aborted." on a
+        graphql-core that has the nesting visitor to classify it (3.3.2+, the
+        only versions that send that abort).
     """
     return (
-        type(error).__name__ == "ValidationAbortedError"
+        _FRAGMENT_NESTING_VISITOR is not None
+        and type(error).__name__ == "ValidationAbortedError"
         and error.message == _VALIDATION_ABORTED
     )
 
@@ -138,19 +141,18 @@ def _coded_abort(error: GraphQLError, document: DocumentNode) -> GraphQLError:
         A "QUERY_TOO_DEEP" error for over-deep nesting, otherwise a
         "QUERY_TOO_COMPLEX" error.
     """
-    if _FRAGMENT_NESTING_VISITOR is not None:
-        fragments = {
-            node.name.value: node
-            for node in document.definitions
-            if isinstance(node, FragmentDefinitionNode)
-        }
-        try:
-            visit(document, _FRAGMENT_NESTING_VISITOR(fragments))
-        except RecursionError:
-            return GraphQLError(
-                "Query is nested too deeply to be validated.",
-                extensions={"code": "QUERY_TOO_DEEP"},
-            )
+    fragments = {
+        node.name.value: node
+        for node in document.definitions
+        if isinstance(node, FragmentDefinitionNode)
+    }
+    try:
+        visit(document, _FRAGMENT_NESTING_VISITOR(fragments))
+    except RecursionError:
+        return GraphQLError(
+            "Query is nested too deeply to be validated.",
+            extensions={"code": "QUERY_TOO_DEEP"},
+        )
     return GraphQLError(
         "Query is too complex to be validated.",
         extensions={"code": "QUERY_TOO_COMPLEX"},

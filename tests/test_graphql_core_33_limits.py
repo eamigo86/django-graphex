@@ -16,7 +16,7 @@ from graphql import (
 from graphql.validation.validate import ValidationAbortedError
 
 from django_graphex.security import mark_client_errors, mark_request_errors
-from django_graphex.validation import run_validation
+from django_graphex.validation import _FRAGMENT_NESTING_VISITOR, run_validation
 from django_graphex.views import DEFAULT_VALIDATION_RULES, _parse_or_depth_error
 
 _ABORT = "Validation aborted."
@@ -109,15 +109,17 @@ def test_fragment_nesting_abort_is_a_query_too_deep_error() -> None:
 def test_validation_budget_abort_is_a_query_too_complex_error() -> None:
     """An abort that is not about nesting is a coded complexity error.
 
-    The assertions below pin the contract.
+    Only graphql-core 3.3.2+ sends that bare abort, and it ships the nesting
+    visitor that classifies it; on 3.3.1 the abort is left untouched.
     """
+    abort = ValidationAbortedError(_ABORT)
     errors = run_validation(
-        _fake_validate(ValidationAbortedError(_ABORT)),
-        _schema(),
-        parse("{ root { name } }"),
-        [],
+        _fake_validate(abort), _schema(), parse("{ root { name } }"), []
     )
 
+    if _FRAGMENT_NESTING_VISITOR is None:
+        assert errors == [abort]
+        return
     assert _codes(errors) == ["QUERY_TOO_COMPLEX"]
     assert not any(isinstance(e, ValidationAbortedError) for e in errors)
 
