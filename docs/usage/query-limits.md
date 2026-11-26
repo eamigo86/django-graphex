@@ -398,6 +398,7 @@ machine-readable `extensions.code`:
 |------|-----------|
 | `QUERY_TOO_DEEP` | `DepthLimitValidationRule`, and documents too deep for graphql-core's parser/validator |
 | `QUERY_TOO_COMPLEX` | `CostLimitValidationRule`, and a validation abort from graphql-core's work or complexity budget |
+| `OPERATION_NOT_SUPPORTED` | The WebSocket and SSE subscription transports, for a query or mutation (see [Subscriptions](subscriptions.md#operation_not_supported)) |
 
 ```json
 { "errors": [{ "message": "Query exceeds the maximum nesting depth of 2 for 'CategoryGenericType'.",

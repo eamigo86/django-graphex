@@ -79,6 +79,7 @@ from ...security import (
 from ...settings import graphql_api_settings
 from ..streaming import SubscriptionSpec, build_middleware_manager, drive_subscription
 from . import (
+    OPERATION_NOT_SUPPORTED,
     _is_too_deep,
     _parse_subscription_document,
     _start_source_event_stream,
@@ -523,9 +524,23 @@ def subscription_sse_view(
             operation_ast is None
             or operation_ast.operation != OperationType.SUBSCRIPTION
         ):
-            # PRE-200: this transport only serves subscriptions.
+            # PRE-200: this transport only serves subscriptions. A JSON envelope
+            # (like the too-deep refusal) so the code is machine-readable.
             return HttpResponseBadRequest(
-                "The SSE transport only serves subscription operations."
+                json.dumps(
+                    {
+                        "errors": [
+                            {
+                                "message": (
+                                    "The SSE transport only serves "
+                                    "subscription operations."
+                                ),
+                                "extensions": {"code": OPERATION_NOT_SUPPORTED},
+                            }
+                        ]
+                    }
+                ),
+                content_type="application/json",
             )
 
         context = TransportContext(request)

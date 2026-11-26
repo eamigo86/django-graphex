@@ -758,7 +758,11 @@ def test_client_logs_unrecognised_sse_event_types() -> None:
     assert 'eventType==="next"' in frame_fn
     assert 'eventType==="complete"' in frame_fn
     assert "else{" in frame_fn.replace(" ", "")
-    assert 'log("error"' in frame_fn
+    # The unknown-frame branch surfaces the frame through the guarded failure
+    # helper, which is what logs the "error" entry and ends the run once.
+    assert 'failStream("Unexpected SSE frame' in frame_fn
+    fail_fn = html.split("function failStream(", 1)[1].split("\n    }", 1)[0]
+    assert 'log("error"' in fail_fn
 
 
 # ---------------------------------------------------------------------------

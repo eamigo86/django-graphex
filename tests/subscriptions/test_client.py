@@ -528,3 +528,220 @@ def test_client_sse_parser_ignores_the_comment_preamble() -> None:
     assert body.index(guard) < body.index(error_branch), (
         "the comment guard must precede the unexpected-frame branch"
     )
+
+
+# ---------------------------------------------------------------------------
+# T05: Stop control, context-aware completion, one terminal line, coded hint
+# ---------------------------------------------------------------------------
+
+
+def test_client_run_button_turns_into_a_stop_control() -> None:
+    """The run button must become Stop while an operation is active.
+
+    Contract: this test ships broken if the page again disables the Send
+    button for the whole life of an operation, leaving Disconnect as the only
+    way to stop one subscription.
+    """
+    body = _get_body()
+    assert "function setRunning(" in body
+    assert "Stop subscription" in body
+    # Ctrl/Cmd+Enter and the button share run(), which toggles Send and Stop.
+    assert "if(running){stopRun();return;}" in body
+    assert 'runBtn.addEventListener("click",run)' in body
+    assert 'if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();run();' in (
+        body
+    )
+
+
+def test_client_ws_stop_sends_a_client_complete_and_keeps_the_socket() -> None:
+    """WS Stop must send the client complete frame without closing the socket.
+
+    Contract: this test ships broken if Stop closes the socket, forgets to
+    log the frame, or leaves the old operation id armed.
+    """
+    body = _get_body()
+    start = body.index("function wsStop(")
+    section = body[start : body.index("function wsRun(")]
+    assert 'wsSend({type:"complete",id:opId})' in section
+    assert "log(" in section
+    assert "opId=null" in section
+    assert "setRunning(false)" in section
+    assert "ws.close" not in section
+    # A server complete/error returns the UI to Send on its own.
+    received = body[body.index('t==="complete"') : body.index('t==="ping"')]
+    assert received.count("setRunning(false)") == 2
+
+
+def test_client_sse_stop_aborts_the_in_flight_fetch() -> None:
+    """SSE Stop must abort the per-run fetch and return to Send.
+
+    Contract: this test ships broken if Stop stops aborting the stream or
+    the run no longer owns an AbortController.
+    """
+    body = _get_body()
+    assert "new AbortController()" in body
+    start = body.index("function sseCancel(")
+    section = body[start : body.index("function sseConnect(")]
+    assert ".abort()" in section
+    assert "sseFinish(" in section
+
+
+def test_client_sse_logs_exactly_one_terminal_entry_per_stream() -> None:
+    """Every SSE stream end must go through one guarded terminal log.
+
+    Contract: this test ships broken if a complete frame followed by the
+    natural stream end logs "Stream complete." and "Stream ended." again, or
+    if an error still adds a terminal entry after it.
+    """
+    body = _get_body()
+    assert "function finishStream(" in body
+    assert "if(ended) return;" in body
+    # The terminal label is only ever written inside the guarded helper.
+    assert body.count('log("complete","complete","Stream') == 0
+    assert body.count('log("complete","complete",text)') == 1
+    for label in ("Stream complete.", "Stream ended."):
+        assert body.count('finishStream("' + label + '")') == 1
+    assert body.count('sseFinish("Stream stopped.")') == 1
+    assert "function failStream(" in body
+
+
+def test_client_shows_a_hint_for_operation_not_supported() -> None:
+    """The page must explain the OPERATION_NOT_SUPPORTED refusal.
+
+    Contract: this test ships broken if a query or mutation refused with the
+    code on either transport is shown without the GraphiQL pointer.
+    """
+    body = _get_body(http_path="/api/graphql/")
+    assert "OPERATION_NOT_SUPPORTED" in body
+    assert "This page runs subscriptions; use GraphiQL at " in body
+    assert body.count("hintIfNotSupported(") >= 3  # definition, WS and SSE
+
+
+def test_client_completion_is_context_aware() -> None:
+    """Completion must be driven by the cursor context, not a flat name list.
+
+    Contract: this test ships broken if the page again suggests every schema
+    name regardless of where the cursor is.
+    """
+    body = _get_body()
+    for name in ("function completionItems(", "function buildSchemaModel("):
+        assert name in body
+    assert "schemaCandidates" not in body
+    assert "queryType{name}" in body and "mutationType{name}" in body
+
+
+def _completion_script() -> str:
+    """Return the page's pure completion code, between its marker comments."""
+    body = _get_body()
+    start = body.index("// BEGIN gdsx-completion")
+    return body[start : body.index("// END gdsx-completion")]
+
+
+_COMPLETION_DRIVER = r"""
+var intro = {
+  queryType: {name: "Query"}, mutationType: {name: "Mutation"},
+  subscriptionType: {name: "Subscription"},
+  types: [
+    {name: "Query", kind: "OBJECT", fields: [
+      {name: "posts", args: [], type: {kind: "LIST", ofType: {name: "PostType"}}}]},
+    {name: "Mutation", kind: "OBJECT", fields: [
+      {name: "postCreate", args: [], type: {name: "PostType"}}]},
+    {name: "Subscription", kind: "OBJECT", fields: [
+      {name: "onPost", args: [
+        {name: "action", type: {kind: "NON_NULL", ofType: {name: "ActionEnum"}}},
+        {name: "filter", type: {name: "FilterInput"}}],
+       type: {name: "PostType"}},
+      {name: "onTick", args: [], type: {name: "Scalar"}}]},
+    {name: "PostType", kind: "OBJECT", fields: [
+      {name: "id", args: [], type: {name: "ID"}},
+      {name: "title", args: [], type: {name: "String"}},
+      {name: "author", args: [], type: {name: "UserType"}}]},
+    {name: "UserType", kind: "OBJECT", fields: [
+      {name: "username", args: [], type: {name: "String"}}]},
+    {name: "ActionEnum", kind: "ENUM", enumValues: [{name: "CREATE"}, {name: "ALL"}]},
+    {name: "FilterInput", kind: "INPUT_OBJECT", inputFields: [{name: "id"}]},
+    {name: "__Type", kind: "OBJECT", fields: [{name: "kind", args: []}]}
+  ]
+};
+var model = buildSchemaModel(intro);
+function names(text) {
+  return completionItems(text, model).map(function (c) { return c.name; });
+}
+var out = {
+  empty: names(""),
+  afterBlock: names("subscription { onTick } "),
+  named: names("subscription Foo "),
+  root: names("subscription {\n  "),
+  nested: names("subscription { onPost(action: ALL) { "),
+  deeper: names("subscription { onPost { author { "),
+  inline: names("subscription { onPost { ... on UserType { "),
+  alias: names("subscription { x: onPost { "),
+  unknown: names("subscription { nope { "),
+  args: names("subscription { onPost("),
+  argsAfter: names("subscription { onPost(action: ALL, "),
+  value: names("subscription { onPost(action: "),
+  objValue: names("subscription { onPost(filter: { "),
+  inString: names('subscription { onPost(filter: "{ '),
+  inComment: names("subscription { # {"),
+  commentSkipped: names("subscription { # {\n  "),
+  fragmentOn: names("fragment F on "),
+  fragmentBody: names("fragment F on UserType { "),
+  noSchema: completionItems("subscription { ", null).map(function (c) { return c.name; })
+};
+console.log(JSON.stringify(out));
+"""
+
+
+def test_client_completion_resolves_by_cursor_context() -> None:
+    """Run the page's completion code on a small introspection result.
+
+    Contract: this test ships broken if the suggestions stop following the
+    cursor: keywords at depth 0, the Subscription root fields directly inside
+    the operation, the resolved type's fields deeper, argument names inside
+    parentheses, and a root-field-free fallback when the path cannot be walked.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    import pytest
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        [node, "-e", _completion_script() + _COMPLETION_DRIVER],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    out = json.loads(result.stdout)
+
+    assert out["empty"] == ["subscription", "fragment"]
+    assert out["afterBlock"] == ["subscription", "fragment"]
+    assert out["named"] == []
+    assert out["root"] == ["onPost", "onTick"]
+    assert out["nested"] == ["id", "title", "author"]
+    assert out["deeper"] == ["username"]
+    assert out["inline"] == ["username"]
+    assert out["alias"] == ["id", "title", "author"]
+    # Unresolvable path: object-type fields only, no Query/Mutation root field,
+    # no type name and nothing from the introspection types.
+    assert out["unknown"] == ["onPost", "onTick", "id", "title", "author", "username"]
+    assert out["args"] == ["action", "filter"]
+    assert out["argsAfter"] == ["action", "filter"]
+    assert out["value"] == ["CREATE", "ALL"]
+    assert out["objValue"] == []
+    assert out["inString"] == []
+    assert out["inComment"] == []
+    assert out["commentSkipped"] == ["onPost", "onTick"]
+    assert out["fragmentOn"] == [
+        "Query",
+        "Mutation",
+        "Subscription",
+        "PostType",
+        "UserType",
+    ]
+    assert out["fragmentBody"] == ["username"]
+    assert out["noSchema"] == []

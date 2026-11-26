@@ -466,7 +466,13 @@ WebSocket at `SUBSCRIPTION_PATH` (default `/ws/graphql/`); see
 SSE and for inspecting the protocol messages.
 
 `SubscriptionClientView` serves a self-contained HTML page to try subscriptions
-live. It speaks the same standards as the transports: `graphql-transport-ws` over
+live. While an operation is active the round Send button becomes **Stop**
+(`Ctrl/Cmd+Enter` toggles it): on WebSocket it sends a client `complete` for
+that operation and keeps the socket, on SSE it aborts the stream. Completion
+follows the cursor (root fields inside `subscription { ... }`, the resolved
+type's fields deeper, argument names inside parentheses). Queries and mutations
+are refused with `OPERATION_NOT_SUPPORTED`, and the page points to the HTTP
+endpoint. It speaks the same standards as the transports: `graphql-transport-ws` over
 WebSocket and `graphql-sse` over a streamed `fetch()` POST — the browser
 `EventSource` API is not used to *start* the subscription, since `EventSource`
 cannot carry the operation (see [the SSE wire protocol](#sse-the-wire-protocol)).
@@ -651,8 +657,11 @@ Error surfacing splits at the moment the stream is committed:
 
 - **Pre-stream (HTTP 400)** — a missing `query`, a GraphQL **syntax** error, a
   non-subscription operation, or a JSON body that is not an object (`[1,2,3]`,
-  `"x"`, `null`) is rejected as a plain `400 Bad Request` before any stream
-  starts — the same classification `GraphQLView` gives those bodies.
+  `"x"`, `null`) is rejected as a `400 Bad Request` before any stream starts —
+  the same classification `GraphQLView` gives those bodies. A query or mutation
+  is the one case answered as a JSON `{"errors": [...]}` envelope whose error
+  carries `extensions.code` `OPERATION_NOT_SUPPORTED` (see
+  [Error codes](#operation_not_supported)).
 - **In-stream** — everything after that (**validation errors** and
   **authorize-denials**) is delivered inside the committed
   `200 text/event-stream` response as a single `next` frame carrying
@@ -795,6 +804,11 @@ never leave a task or a joined group behind. Because any client can send such a
 frame, it is logged at DEBUG, not as an ERROR with a traceback. Errors in
 `error` and `next` frames are masked in production like the HTTP views' (see
 [Production execution errors](views.md#production-execution-errors)).
+
+A query or mutation sent over WebSocket is answered with an `error` frame
+carrying the code `OPERATION_NOT_SUPPORTED` and the message "The WS transport
+only serves subscriptions."; the socket stays open. See
+[Error codes](#operation_not_supported).
 
 A failure that happens **after** delivery started is not a close and not an
 `error` frame: it arrives as `{"type": "next", "payload": {"errors": [...]}}`
@@ -1583,3 +1597,20 @@ favor of native SSE and `graphql-transport-ws`. To migrate:
    `DJANGO_GRAPHEX["SUBSCRIPTION_PAYLOAD_MODE"] = "full"` globally. See
    [Notification payload](#notification-payload).
 6. Configure a Redis channel layer for multi-process deployments.
+
+## OPERATION_NOT_SUPPORTED
+
+Both subscription transports refuse an operation that is not a subscription (a
+query or mutation) with `extensions.code` `OPERATION_NOT_SUPPORTED`. The message
+text is unchanged:
+
+- **WebSocket:** `{"type": "error", "id": "1", "payload": [{"message": "The WS
+  transport only serves subscriptions.", "extensions": {"code":
+  "OPERATION_NOT_SUPPORTED"}}]}`. The socket stays open.
+- **SSE:** HTTP 400 with `Content-Type: application/json` and
+  `{"errors": [{"message": "The SSE transport only serves subscription
+  operations.", "extensions": {"code": "OPERATION_NOT_SUPPORTED"}}]}`. Before,
+  the body was the same text as `text/plain`.
+
+Send queries and mutations to the HTTP view instead. The HTTP views answer a
+subscription with [`SUBSCRIPTION_NOT_SUPPORTED`](views.md).

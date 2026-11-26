@@ -2,7 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- The subscriptions client page (`SubscriptionClientView`) has a Stop control and
+  context-aware completion. While an operation is active the Send button becomes
+  Stop (`Ctrl/Cmd+Enter` toggles it): on WebSocket it sends a client `complete`
+  for that operation and keeps the socket, on SSE it aborts the stream, and a
+  server `complete` or `error` returns it to Send. Suggestions follow the cursor:
+  keywords at the top level, the Subscription root fields inside the operation,
+  the resolved type's fields deeper, and argument names inside parentheses.
+- A query or mutation sent over the WebSocket or SSE subscription transport now
+  carries `extensions.code` `OPERATION_NOT_SUPPORTED`; the message text is
+  unchanged. Over SSE the HTTP 400 body is now a JSON `{"errors": [...]}`
+  envelope (`application/json`) instead of plain text. The client page shows a
+  pointer to GraphiQL when it arrives. See
+  [Subscriptions](docs/usage/subscriptions.md#operation_not_supported).
+
 ### Fixes and changes
+
+- The SSE tab of the client page logs one terminal entry per stream. A stream
+  that ended after an `event: complete` frame showed both "Stream complete." and
+  "Stream ended."; a stop or an error no longer adds a second one.
 
 - A subscriber filter value outside the database integer range is refused at
   subscribe time. A relation `exact` or `in` filter, or an `id__in` list, such as

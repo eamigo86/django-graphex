@@ -263,6 +263,42 @@ async def test_non_subscription_operation_is_pre_200_bad_request(
     assert isinstance(response, HttpResponseBadRequest)
     assert response.status_code == 400
     assert b"only serves subscription" in response.content
+    assert response["Content-Type"].startswith("application/json")
+    assert json.loads(response.content) == {
+        "errors": [
+            {
+                "message": "The SSE transport only serves subscription operations.",
+                "extensions": {"code": "OPERATION_NOT_SUPPORTED"},
+            }
+        ]
+    }
+
+
+async def test_non_subscription_refusal_has_code_and_no_error_log(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Refuse a mutation with the machine-readable code and no ERROR record.
+
+    Contract: this test ships broken if the HTTP 400 loses its message, its
+    OPERATION_NOT_SUPPORTED code, or logs at ERROR level.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+        caplog: The pytest fixture capturing log records.
+    """
+    from django_graphex.subscriptions.transports import sse
+
+    layer = InMemoryChannelLayer()
+    monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+    view = sse.subscription_sse_view(schema=build_native_schema())
+    with caplog.at_level("DEBUG"):
+        response = await view(_json_request("mutation { ok }"))
+    assert response.status_code == 400
+    error = json.loads(response.content)["errors"][0]
+    assert error["extensions"]["code"] == "OPERATION_NOT_SUPPORTED"
+    assert "only serves subscription operations" in error["message"]
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
 
 async def test_unknown_operation_name_is_pre_200_bad_request(

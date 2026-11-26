@@ -385,6 +385,47 @@ async def test_subscribe_non_subscription_operation_sends_error_frame(
     await communicator.disconnect()
 
 
+async def test_non_subscription_error_carries_operation_not_supported_code(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Code the refusal of a query and keep the socket usable.
+
+    Contract: this test ships broken if the error frame loses its message,
+    loses extensions.code OPERATION_NOT_SUPPORTED, logs an ERROR record, or
+    closes the socket.
+
+    Args:
+        monkeypatch: The pytest fixture used to stub the channel layer.
+        caplog: The pytest fixture capturing log records.
+    """
+    layer = InMemoryChannelLayer()
+    communicator = _make_communicator(_app(layer, monkeypatch), layer=layer)
+    await _connect_and_ack(communicator)
+
+    with caplog.at_level("DEBUG"):
+        await communicator.send_json_to(
+            {"id": "q1", "type": "subscribe", "payload": {"query": "query { ok }"}}
+        )
+        err = await communicator.receive_json_from(timeout=2)
+    assert err["payload"] == [
+        {
+            "message": "The WS transport only serves subscriptions.",
+            "extensions": {"code": "OPERATION_NOT_SUPPORTED"},
+        }
+    ]
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+    # The socket stays open: a later subscribe is still answered.
+    await communicator.send_json_to(
+        {"id": "q2", "type": "subscribe", "payload": {"query": "mutation { ok }"}}
+    )
+    again = await communicator.receive_json_from(timeout=2)
+    assert again["id"] == "q2"
+    assert again["payload"][0]["extensions"]["code"] == "OPERATION_NOT_SUPPORTED"
+
+    await communicator.disconnect()
+
+
 # ---------------------------------------------------------------------------
 # 354-357 — a validation error → error frame
 # ---------------------------------------------------------------------------
