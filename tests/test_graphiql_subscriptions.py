@@ -6,13 +6,13 @@ import re
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from graphql import GraphQLString
 
 from django_graphex._script_escape import escape_for_script
 from django_graphex.core import ObjectType, field
 from django_graphex.schema import DjangoGraphQLSchema
-from django_graphex.subscriptions import SubscriptionClientView
 from django_graphex.views import GraphQLView
 
 GRAPHQL_WS_URL = "https://unpkg.com/graphql-ws@5.16.2/umd/graphql-ws.min.js"
@@ -144,7 +144,12 @@ class TestEscapeHelper(SimpleTestCase):
         """The client view escape equals the shared helper.
 
         Guards the delegation in "SubscriptionClientView._escape_for_script".
+        The client lives in the optional subscriptions extra, so this check is
+        skipped on a base install without channels.
         """
+        pytest.importorskip("channels")
+        from django_graphex.subscriptions import SubscriptionClientView
+
         self.assertEqual(
             SubscriptionClientView._escape_for_script("</a>&"),
             escape_for_script("</a>&"),
