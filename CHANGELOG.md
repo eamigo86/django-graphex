@@ -14,6 +14,22 @@
   `results` is the one multiplier of its level. Estimates for queries over
   paginated containers drop; review `MAX_QUERY_COST` if it was raised to admit
   nested queries.
+- graphql-core 3.3.2 enforces limits of its own instead of raising
+  `RecursionError`, and the library maps each one to the coded client error it
+  already used, over HTTP, SSE and WebSocket:
+  - a document past the parser's nesting limit ("Document is nested too deeply"),
+    variables past the coercion limit ("Variable values are nested too deeply.")
+    and an execution that aborts on nested selections answer `QUERY_TOO_DEEP`;
+  - a bare "Validation aborted." caused by fragment nesting is `QUERY_TOO_DEEP`,
+    and one caused by the fragment-work or complexity budget is
+    `QUERY_TOO_COMPLEX`.
+
+  The upstream limit (200 selection levels) now refuses very deep documents
+  before the library's own ceiling of 100 object levels can run; the code and
+  status are the same either way. On 3.3.2 the overlapping-fields budget is
+  `MAX_COMPLEXITY_BUDGET`, and `MAX_FIELD_COMPARISONS` is deprecated upstream.
+  graphql-core 3.3.1 still raises `RecursionError`, which the library already
+  answered with `QUERY_TOO_DEEP`.
 
 ## 4.1.0 — 2026-10-27
 

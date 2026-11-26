@@ -22,10 +22,42 @@ from graphql import (
     parse,
     validate,
 )
+from graphql.language import parser as graphql_parser
 
 from django_graphex.cost import CostLimitValidationRule, analyze_cost
 from django_graphex.validation import DepthLimitValidationRule, run_validation
 from django_graphex.views import DEFAULT_VALIDATION_RULES, GraphQLView
+
+#: graphql-core 3.3.2+ refuses documents nested deeper than this while parsing and
+#: validating; 3.3.1 has no such limit and relies on the Python stack instead.
+_UPSTREAM_LIMIT: int | None = getattr(graphql_parser, "MAX_NESTING_DEPTH", None)
+
+
+def _cap(n: int, levels: int = 1) -> int:
+    """Return n, or the largest size upstream still parses when it limits depth.
+
+    Args:
+        n: The nesting size the test wants.
+        levels: Selection-set levels each unit of n adds to the document.
+
+    Returns:
+        size: n, kept ten levels below the upstream limit when there is one.
+    """
+    if _UPSTREAM_LIMIT is None:
+        return n
+    return min(n, (_UPSTREAM_LIMIT - 10) // levels)
+
+
+def _ceiling_query() -> str:
+    """Return a document the library's own depth ceiling (100) must refuse.
+
+    Under 3.3.2+ a fragment chain that deep is refused by upstream first, so an
+    inline document between the library ceiling and the upstream limit is used.
+
+    Returns:
+        query: The document text.
+    """
+    return _nested_chain(300) if _UPSTREAM_LIMIT is None else _inline(150)
 
 
 def _schema() -> GraphQLSchema:
@@ -176,7 +208,9 @@ def test_long_flat_fragment_chain_is_not_a_depth_violation() -> None:
 
     The walker must traverse the whole chain without recursion.
     """
-    errors = validate(_schema(), parse(_flat_chain(1500)), [DepthLimitValidationRule])
+    errors = validate(
+        _schema(), parse(_flat_chain(_cap(1500))), [DepthLimitValidationRule]
+    )
 
     assert errors == []
 
@@ -188,7 +222,9 @@ def test_deeply_nested_inline_fragments_are_not_a_depth_violation() -> None:
     The document is parsed with extra stack; the rule runs with the default.
     """
     errors = validate(
-        _schema(), _parse_deep(_inline_fragments(400)), [DepthLimitValidationRule]
+        _schema(),
+        _parse_deep(_inline_fragments(_cap(400))),
+        [DepthLimitValidationRule],
     )
 
     assert errors == []
@@ -201,7 +237,7 @@ def test_depth_limit_far_above_the_ceiling_is_capped_without_recursion() -> None
     The walker reaches the ceiling through a 1500-fragment chain without
     recursing and reports a single depth error.
     """
-    errors = validate(_schema(), parse(_nested_chain(1500)), [DepthLimitValidationRule])
+    errors = validate(_schema(), parse(_ceiling_query()), [DepthLimitValidationRule])
 
     assert [e.extensions["code"] for e in errors] == ["QUERY_TOO_DEEP"]
     assert "maximum nesting depth of 100" in errors[0].message
@@ -210,7 +246,7 @@ def test_depth_limit_far_above_the_ceiling_is_capped_without_recursion() -> None
 @override_settings(DJANGO_GRAPHEX={"MAX_QUERY_COST": 10**9})
 @pytest.mark.parametrize(
     "query",
-    [_flat_chain(1500), _nested_chain(1500), _inline(400)],
+    [_flat_chain(_cap(1500)), _nested_chain(_cap(1500, 2)), _inline(_cap(400))],
     ids=["flat", "nested", "inline"],
 )
 def test_cost_analysis_handles_deep_acyclic_documents(query: str) -> None:
@@ -231,7 +267,9 @@ def test_cost_limit_still_applies_to_deep_chains() -> None:
 
     The budget is exceeded by the first few levels of the chain.
     """
-    errors = validate(_schema(), parse(_nested_chain(1500)), [CostLimitValidationRule])
+    errors = validate(
+        _schema(), parse(_nested_chain(_cap(80, 2))), [CostLimitValidationRule]
+    )
 
     assert [e.extensions["code"] for e in errors] == ["QUERY_TOO_COMPLEX"]
 
@@ -261,7 +299,7 @@ def test_moderately_long_fragment_chain_executes_without_limits() -> None:
 
     The guard must not change the outcome of documents that fit the stack.
     """
-    status, body = _post(_flat_chain(200))
+    status, body = _post(_flat_chain(_cap(200)))
 
     assert status == 200
     assert body["data"] == {"root": {"name": "n"}}
@@ -347,7 +385,7 @@ def test_default_rules_used_by_subscription_transports_enforce_the_ceiling() -> 
     All three surfaces validate with this tuple.
     """
     errors = validate(
-        _schema(), parse(_nested_chain(300)), list(DEFAULT_VALIDATION_RULES)
+        _schema(), parse(_ceiling_query()), list(DEFAULT_VALIDATION_RULES)
     )
 
     assert [e.extensions["code"] for e in errors] == ["QUERY_TOO_DEEP"]

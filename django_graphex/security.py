@@ -383,6 +383,47 @@ def format_graphql_error(error: Any, middleware: Any = None) -> dict:
 CLIENT_ERROR_ATTR = "_graphex_client_error"
 
 
+try:
+    from graphql.execution.executor import SELECTIONS_NESTED_TOO_DEEPLY
+except ImportError:  # graphql-core 3.3.1 has no executor depth limit
+    SELECTIONS_NESTED_TOO_DEEPLY = (
+        "Selections are nested too deeply. Execution aborted."
+    )
+
+#: Depth errors graphql-core 3.3.2+ raises without a code, mapped to the message
+#: the library answers with. Both are client input: the value or the document.
+_UPSTREAM_DEPTH_MESSAGES = {
+    "Variable values are nested too deeply.": (
+        "Variables are nested too deeply to be coerced."
+    ),
+    SELECTIONS_NESTED_TOO_DEEPLY: SELECTIONS_NESTED_TOO_DEEPLY,
+}
+
+
+def _code_upstream_depth_errors(errors: Any) -> None:
+    """Give graphql-core's uncoded depth errors the "QUERY_TOO_DEEP" code.
+
+    Args:
+        errors: The mutable error list of a result, or any other iterable
+            (left untouched).
+    """
+    if not isinstance(errors, list):
+        return
+    for index, error in enumerate(errors):
+        message = _UPSTREAM_DEPTH_MESSAGES.get(getattr(error, "message", None))
+        if (
+            message is not None
+            and isinstance(error, GraphQLError)
+            and error.path is None
+            and not (error.extensions or {}).get("code")
+        ):
+            errors[index] = GraphQLError(
+                message,
+                nodes=error.nodes,
+                extensions={"code": "QUERY_TOO_DEEP"},
+            )
+
+
 def mark_client_errors(errors: Any) -> Any:
     """Flag pre-execution errors as client errors by phase.
 
@@ -392,6 +433,7 @@ def mark_client_errors(errors: Any) -> Any:
     Returns:
         The same errors, for chaining.
     """
+    _code_upstream_depth_errors(errors)
     for error in errors or ():
         if isinstance(error, GraphQLError):
             setattr(error, CLIENT_ERROR_ATTR, True)
@@ -411,6 +453,7 @@ def mark_request_errors(result: Any) -> Any:
     Returns:
         The same result.
     """
+    _code_upstream_depth_errors(getattr(result, "errors", None))
     for error in getattr(result, "errors", None) or ():
         if isinstance(error, GraphQLError) and error.path is None:
             setattr(error, CLIENT_ERROR_ATTR, True)
