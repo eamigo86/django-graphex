@@ -4,7 +4,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
-FLOOR = "graphql-core>=3.3.0,<3.4"
+FLOOR = "graphql-core>=3.3.1,<3.4"
 
 
 def _read_toml(path: Path) -> dict:
@@ -42,7 +42,10 @@ def test_current_graphql_floor_and_both_locks_are_consistent() -> None:
     for path in (ROOT / "uv.lock", ROOT / "examples/playground/uv.lock"):
         lock = _read_toml(path)
         assert _locked_package(lock, "django-graphex")["version"] == project["version"]
-        assert _locked_package(lock, "graphql-core")["version"].startswith("3.3.")
+        locked = _locked_package(lock, "graphql-core")["version"]
+        assert locked.startswith("3.3.")
+        # 3.3.0 is affected by CVE-2026-119286; the floor and locks exclude it.
+        assert tuple(int(part) for part in locked.split(".")) >= (3, 3, 1)
 
 
 def test_current_guidance_distinguishes_the_floor_from_patch_history() -> None:
@@ -51,7 +54,7 @@ def test_current_guidance_distinguishes_the_floor_from_patch_history() -> None:
     Dated 3.1.1 notes retain their historical dependency claim.
     """
     for path in (ROOT / "README.md", ROOT / "docs/installation.md"):
-        assert ">=3.3.0,<3.4" in path.read_text(encoding="utf-8")
+        assert ">=3.3.1,<3.4" in path.read_text(encoding="utf-8")
     views = (ROOT / "docs/usage/views.md").read_text(encoding="utf-8")
     assert "Executor" in views
     assert "Custom 3.2 subclasses" in views

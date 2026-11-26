@@ -40,11 +40,14 @@ your Django models — no DRF, no graphene, no `django-filter`.
 
 - **Python:** 3.12+ (3.13, 3.14 supported)
 - **Django:** 5.2+ (5.2 LTS, 6.0 supported) — each Django version tested on the Python versions it officially supports
-- **graphql-core:** >=3.3.0,<3.4
+- **graphql-core:** >=3.3.1,<3.4
 - **pydantic:** >=2,<3
 
-**django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`.** The historical
-3.1.1 release requires `graphql-core>=3.2.13,<3.3`. Follow the
+**django-graphex requires `graphql-core>=3.3.1,<3.4`.** graphql-core 3.3.0 is
+affected by CVE-2026-119286, so the floor excludes it. 4.1.0 accepted
+`graphql-core>=3.3.0,<3.4`; a 4.1.0 install should also pin
+`graphql-core>=3.3.1`. The historical 3.1.1 release requires
+`graphql-core>=3.2.13,<3.3`. Follow the
 [4.0 upgrade guide](docs/UPGRADE-4.0.md) when migrating custom executors,
 AST builders or subscription transports, and the
 [4.1 upgrade guide](docs/UPGRADE-4.1.md) when moving from 4.0.

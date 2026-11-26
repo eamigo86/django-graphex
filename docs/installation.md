@@ -76,11 +76,14 @@ of lazily on first request), so type-compilation errors surface immediately.
 
 - **Python**: 3.12, 3.13, 3.14
 - **Django**: 5.2 (LTS), 6.0
-- **graphql-core**: >=3.3.0,<3.4
+- **graphql-core**: >=3.3.1,<3.4
 - **pydantic**: >=2,<3
 
-django-graphex 4.1.0 requires `graphql-core>=3.3.0,<3.4`. The historical
-3.1.1 release requires `graphql-core>=3.2.13,<3.3`. The commands above select
+django-graphex requires `graphql-core>=3.3.1,<3.4`: graphql-core 3.3.0 is
+affected by CVE-2026-119286, so the floor excludes it. 4.1.0 accepted
+`graphql-core>=3.3.0,<3.4`; with 4.1.0, also install
+`"graphql-core>=3.3.1,<3.4"`. The historical 3.1.1 release requires
+`graphql-core>=3.2.13,<3.3`. The commands above select
 4.1.0 explicitly; follow the [4.0 upgrade guide](UPGRADE-4.0.md) when moving
 custom integration code from GraphQL-core 3.2 to 3.3, and the
 [4.1 upgrade guide](UPGRADE-4.1.md) when moving from 4.0.

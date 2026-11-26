@@ -298,7 +298,7 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
         lambda *_: {
             "python": "3.12.11",
             "django": "6.0.8",
-            "graphql-core": "3.3.0",
+            "graphql-core": "3.3.2",
             "backend_path": str(root / "django_graphex/__init__.py"),
         },
     )
@@ -350,7 +350,7 @@ def test_preflight_rejects_wrong_source_and_freeze(
         lambda *_: {
             "python": "3.12.11",
             "django": "6.0.8",
-            "graphql-core": "3.3.0",
+            "graphql-core": "3.3.2",
             "backend_path": "/wrong/source.py",
         },
     )
@@ -384,7 +384,7 @@ def test_preflight_rejects_runtime_drift_and_dirty_checkout(
         lambda *_: {
             "python": "3.14.0",
             "django": "6.0.8",
-            "graphql-core": "3.3.0",
+            "graphql-core": "3.3.2",
             "backend_path": str(run_comparison.ROOT / "django_graphex/__init__.py"),
         },
     )
@@ -439,7 +439,7 @@ def test_preflight_reports_source_and_freeze_without_creating_output(
     assert report["backend_path"] == str(
         run_comparison.ROOT / "django_graphex/__init__.py"
     )
-    assert report["packages"]["graphql-core"] == "3.3.0"
+    assert report["packages"]["graphql-core"] == "3.3.2"
     assert len(report["constraints_sha256"]) == 64
     assert not output.exists()
 
@@ -1280,7 +1280,7 @@ def test_single_run_rechecks_selected_stack_after_child(
                 lambda *_: {
                     "python": "3.14.0",
                     "django": "6.0.8",
-                    "graphql-core": "3.3.0",
+                    "graphql-core": "3.3.2",
                     "backend_path": str(plan.backend_path),
                 },
             )

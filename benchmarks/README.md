@@ -29,8 +29,9 @@ New version claims require a new controlled measurement run and new artifacts.
 The separate `core33` profile records **whole-stack** inputs and has its own
 eight portable results under `results/core33/`. Its four exact freezes live
 under `comparison_profiles/core33/`:
-django-graphex source and Strawberry use core 3.3.0; Graphene and Ariadne use
-their compatible core 3.2.13. All use Python 3.12.11 and Django 6.0.8.
+django-graphex source and Strawberry use core 3.3.2 (the series already
+published were measured on 3.3.0, below today's `graphql-core>=3.3.1` floor);
+Graphene and Ariadne use their compatible core 3.2.13. All use Python 3.12.11 and Django 6.0.8.
 Strawberry's pinned 0.328.0/0.90.0 pair passed the shared seeded nested
 response contract with its optimizer enabled. The profile does not modify the
 historical constraints, result files, or publisher.
@@ -93,7 +94,7 @@ medians; callers retain the raw results separately. The five rebuild values
 are per-position diagnostic medians, not one raw rebuild series, and the p95
 value is the median of three per-run p95 values, not a pooled percentile over
 300 samples. This helper neither runs the harness nor writes or publishes a
-comparison. The core 3.3.0 and 3.2.13 stacks remain whole-stack diagnostics,
+comparison. The core 3.3 and 3.2.13 stacks remain whole-stack diagnostics,
 not an equal-core competition.
 
 `comparison_seed.prepare_seed_plan` checks a proposed fresh, absolute,

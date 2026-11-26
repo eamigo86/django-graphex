@@ -26,6 +26,8 @@ All notable changes to this library are documented here. The format is based on
   `results` is the one multiplier of its level. Estimates for queries over
   paginated containers drop; review `MAX_QUERY_COST` if it was raised to admit
   nested queries.
+- The graphql-core floor is now `graphql-core>=3.3.1,<3.4`: 3.3.0 is affected by
+  CVE-2026-119286, fixed in 3.3.1. Both locks move to 3.3.2.
 - graphql-core 3.3.2 enforces limits of its own instead of raising
   `RecursionError`, and the library maps each one to the coded client error it
   already used, over HTTP, SSE and WebSocket:

@@ -60,7 +60,7 @@ def _workspace(
         source_version="3.1.1",
         python_version="3.12.11",
         django_version="6.0.8",
-        graphql_core_version="3.3.0",
+        graphql_core_version="3.3.2",
         backend_path=source / "django_graphex/__init__.py",
         manifest_sha256="c" * 64,
         constraints_sha256="d" * 64,

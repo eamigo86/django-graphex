@@ -50,7 +50,7 @@ def _seed(parent: Path, authors: int) -> PreparedSeed:
         source_version="3.1.1",
         python_version="3.12.11",
         django_version="6.0.8",
-        graphql_core_version="3.3.0",
+        graphql_core_version="3.3.2",
         backend_path=parent / "old/django_graphex/__init__.py",
         manifest_sha256="c" * 64,
         constraints_sha256="d" * 64,
@@ -676,7 +676,7 @@ def test_batch_rejects_forged_seed_plan_fields(
         lambda *args: {
             "python": "3.12.11",
             "django": "6.0.8",
-            "graphql-core": "3.3.0",
+            "graphql-core": "3.3.2",
             "backend_path": str(run_comparison.ROOT / "django_graphex/__init__.py"),
         },
     )
