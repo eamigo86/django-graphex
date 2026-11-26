@@ -3,6 +3,8 @@
 import tomllib
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "4.2.0"
 DATE = "2026-11-26"
@@ -21,6 +23,7 @@ def _toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+@requires_repo_paths("examples/playground/uv.lock")
 def test_version_agrees_with_both_local_locks() -> None:
     """Keep the package and both editable lock entries on one version.
 

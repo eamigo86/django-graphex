@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from scripts.check_site_anchors import _destination
+from tests._repo_only import requires_repo_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check_site_anchors.py"
@@ -195,6 +196,7 @@ def test_nested_home_anchor_rejects_missing_home_target(tmp_path: Path) -> None:
     assert "homepage" in result.stderr
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml")
 def test_ci_checks_pure_branches_and_generated_site() -> None:
     """Require both new gates without replacing the existing coverage gates.
 
@@ -217,6 +219,7 @@ def test_ci_checks_pure_branches_and_generated_site() -> None:
     )
 
 
+@requires_repo_paths("docs-overrides/404.html")
 def test_404_template_provides_the_theme_skip_target() -> None:
     """Require the custom theme page to retain the shared skip-link anchor.
 

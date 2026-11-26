@@ -10,9 +10,12 @@ from pathlib import Path
 
 import pytest
 
+from tests._repo_only import requires_repo_paths
+
 PLAYGROUND = Path(__file__).resolve().parents[1] / "examples" / "playground"
 
 
+@requires_repo_paths("examples/playground")
 def test_cursor_pagination_readme_matches_playground_settings() -> None:
     """Keep the documented cursor default and cap aligned with this app.
 
@@ -78,6 +81,7 @@ def test_cursor_pagination_readme_matches_playground_settings() -> None:
     assert "remains unset" not in row
 
 
+@requires_repo_paths("examples/playground")
 def test_playground_310_auth_and_cache_contract_is_executable() -> None:
     """Run the real example schema/views without polluting the root registry.
 

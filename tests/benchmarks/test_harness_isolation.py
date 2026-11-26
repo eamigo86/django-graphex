@@ -11,11 +11,13 @@ from types import SimpleNamespace
 
 import graphql
 import pytest
+from tests._repo_only import requires_repo_paths
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = REPO_ROOT / "benchmarks"
 
 
+@requires_repo_paths("benchmarks")
 def test_profile_witness_is_child_observed_and_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -354,6 +356,7 @@ def test_named_profile_descriptor_stays_on_renamed_directory(
     assert list(output.iterdir()) == []
 
 
+@requires_repo_paths("benchmarks")
 def test_all_117_operation_requests_roll_back_rows_and_sqlite_sequence(
     tmp_path: Path,
 ) -> None:
@@ -415,6 +418,7 @@ assert persisted.pk == 1, persisted.pk
     assert result.returncode == 0, result.stderr
 
 
+@requires_repo_paths("benchmarks")
 def test_graphex_mutation_sql_contract_counts_request_internal_queries(
     tmp_path: Path,
 ) -> None:

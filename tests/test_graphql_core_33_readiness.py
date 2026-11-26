@@ -3,6 +3,8 @@
 import tomllib
 from pathlib import Path
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).parents[1]
 FLOOR = "graphql-core>=3.3.1,<3.4"
 
@@ -32,6 +34,7 @@ def _locked_package(lock: dict, name: str) -> dict:
     return next(package for package in lock["package"] if package["name"] == name)
 
 
+@requires_repo_paths("examples/playground/uv.lock")
 def test_current_graphql_floor_and_both_locks_are_consistent() -> None:
     """Require the 3.3 floor and matching locks.
 

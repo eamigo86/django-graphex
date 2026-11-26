@@ -25,6 +25,9 @@ from benchmarks.run_publish import (
     EXPECTED_VERSIONS,
     OPERATIONS,
 )
+from tests._repo_only import requires_repo_paths
+
+pytestmark = requires_repo_paths("benchmarks")
 
 
 class _TrackedConnection(sqlite3.Connection):

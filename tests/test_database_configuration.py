@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import tests.conftest as suite_config
+from tests._repo_only import requires_repo_paths
 
 ROOT = Path(__file__).parents[1]
 
@@ -72,6 +73,7 @@ def test_unknown_database_selector_fails_loudly(
         suite_config._database_settings()
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml")
 def test_workflow_runs_the_real_postgresql_contract() -> None:
     """CI provisions PostgreSQL 17 and runs only its backend-specific contract.
 
@@ -87,6 +89,7 @@ def test_workflow_runs_the_real_postgresql_contract() -> None:
     assert "django.VERSION[:2] == (6, 0)" in job
 
 
+@requires_repo_paths(".github/workflows/cicd.yaml")
 def test_postgresql_gate_blocks_publish_and_is_documented() -> None:
     """The real-database gate is reproducible and release-blocking.
 

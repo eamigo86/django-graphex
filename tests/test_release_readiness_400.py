@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._repo_only import requires_repo_paths
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "4.0.0"
 DATE = "2026-10-05"
@@ -44,6 +46,7 @@ def test_400_notes_are_dated_and_describe_version_requirements() -> None:
         assert "## 3.1.0 — 2026-09-03" in notes or path.name == "CHANGELOG.md"
 
 
+@requires_repo_paths("examples/playground", "benchmarks")
 def test_release_guidance_names_versioned_install_and_migration() -> None:
     """Explain the version boundary and an explicit upgrade path.
 
@@ -76,6 +79,7 @@ def test_release_guidance_names_versioned_install_and_migration() -> None:
         "docs/why.md",
     ),
 )
+@requires_repo_paths("examples/playground", "benchmarks")
 def test_current_release_copy_does_not_expire_after_publication(
     relative_path: str,
 ) -> None:

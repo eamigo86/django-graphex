@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from benchmarks import run_publish
+from tests._repo_only import requires_repo_paths
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARKS = REPO_ROOT / "benchmarks"
@@ -126,6 +127,7 @@ def test_publication_writes_all_eight_canonical_medians(tmp_path: Path) -> None:
     )
 
 
+@requires_repo_paths("benchmarks")
 def test_run_all_writes_only_ignored_scratch_results() -> None:
     """Keep the diagnostic runner away from canonical artifacts.
 
@@ -151,6 +153,7 @@ def _markdown_row(document: str, label: str) -> list[str]:
     return [cell.strip() for cell in line.strip("|").split("|")]
 
 
+@requires_repo_paths("benchmarks")
 def test_published_documentation_is_derived_from_canonical_artifacts() -> None:
     """Verify published documentation is derived from canonical artifacts.
 

@@ -32,6 +32,13 @@ All notable changes to this library are documented here. The format is based on
   `graphql_sync` there counts on its own `MAX_DIRECTIVE_OUTPUT_TOTAL` budget
   instead of the request's; submit `contextvars.copy_context().run` to share it.
   See [Settings](usage/settings.md). Tests pin both behaviors.
+- The published sdist's own test suite now passes. About 190 tests read
+  repository-only inputs (`.github/`, `benchmarks/`, `examples/`,
+  `docs-overrides/`) that the sdist does not ship, and failed when run from the
+  extracted tarball. They now skip with a clear reason through
+  `requires_repo_paths` in `tests/_repo_only.py`, and only when the input is
+  absent: a repository checkout skips nothing. The sdist guard now covers every
+  root-anchored path a test reads, nested ones included, not only root files.
 
 ## 4.2.0 — 2026-11-26
 
