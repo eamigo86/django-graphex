@@ -47,13 +47,13 @@ def test_version_agrees_with_both_local_locks() -> None:
 def test_install_snippets_name_the_current_version() -> None:
     """Reject install commands that pin an earlier release.
 
-    The README, the installation page and the 4.1 guide carry them.
+    The README, the installation page and the 4.2 guide carry them.
     """
-    for relative in ("README.md", "docs/installation.md", "docs/UPGRADE-4.1.md"):
+    for relative in ("README.md", "docs/installation.md", "docs/UPGRADE-4.2.md"):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert f'pip install "django-graphex=={VERSION}"' in text
         assert 'django-graphex==4.1.1"' not in text
-        assert FLOOR in text or relative == "docs/UPGRADE-4.1.md"
+        assert FLOOR in text
     for relative in ("README.md", "docs/installation.md"):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert f'uv add "django-graphex[subscriptions]=={VERSION}"' in text
@@ -75,20 +75,18 @@ def test_changelog_dates_the_release_above_4_1_1() -> None:
         assert "graphql-ws" in section
         assert "SUBSCRIPTION_PATH" in section
         assert "#258" in section
-        assert "UPGRADE-4.1.md#upgrading-to-420" in section
+        assert "UPGRADE-4.2.md#upgrading-to-420" in section
 
 
 def test_upgrade_guide_has_a_4_2_0_section() -> None:
     """Tell 4.1 users what the GraphiQL subscriptions change loads.
 
-    The section sits after 4.1.1 in the 4.1 guide and names the extra script,
-    the WebSocket, CSP and the offline template hook.
+    The section lives in its own 4.2 guide and names the extra script, the
+    WebSocket, CSP and the offline template hook.
     """
-    guide = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs/UPGRADE-4.2.md").read_text(encoding="utf-8")
+    assert guide.startswith("# Upgrading to django-graphex 4.2\n")
     assert "\n## Upgrading to 4.2.0\n" in guide
-    assert guide.index("\n## Upgrading to 4.1.1\n") < guide.index(
-        "\n## Upgrading to 4.2.0\n"
-    )
     section = guide.split("\n## Upgrading to 4.2.0\n", maxsplit=1)[1]
     section = section.split("\n## ", maxsplit=1)[0]
     for needle in (
@@ -101,3 +99,18 @@ def test_upgrade_guide_has_a_4_2_0_section() -> None:
         "graphiql_template",
     ):
         assert needle in section
+
+
+def test_upgrade_guides_are_split_by_minor_release() -> None:
+    """Keep the 4.2 notes out of the 4.1 guide and link the guides in order.
+
+    The 4.1 guide pins its last patch and points to the 4.2 guide; the
+    navigation lists the newer guide first.
+    """
+    old = (ROOT / "docs/UPGRADE-4.1.md").read_text(encoding="utf-8")
+    assert "## Upgrading to 4.2.0" not in old
+    assert 'pip install "django-graphex==4.1.1"' in old
+    assert "[4.2 upgrade guide](UPGRADE-4.2.md)" in old
+    nav = (ROOT / "zensical.yml").read_text(encoding="utf-8")
+    assert "Upgrading to django-graphex 4.2: UPGRADE-4.2.md" in nav
+    assert nav.index("UPGRADE-4.2.md") < nav.index("UPGRADE-4.1.md")

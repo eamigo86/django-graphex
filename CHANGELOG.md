@@ -58,7 +58,7 @@
   queries and mutations keep using HTTP. Before this, running a subscription
   failed inside GraphiQL with "createFetcher is not properly configured for
   websocket subscriptions yet". See [GraphiQL](docs/usage/views.md#graphiql) and
-  [Upgrading to 4.2.0](docs/UPGRADE-4.1.md#upgrading-to-420)
+  [Upgrading to 4.2.0](docs/UPGRADE-4.2.md#upgrading-to-420)
   ([#258](https://github.com/eamigo86/django-graphex/pull/258)).
 
 ## 4.1.1 — 2026-11-26

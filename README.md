@@ -50,7 +50,8 @@ affected by CVE-2026-119286, so the floor excludes it. 4.1.0 accepted
 `graphql-core>=3.2.13,<3.3`. Follow the
 [4.0 upgrade guide](docs/UPGRADE-4.0.md) when migrating custom executors,
 AST builders or subscription transports, and the
-[4.1 upgrade guide](docs/UPGRADE-4.1.md) when moving from 4.0.
+[4.1 upgrade guide](docs/UPGRADE-4.1.md) when moving from 4.0, then the
+[4.2 upgrade guide](docs/UPGRADE-4.2.md).
 
 ## Installation
 
