@@ -337,7 +337,7 @@ def test_playground_banner_targets_current_checkout() -> None:
     page = (ROOT / "examples/playground/README.md").read_text(encoding="utf-8")
     banner = page.split("A small, runnable", maxsplit=1)[0]
     assert "Targets django-graphex v3.1" not in banner
-    assert "4.1.1 checkout" in banner.lower()
+    assert "4.2.0 checkout" in banner.lower()
     assert "graphql-core 3.3" in banner
     # The playground has no coverage plugin, so --no-cov is an unknown flag
     # there; the documented commands must be the ones that actually run.

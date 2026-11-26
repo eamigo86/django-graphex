@@ -56,15 +56,15 @@ AST builders or subscription transports, and the
 
 ```bash
 # uv (recommended)
-uv add "django-graphex==4.1.1"
+uv add "django-graphex==4.2.0"
 # real-time subscriptions (adds Django Channels 4):
-uv add "django-graphex[subscriptions]==4.1.1"
+uv add "django-graphex[subscriptions]==4.2.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex==4.1.1"
-pip install "django-graphex[subscriptions]==4.1.1"
+pip install "django-graphex==4.2.0"
+pip install "django-graphex[subscriptions]==4.2.0"
 ```
 
 The base install never imports `channels`; only the `subscriptions` extra does.

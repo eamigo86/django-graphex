@@ -6,12 +6,12 @@ For installing django-graphex, run one of these in your shell:
 
 ```bash
 # uv (recommended)
-uv add "django-graphex==4.1.1"
+uv add "django-graphex==4.2.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex==4.1.1"
+pip install "django-graphex==4.2.0"
 ```
 
 This pulls in the core dependencies (`graphql-core`, `pydantic`,
@@ -42,12 +42,12 @@ and are shipped as an optional extra. The base install never pulls in Channels:
 
 ```bash
 # uv (recommended)
-uv add "django-graphex[subscriptions]==4.1.1"
+uv add "django-graphex[subscriptions]==4.2.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex[subscriptions]==4.1.1"
+pip install "django-graphex[subscriptions]==4.2.0"
 ```
 
 This adds `channels` and `channels-redis`. See the
@@ -84,7 +84,7 @@ affected by CVE-2026-119286, so the floor excludes it. 4.1.0 accepted
 `graphql-core>=3.3.0,<3.4`; if you stay on 4.1.0, also install
 `"graphql-core>=3.3.1,<3.4"`. The historical 3.1.1 release requires
 `graphql-core>=3.2.13,<3.3`. The commands above select
-4.1.1 explicitly; follow the [4.0 upgrade guide](UPGRADE-4.0.md) when moving
+4.2.0 explicitly; follow the [4.0 upgrade guide](UPGRADE-4.0.md) when moving
 custom integration code from GraphQL-core 3.2 to 3.3, and the
 [4.1 upgrade guide](UPGRADE-4.1.md) when moving from 4.0.
 
