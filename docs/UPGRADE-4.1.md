@@ -16,12 +16,26 @@ to migrate. The [changelog](changelog.md) lists the same changes under
 "Behavior changes".
 
 ```bash
-uv add "django-graphex==4.1.0"
+uv add "django-graphex==4.1.1"
 # or
-pip install "django-graphex==4.1.0"
+pip install "django-graphex==4.1.1"
 ```
 
-The `graphql-core>=3.3.0,<3.4` requirement is unchanged.
+4.1.0 kept the `graphql-core>=3.3.0,<3.4` requirement; 4.1.1 raises it, see
+[Upgrading to 4.1.1](#upgrading-to-411).
+
+## Upgrading to 4.1.1
+
+4.1.1 is a patch release on top of 4.1.0.
+
+- **graphql-core 3.3.1 or later.** The requirement is now
+  `graphql-core>=3.3.1,<3.4` because 3.3.0 is affected by CVE-2026-119286. An
+  environment that pins 3.3.0 must move to 3.3.1 or 3.3.2 before installing 4.1.1.
+- **Lower cost estimates over paginated containers.** Cost analysis now counts
+  each paginated list level once ([#255](https://github.com/eamigo86/django-graphex/issues/255)),
+  so estimates for nested or wide queries over `DjangoListObjectType` drop. If you
+  raised `MAX_QUERY_COST` to admit such queries, revisit it; the old value now
+  admits more than you intended.
 
 ## Upgrade checklist
 

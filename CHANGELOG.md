@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.1.1 — 2026-11-26
 
 ### Fixes and changes
 
@@ -13,9 +13,10 @@
   wide queries. Only real GraphQL lists multiply now, so the page size on
   `results` is the one multiplier of its level. Estimates for queries over
   paginated containers drop; review `MAX_QUERY_COST` if it was raised to admit
-  nested queries.
+  nested queries. See [Upgrading to 4.1.1](docs/UPGRADE-4.1.md#upgrading-to-411).
 - The graphql-core floor is now `graphql-core>=3.3.1,<3.4`: 3.3.0 is affected by
-  CVE-2026-119286, fixed in 3.3.1. Both locks move to 3.3.2.
+  CVE-2026-119286, fixed in 3.3.1. Both locks move to 3.3.2. See
+  [Upgrading to 4.1.1](docs/UPGRADE-4.1.md#upgrading-to-411).
 - graphql-core 3.3.2 enforces limits of its own instead of raising
   `RecursionError`, and the library maps each one to the coded client error it
   already used, over HTTP, SSE and WebSocket:
