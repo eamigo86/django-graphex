@@ -255,3 +255,26 @@ def test_cost_rule_noop_without_budget() -> None:
         schema, parse("{ items(limit: 99) { name } }"), [CostLimitValidationRule]
     )
     assert errors == []
+
+
+@override_settings(DJANGO_GRAPHEX={"MAX_PAGE_SIZE": 50})
+def test_page_size_after_a_non_pagination_argument_is_found() -> None:
+    """A business argument written before the page size does not hide it."""
+    child = GraphQLObjectType("PageChild", {"x": GraphQLField(GraphQLString)})
+    item = GraphQLObjectType("PageItem", {"child": GraphQLField(child)})
+    query = GraphQLObjectType(
+        "Query",
+        {
+            "items": GraphQLField(
+                GraphQLList(item),
+                args={
+                    "q": GraphQLArgument(GraphQLString),
+                    "limit": GraphQLArgument(GraphQLInt),
+                },
+            )
+        },
+    )
+    doc = parse('{ items(q: "x", limit: 5) { child { x } } }')
+
+    # own(items)=1 + limit(5) * own(child)=1 -> 6, not the MAX_PAGE_SIZE fallback.
+    assert analyze_cost(GraphQLSchema(query=query), doc).total == 6
