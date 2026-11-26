@@ -23,6 +23,10 @@ All notable changes to this library are documented here. The format is based on
   log was written and the stream ended. It now fails with a public validation
   error and no group is joined.
 - The "is not a valid database lookup" message no longer ends with two periods.
+- A value-only (pk-less) cursor on an ascending order over a nullable field
+  keeps the trailing `NULL` rows. The database path dropped them after a
+  non-`NULL` boundary, while the in-memory path and the documented rule (`NULL`
+  last ascending, first descending) include them. Descending order is unchanged.
 
 ## 4.2.0 — 2026-11-26
 
