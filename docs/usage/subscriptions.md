@@ -460,6 +460,11 @@ Channels delivers only to that group -- no group enumeration is involved.
 
 ## Browser client view
 
+The built-in GraphiQL page (`graphiql=True`) runs subscriptions over the
+WebSocket at `SUBSCRIPTION_PATH` (default `/ws/graphql/`); see
+[GraphiQL](views.md#graphiql). `SubscriptionClientView` below stays available for
+SSE and for inspecting the protocol messages.
+
 `SubscriptionClientView` serves a self-contained HTML page to try subscriptions
 live. It speaks the same standards as the transports: `graphql-transport-ws` over
 WebSocket and `graphql-sse` over a streamed `fetch()` POST — the browser

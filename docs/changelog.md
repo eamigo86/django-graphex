@@ -12,6 +12,17 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+### Added
+
+- The built-in GraphiQL page runs subscriptions. It loads the pinned
+  `graphql-ws@5.16.2` client (SRI-protected) and connects lazily over
+  `graphql-transport-ws` to `SUBSCRIPTION_PATH`, or `/ws/graphql/` when unset;
+  queries and mutations keep using HTTP. Before this, running a subscription
+  failed inside GraphiQL with "createFetcher is not properly configured for
+  websocket subscriptions yet". See [GraphiQL](usage/views.md#graphiql).
+
 ## 4.1.1 — 2026-11-26
 
 ### Fixes and changes

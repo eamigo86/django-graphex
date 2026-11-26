@@ -175,7 +175,8 @@ make seed        # demo data: 15 authors × 12 posts × 3 comments, 12 notes,
 make run         # ASGI server at http://127.0.0.1:8000/graphql/
 ```
 
-Open **GraphiQL** at <http://127.0.0.1:8000/graphql/>.
+Open **GraphiQL** at <http://127.0.0.1:8000/graphql/>. It runs subscriptions
+over the `/ws/graphql/` WebSocket.
 
 The seed creates superuser **`demo` / `demo12345`**.
 

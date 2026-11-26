@@ -35,7 +35,8 @@ make seed        # load demo data (see below)
 make run         # daphne ASGI server (HTTP + WebSocket) on 127.0.0.1:8000
 ```
 
-Open **GraphiQL** at <http://127.0.0.1:8000/graphql/>. The seed creates the
+Open **GraphiQL** at <http://127.0.0.1:8000/graphql/>. It runs subscriptions
+over the `/ws/graphql/` WebSocket. The seed creates the
 superuser **`demo` / `demo12345`**.
 
 All the `Makefile` targets:
