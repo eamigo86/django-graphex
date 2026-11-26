@@ -12,6 +12,18 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
+## Unreleased
+
+### Fixes and changes
+
+- A subscriber filter value outside the database integer range is refused at
+  subscribe time. A relation `exact` or `in` filter, or an `id__in` list, such as
+  `tags: {exact: "99999999999999999999"}`, used to open the stream and raise
+  `OverflowError` at delivery: the client got `INTERNAL_SERVER_ERROR`, one ERROR
+  log was written and the stream ended. It now fails with a public validation
+  error and no group is joined.
+- The "is not a valid database lookup" message no longer ends with two periods.
+
 ## 4.2.0 — 2026-11-26
 
 ### Added

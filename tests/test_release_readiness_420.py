@@ -59,13 +59,13 @@ def test_install_snippets_name_the_current_version() -> None:
 def test_changelog_dates_the_release_above_4_1_1() -> None:
     """Date the 4.2.0 section and keep 4.1.1 directly below it.
 
-    Both changelog copies list 4.2.0 and then 4.1.1, with no "Unreleased"
-    heading, and the Added entry links to the upgrade note.
+    Both changelog copies list 4.2.0 and then 4.1.1, and the Added entry links
+    to the upgrade note. An "Unreleased" heading may sit above 4.2.0.
     """
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
         notes = (ROOT / relative).read_text(encoding="utf-8")
         headings = [line for line in notes.splitlines() if line.startswith("## ")]
-        assert "## Unreleased" not in headings
+        headings = headings[headings.index(f"## {VERSION} — {DATE}") :]
         assert headings[:2] == [f"## {VERSION} — {DATE}", "## 4.1.1 — 2026-11-26"]
         section = notes.split(headings[0], maxsplit=1)[1].split(headings[1])[0]
         assert "### Added" in section
