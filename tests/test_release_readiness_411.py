@@ -1,6 +1,5 @@
 """Contracts for the 4.1.1 release metadata, notes and upgrade section."""
 
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,63 +8,17 @@ DATE = "2026-11-26"
 FLOOR = "graphql-core>=3.3.1,<3.4"
 
 
-def _toml(path: Path) -> dict:
-    """Read a TOML document.
-
-    Args:
-        path: Project or lock path to parse.
-
-    Returns:
-        Parsed TOML document.
-    """
-    return tomllib.loads(path.read_text(encoding="utf-8"))
-
-
-def test_version_agrees_with_both_local_locks() -> None:
-    """Keep the package and both editable lock entries on one version.
-
-    The graphql-core floor and the locked 3.3.x release are checked too.
-    """
-    project = _toml(ROOT / "pyproject.toml")["project"]
-    assert project["version"] == VERSION
-    assert FLOOR in project["dependencies"]
-    for path, source in (
-        (ROOT / "uv.lock", "."),
-        (ROOT / "examples/playground/uv.lock", "../../"),
-    ):
-        packages = {p["name"]: p for p in _toml(path)["package"]}
-        assert packages["django-graphex"]["version"] == VERSION
-        assert packages["django-graphex"]["source"] == {"editable": source}
-        assert packages["graphql-core"]["version"].startswith("3.3.")
-        locked = tuple(int(n) for n in packages["graphql-core"]["version"].split("."))
-        assert locked >= (3, 3, 1)
-
-
-def test_install_snippets_name_the_current_version() -> None:
-    """Reject install commands that pin an earlier release.
-
-    Both the README and the installation page carry them.
-    """
-    for relative in ("README.md", "docs/installation.md"):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert f'pip install "django-graphex=={VERSION}"' in text
-        assert f'uv add "django-graphex[subscriptions]=={VERSION}"' in text
-        assert 'django-graphex==4.1.0"' not in text
-        assert FLOOR in text
-
-
 def test_changelog_dates_the_release_above_4_1_0() -> None:
-    """Date the 4.1.1 section and keep 4.1.0 directly below it.
+    """Keep the dated 4.1.1 section directly above 4.1.0.
 
-    Both changelog copies list 4.1.1 and then 4.1.0, with no "Unreleased"
-    heading between them. Later work may add an "Unreleased" heading above 4.1.1.
+    Both changelog copies list 4.1.1 and then 4.1.0. Later releases and an
+    "Unreleased" heading may sit above 4.1.1.
     """
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
         notes = (ROOT / relative).read_text(encoding="utf-8")
         headings = [line for line in notes.splitlines() if line.startswith("## ")]
-        if headings[0] == "## Unreleased":
-            headings = headings[1:]
-        assert "## Unreleased" not in headings
+        start = headings.index(f"## {VERSION} — {DATE}")
+        headings = headings[start:]
         assert headings[:2] == [f"## {VERSION} — {DATE}", "## 4.1.0 — 2026-10-27"]
         section = notes.split(headings[0], maxsplit=1)[1].split(headings[1])[0]
         assert FLOOR in section

@@ -12,7 +12,7 @@ All notable changes to this library are documented here. The format is based on
     explains every change with before/after examples (install `django-graphex`,
     import `django_graphex`).
 
-## Unreleased
+## 4.2.0 — 2026-11-26
 
 ### Added
 
@@ -21,7 +21,9 @@ All notable changes to this library are documented here. The format is based on
   `graphql-transport-ws` to `SUBSCRIPTION_PATH`, or `/ws/graphql/` when unset;
   queries and mutations keep using HTTP. Before this, running a subscription
   failed inside GraphiQL with "createFetcher is not properly configured for
-  websocket subscriptions yet". See [GraphiQL](usage/views.md#graphiql).
+  websocket subscriptions yet". See [GraphiQL](usage/views.md#graphiql) and
+  [Upgrading to 4.2.0](UPGRADE-4.1.md#upgrading-to-420)
+  ([#258](https://github.com/eamigo86/django-graphex/pull/258)).
 
 ## 4.1.1 — 2026-11-26
 
