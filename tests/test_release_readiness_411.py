@@ -55,14 +55,16 @@ def test_install_snippets_name_the_current_version() -> None:
 
 
 def test_changelog_dates_the_release_above_4_1_0() -> None:
-    """Date the 4.1.1 section and keep it the first heading.
+    """Date the 4.1.1 section and keep 4.1.0 directly below it.
 
-    Both changelog copies list 4.1.1 first and 4.1.0 directly after it, and no
-    "Unreleased" heading remains.
+    Both changelog copies list 4.1.1 and then 4.1.0, with no "Unreleased"
+    heading between them. Later work may add an "Unreleased" heading above 4.1.1.
     """
     for relative in ("CHANGELOG.md", "docs/changelog.md"):
         notes = (ROOT / relative).read_text(encoding="utf-8")
         headings = [line for line in notes.splitlines() if line.startswith("## ")]
+        if headings[0] == "## Unreleased":
+            headings = headings[1:]
         assert "## Unreleased" not in headings
         assert headings[:2] == [f"## {VERSION} — {DATE}", "## 4.1.0 — 2026-10-27"]
         section = notes.split(headings[0], maxsplit=1)[1].split(headings[1])[0]

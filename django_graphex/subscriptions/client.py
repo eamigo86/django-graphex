@@ -22,12 +22,13 @@ The endpoints default to the page's own origin; override "ws_path" / "sse_path"
 
 from __future__ import annotations
 
-import json
 from functools import lru_cache
 from importlib import resources
 
 from django.http import HttpRequest, HttpResponse
 from django.views import View
+
+from .._script_escape import escape_for_script
 
 __all__ = ("SubscriptionClientView",)
 
@@ -95,33 +96,14 @@ class SubscriptionClientView(View):
 
     @staticmethod
     def _escape_for_script(value: str) -> str:
-        r"""Escape "value" for injection into an inline "<script>" JS string.
+        """Escape "value" for an inline "<script>" JS string literal.
 
-        "json.dumps" alone makes the value safe as a JavaScript string literal
-        (quotes/backslashes/control chars), but it leaves "<" verbatim — so a
-        value containing "</script>" would still close the inline script
-        element in the browser (an HTML parser terminates a "<script>" at the
-        first literal "</script>" regardless of JS string context), breaking
-        out of the script. We additionally escape the three characters that let a
-        value escape the script/HTML context — "<", ">", "&" — to their
-        "\\uXXXX" forms (the same idiom Django's "json_script" uses). Inside a
-        JS string literal each "\\uXXXX" decodes back to the original character,
-        so the value the client sees is unchanged, but no literal "</script>"
-        (or entity-forming "&") ever reaches the HTML parser.
+        Delegates to the shared helper in "django_graphex._script_escape".
 
         Args:
             value: The raw path string to inject.
 
         Returns:
-            The escaped inner content (WITHOUT the surrounding quotes), safe to
-            splice into a double-quoted JS string literal in an inline script.
+            The escaped inner content, without the surrounding quotes.
         """
-        # json.dumps yields a quoted JS/JSON string literal; strip the outer
-        # quotes (the template already wraps the placeholder in a string context)
-        # and neutralise the script/HTML-breaking characters.
-        escaped = json.dumps(value)[1:-1]
-        return (
-            escaped.replace("<", "\\u003c")
-            .replace(">", "\\u003e")
-            .replace("&", "\\u0026")
-        )
+        return escape_for_script(value)

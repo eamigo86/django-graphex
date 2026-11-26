@@ -376,6 +376,14 @@ With `graphiql=True`, the view serves a self-contained GraphiQL page whose asset
 load from a CDN — zero wiring, but it needs internet access and an
 unpkg-friendly CSP.
 
+Queries and mutations use the HTTP endpoint. Subscriptions use a WebSocket
+(`graphql-transport-ws`) at `SUBSCRIPTION_PATH`, which defaults to
+`/ws/graphql/` when unset (override it per view with `subscription_path=`). The
+page loads the pinned `graphql-ws@5.16.2` client, protected by SRI like the other
+assets. The client is lazy: the socket opens only when a subscription runs, so a
+project without a WebSocket endpoint is unaffected until then. The path is
+resolved against the page's own host, over `wss:` on HTTPS pages.
+
 For **offline / strict-CSP** setups, point the view at your own Django template
 with `graphiql_template`; ship your own assets and reference them with
 `{% static %}`:

@@ -61,6 +61,7 @@ from graphql.validation import specified_rules, validate
 
 from . import settings as _settings
 from ._execution_state import request_budget_scope
+from ._script_escape import escape_for_script
 from .core._flat_gfk_scope import signature_grants
 from .core.permission_signature_cache import permission_signature, pruned_schema_for
 from .cost import CostLimitValidationRule, analyze_cost
@@ -236,6 +237,10 @@ def csrf_header_missing(request: Any, content_type: str) -> bool:
     )
 
 
+#: WebSocket route the built-in GraphiQL page subscribes to when no
+#: "subscription_path" is configured (the "SubscriptionClientView" default).
+DEFAULT_SUBSCRIPTION_PATH = "/ws/graphql/"
+
 #: Self-contained GraphiQL page (CDN). Avoids depending on bundled
 #: template and static assets. Override per view with ``graphiql_template``.
 #:
@@ -248,6 +253,7 @@ def csrf_header_missing(request: Any, content_type: str) -> bool:
 #:   react          18.3.1
 #:   react-dom      18.3.1
 #:   graphiql       3.7.1
+#:   graphql-ws      5.16.2
 #:
 #: To recompute hashes after a version bump:
 #:   curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
@@ -282,9 +288,21 @@ GRAPHIQL_HTML = """<!DOCTYPE html>
       src="https://unpkg.com/graphiql@3.7.1/graphiql.min.js"
       integrity="sha384-w0cGClNeNvIYIRVmYrv5kmQ6CEat8jJb0XBczOFPeWlVjzeMNJBaoeEcWFD8Gad4"
     ></script>
+    <script
+      crossorigin="anonymous"
+      src="https://unpkg.com/graphql-ws@5.16.2/umd/graphql-ws.min.js"
+      integrity="sha384-+EVxFEOpy8LWPRQcpntm0FKN2O+BzrMNSL0G3HIgVWFmeb6xqZqjuLivrQUTXZKi"
+    ></script>
     <script>
       const root = ReactDOM.createRoot(document.getElementById('graphiql'));
-      const fetcher = GraphiQL.createFetcher({ url: window.location.pathname });
+      // lazy: no socket opens until a subscription runs; queries and mutations
+      // keep using the HTTP fetcher.
+      const wsClient = graphqlWs.createClient({
+        url: (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host +
+          "__SUBSCRIPTION_PATH__",
+        lazy: true,
+      });
+      const fetcher = GraphiQL.createFetcher({ url: window.location.pathname, wsClient });
       root.render(React.createElement(GraphiQL, { fetcher }));
     </script>
   </body>
@@ -1607,7 +1625,11 @@ class BaseGraphQLView(View):
                     "subscription_path": self.subscription_path,
                 },
             )
-        return HttpResponse(content=GRAPHIQL_HTML, content_type="text/html")
+        html = GRAPHIQL_HTML.replace(
+            "__SUBSCRIPTION_PATH__",
+            escape_for_script(self.subscription_path or DEFAULT_SUBSCRIPTION_PATH),
+        )
+        return HttpResponse(content=html, content_type="text/html")
 
     def json_encode(self, request: Any, d: Any, pretty: bool = False) -> str:
         """Encode a response dict to JSON (compact unless pretty).
