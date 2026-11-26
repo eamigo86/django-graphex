@@ -16,6 +16,7 @@ fragment spreads (cyclic documents are rejected up front) -- a fragment cannot b
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -52,6 +53,14 @@ _MAX_STRUCTURAL_DEPTH = 100
 #: Message of the abort graphql-core 3.3.2+ appends when the nesting, fragment
 #: work or complexity budget runs out. Its error-limit abort reads differently.
 _VALIDATION_ABORTED = "Validation aborted."
+
+#: graphql-core 3.3.2's fragment nesting visitor, used to tell a depth abort from
+#: a budget abort; 3.3.1 has neither the visitor nor a bare abort.
+_FRAGMENT_NESTING_VISITOR = getattr(
+    importlib.import_module("graphql.validation.validate"),
+    "FragmentNestingVisitor",
+    None,
+)
 
 __all__ = ("DepthLimitValidationRule", "StackDepthError", "run_validation")
 
@@ -129,22 +138,19 @@ def _coded_abort(error: GraphQLError, document: DocumentNode) -> GraphQLError:
         A "QUERY_TOO_DEEP" error for over-deep nesting, otherwise a
         "QUERY_TOO_COMPLEX" error.
     """
-    try:
-        from graphql.validation.validate import FragmentNestingVisitor
-
+    if _FRAGMENT_NESTING_VISITOR is not None:
         fragments = {
             node.name.value: node
             for node in document.definitions
             if isinstance(node, FragmentDefinitionNode)
         }
-        visit(document, FragmentNestingVisitor(fragments))
-    except RecursionError:
-        return GraphQLError(
-            "Query is nested too deeply to be validated.",
-            extensions={"code": "QUERY_TOO_DEEP"},
-        )
-    except ImportError:
-        pass
+        try:
+            visit(document, _FRAGMENT_NESTING_VISITOR(fragments))
+        except RecursionError:
+            return GraphQLError(
+                "Query is nested too deeply to be validated.",
+                extensions={"code": "QUERY_TOO_DEEP"},
+            )
     return GraphQLError(
         "Query is too complex to be validated.",
         extensions={"code": "QUERY_TOO_COMPLEX"},

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from django.conf import settings as django_settings
 from django.db import DatabaseError
 from graphql import GraphQLError
+from graphql.execution import executor as graphql_executor
 
 from .settings import graphql_api_settings
 
@@ -383,12 +384,12 @@ def format_graphql_error(error: Any, middleware: Any = None) -> dict:
 CLIENT_ERROR_ATTR = "_graphex_client_error"
 
 
-try:
-    from graphql.execution.executor import SELECTIONS_NESTED_TOO_DEEPLY
-except ImportError:  # graphql-core 3.3.1 has no executor depth limit
-    SELECTIONS_NESTED_TOO_DEEPLY = (
-        "Selections are nested too deeply. Execution aborted."
-    )
+#: graphql-core 3.3.2's selection-depth abort; 3.3.1 has no executor depth limit.
+SELECTIONS_NESTED_TOO_DEEPLY = getattr(
+    graphql_executor,
+    "SELECTIONS_NESTED_TOO_DEEPLY",
+    "Selections are nested too deeply. Execution aborted.",
+)
 
 #: Depth errors graphql-core 3.3.2+ raises without a code, mapped to the message
 #: the library answers with. Both are client input: the value or the document.
