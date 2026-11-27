@@ -594,9 +594,11 @@ def test_async_middleware_is_rejected_without_running_its_body(
 def test_custom_executor_owned_coroutine_is_closed() -> None:
     """Reject a newly created coroutine from a configured executor.
 
-    The backend result is request-owned and must remain unstarted.
+    The backend result is request-owned and must remain unstarted. The test
+    keeps its own reference so the proof does not depend on garbage collection.
     """
     body_started: list[str] = []
+    created: list[Any] = []
 
     class AsyncExecutor(graphql_execution.Executor):
         """Return a new unstarted coroutine from the execution backend."""
@@ -621,7 +623,9 @@ def test_custom_executor_owned_coroutine_is_closed() -> None:
                 body_started.append("custom executor")
                 return ExecutionResult(data={"value": "unexpected"})
 
-            return result()
+            coroutine = result()
+            created.append(coroutine)
+            return coroutine
 
     schema = GraphQLSchema(
         query=GraphQLObjectType(
@@ -639,7 +643,6 @@ def test_custom_executor_owned_coroutine_is_closed() -> None:
             ),
         )
     ]
-    captured: list[Any] = []
     try:
         with override_settings(
             ROOT_URLCONF=__name__,
@@ -648,23 +651,17 @@ def test_custom_executor_owned_coroutine_is_closed() -> None:
             DJANGO_GRAPHEX={"CACHE_ACTIVE": False},
         ):
             clear_url_caches()
-            before = {
-                id(value): value
-                for value in gc.get_objects()
-                if type(value) is CoroutineType
-            }
             response = _post("/graphql/", "{ value }")
-            captured = _owned_coroutines(before)
             assert response.status_code == 500
             assert response.json() == {"errors": [{"message": _MESSAGE}]}
             assert body_started == []
-            assert captured
+            assert created
             assert all(
                 inspect.getcoroutinestate(value) == inspect.CORO_CLOSED
-                for value in captured
+                for value in created
             )
     finally:
-        for value in captured:
+        for value in created:
             if inspect.getcoroutinestate(value) == inspect.CORO_CREATED:
                 value.close()
         clear_url_caches()
