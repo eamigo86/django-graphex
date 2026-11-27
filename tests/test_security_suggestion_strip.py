@@ -9,6 +9,7 @@ scan must agree with.
 
 from __future__ import annotations
 
+import math
 import random
 import re
 import time
@@ -61,6 +62,34 @@ _SAMPLES = (
     "",
     "?",
 )
+
+
+def _cost_exponent(short: str, long: str) -> float:
+    """Return the power of the message length that the formatting cost grows with.
+
+    Both messages are formatted five times, alternately, and the fastest run of
+    each is kept. A slow or stalled runner only adds time, and to both lengths
+    alike, so the ratio of the best runs holds where a wall-clock budget does
+    not. A linear strip scores about 1 and a quadratic one about 2. Call it with
+    introspection disabled, or the strip never runs.
+
+    Args:
+        short: A hostile message.
+        long: The same message, many times longer.
+
+    Returns:
+        The exponent k for which the time ratio equals the length ratio to the k.
+    """
+    messages = (short, long)
+    best = [math.inf, math.inf]
+    for _ in range(5):
+        for index, message in enumerate(messages):
+            started = time.perf_counter()
+            format_graphql_error(
+                GraphQLError(message), [DisableIntrospectionMiddleware()]
+            )
+            best[index] = min(best[index], time.perf_counter() - started)
+    return math.log(best[1] / best[0]) / math.log(len(long) / len(short))
 
 
 class SuggestionStripTests(SimpleTestCase):
@@ -117,23 +146,20 @@ class SuggestionStripTests(SimpleTestCase):
                 )
 
     def test_adversarial_message_is_linear(self) -> None:
-        """A 224 KB hostile message finishes quickly through the public formatter.
+        """A 224 KB hostile message formats in linear time through the formatter.
 
-        The old regex took more than two seconds here.
+        The old regex took more than two seconds on it, its cost growing with
+        the square of the length.
         """
-        message = (
-            "Enum 'E' cannot represent non-string value: " + " Did you mean " * 16000
-        )
-        with override_settings(
-            DJANGO_GRAPHEX={"ALLOW_INTROSPECTION": False},
-        ):
-            started = time.perf_counter()
+        head = "Enum 'E' cannot represent non-string value: "
+        message = head + " Did you mean " * 16000
+        with override_settings(DJANGO_GRAPHEX={"ALLOW_INTROSPECTION": False}):
             formatted = format_graphql_error(
                 GraphQLError(message), [DisableIntrospectionMiddleware()]
             )
-            elapsed = time.perf_counter() - started
+            exponent = _cost_exponent(head + " Did you mean " * 1000, message)
         self.assertEqual(formatted["message"], message)
-        self.assertLess(elapsed, 0.5)
+        self.assertLess(exponent, 1.5)
 
     def test_adversarial_matching_message_is_linear(self) -> None:
         """Hostile messages that do end in a suggestion are also linear and stripped.
@@ -141,17 +167,27 @@ class SuggestionStripTests(SimpleTestCase):
         Wrapper separators, repeated rule heads and repeated suggestions all
         appear, and the message ends the way a real suggestion does.
         """
-        message = (
-            "Variable '$a' got invalid value "
-            + "; Enum 'E' cannot represent non-string value: x" * 4000
-            + " Did you mean " * 4000
-            + "?"
-        )
-        with override_settings(DJANGO_GRAPHEX={"ALLOW_INTROSPECTION": False}):
-            started = time.perf_counter()
-            formatted = format_graphql_error(
-                GraphQLError(message), [DisableIntrospectionMiddleware()]
+
+        def build(count: int) -> str:
+            """Build the hostile message.
+
+            Args:
+                count: How many times each repeated part appears.
+
+            Returns:
+                The message.
+            """
+            return (
+                "Variable '$a' got invalid value "
+                + "; Enum 'E' cannot represent non-string value: x" * count
+                + " Did you mean " * count
+                + "?"
             )
-            elapsed = time.perf_counter() - started
+
+        with override_settings(DJANGO_GRAPHEX={"ALLOW_INTROSPECTION": False}):
+            formatted = format_graphql_error(
+                GraphQLError(build(4000)), [DisableIntrospectionMiddleware()]
+            )
+            exponent = _cost_exponent(build(250), build(4000))
         self.assertNotIn("Did you mean", formatted["message"])
-        self.assertLess(elapsed, 0.5)
+        self.assertLess(exponent, 1.5)
