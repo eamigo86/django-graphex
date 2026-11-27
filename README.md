@@ -51,21 +51,22 @@ affected by CVE-2026-119286, so the floor excludes it. 4.1.0 accepted
 [4.0 upgrade guide](docs/UPGRADE-4.0.md) when migrating custom executors,
 AST builders or subscription transports, and the
 [4.1 upgrade guide](docs/UPGRADE-4.1.md) when moving from 4.0, then the
-[4.2 upgrade guide](docs/UPGRADE-4.2.md).
+[4.2 upgrade guide](docs/UPGRADE-4.2.md) and the
+[4.3 upgrade guide](docs/UPGRADE-4.3.md).
 
 ## Installation
 
 ```bash
 # uv (recommended)
-uv add "django-graphex==4.2.0"
+uv add "django-graphex==4.3.0"
 # real-time subscriptions (adds Django Channels 4):
-uv add "django-graphex[subscriptions]==4.2.0"
+uv add "django-graphex[subscriptions]==4.3.0"
 ```
 
 ```bash
 # pip
-pip install "django-graphex==4.2.0"
-pip install "django-graphex[subscriptions]==4.2.0"
+pip install "django-graphex==4.3.0"
+pip install "django-graphex[subscriptions]==4.3.0"
 ```
 
 The base install never imports `channels`; only the `subscriptions` extra does.

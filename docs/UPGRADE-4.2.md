@@ -29,3 +29,5 @@ subscriptions ([#258](https://github.com/eamigo86/django-graphex/pull/258)).
 - **Offline or locked-down setups.** Point `graphiql_template` at your own
   template to serve the assets yourself; see
   [GraphiQL](usage/views.md#graphiql).
+
+After upgrading to 4.2, continue with the [4.3 upgrade guide](UPGRADE-4.3.md).

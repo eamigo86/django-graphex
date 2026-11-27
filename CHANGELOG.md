@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.3.0 — 2026-11-26
 
 ### Added
 
@@ -10,12 +10,14 @@
   for that operation and keeps the socket, on SSE it aborts the stream, and a
   server `complete` or `error` returns it to Send. Suggestions follow the cursor:
   keywords at the top level, the Subscription root fields inside the operation,
-  the resolved type's fields deeper, and argument names inside parentheses.
+  the resolved type's fields deeper, argument names inside parentheses, and enum
+  values after an argument's colon.
 - A query or mutation sent over the WebSocket or SSE subscription transport now
   carries `extensions.code` `OPERATION_NOT_SUPPORTED`; the message text is
   unchanged. Over SSE the HTTP 400 body is now a JSON `{"errors": [...]}`
   envelope (`application/json`) instead of plain text. The client page shows a
   pointer to GraphiQL when it arrives. See
+  [Upgrading to 4.3.0](docs/UPGRADE-4.3.md#upgrading-to-430) and
   [Subscriptions](docs/usage/subscriptions.md#operation_not_supported).
 
 ### Fixes and changes
@@ -23,7 +25,6 @@
 - The SSE tab of the client page logs one terminal entry per stream. A stream
   that ended after an `event: complete` frame showed both "Stream complete." and
   "Stream ended."; a stop or an error no longer adds a second one.
-
 - A subscriber filter value outside the database integer range is refused at
   subscribe time. A relation `exact` or `in` filter, or an `id__in` list, such as
   `tags: {exact: "99999999999999999999"}`, used to open the stream and raise
